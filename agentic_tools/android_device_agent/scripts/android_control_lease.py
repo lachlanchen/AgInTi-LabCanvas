@@ -3,12 +3,15 @@
 
 from __future__ import annotations
 
+import argparse
 from contextlib import contextmanager
 import fcntl
 import json
 import os
 from pathlib import Path
 import secrets
+import subprocess
+import sys
 import time
 from typing import Any, Iterator
 
@@ -126,3 +129,37 @@ def priority_android_control(
                 fcntl.flock(handle, fcntl.LOCK_UN)
             finally:
                 remove_priority(priority_path, token=token)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    subparsers = parser.add_subparsers(dest="command_name", required=True)
+    run = subparsers.add_parser(
+        "run",
+        help="Run one command while holding the shared Android GUI lane.",
+    )
+    run.add_argument("--lock-path", type=Path, required=True)
+    run.add_argument("--priority-path", type=Path, required=True)
+    run.add_argument("--purpose", required=True)
+    run.add_argument("--timeout-seconds", type=float, default=90.0)
+    run.add_argument("--lease-seconds", type=float, default=300.0)
+    run.add_argument("argv", nargs=argparse.REMAINDER)
+    args = parser.parse_args()
+    command = list(args.argv)
+    if command and command[0] == "--":
+        command = command[1:]
+    if not command:
+        parser.error("run requires a command after --")
+    with priority_android_control(
+        lock_path=args.lock_path.expanduser().resolve(),
+        priority_path=args.priority_path.expanduser().resolve(),
+        purpose=args.purpose,
+        timeout_seconds=args.timeout_seconds,
+        lease_seconds=args.lease_seconds,
+    ):
+        completed = subprocess.run(command, check=False)
+    return int(completed.returncode)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

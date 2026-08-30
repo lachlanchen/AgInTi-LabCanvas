@@ -155,6 +155,35 @@ class WechatAndroidSendTests(unittest.TestCase):
             self.assertEqual(result, screen)
             shell.assert_called_once_with(["input", "tap", "500", str(match.center_y)])
 
+    def test_short_chat_title_uses_exact_centered_header_line(self):
+        module = load_sender()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            sender = module.AndroidWechatSender(
+                adb="adb",
+                serial="device",
+                target={"name": "lachlanchan", "expected_title": "陈苗"},
+                task_id="task-short-header",
+                state_db=root / "state.sqlite",
+                output_dir=root / "output",
+            )
+            screen = root / "opened.png"
+            screen.write_bytes(b"png")
+            lines = [
+                module.OcrLine("505", 30, 110, 210, 175),
+                module.OcrLine("陈 苗", 545, 117, 635, 182),
+            ]
+            with (
+                mock.patch.object(sender, "header_text", return_value="505 陈苗"),
+                mock.patch.object(module, "image_size", return_value=(1080, 2160)),
+                mock.patch.object(module, "ocr_lines", return_value=lines),
+                mock.patch.object(module, "enhanced_header_text") as enhanced,
+            ):
+                matched = sender.current_chat_matches(screen)
+
+            self.assertTrue(matched)
+            enhanced.assert_not_called()
+
     def test_find_target_line_retries_with_enhanced_ocr(self):
         module = load_sender()
         with tempfile.TemporaryDirectory() as tmp:
@@ -251,12 +280,106 @@ class WechatAndroidSendTests(unittest.TestCase):
                 sender,
                 "send_file_component",
                 return_value={"kind": "file", "status": "sent", "key": "file"},
-            ):
+            ), mock.patch.object(sender, "restore_wecom") as restore:
                 result = sender.send(messages=[], files=[artifact])
 
             self.assertTrue(result["ok"])
             self.assertEqual(result["components"][0]["status"], "sent")
+            self.assertTrue(result["wecom_restored"])
+            self.assertEqual(result["restore_error"], "")
             self.assertEqual(ensure.call_count, 1)
+            restore.assert_called_once_with()
+
+    def test_failed_wechat_send_still_restores_wecom(self):
+        module = load_sender()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            sender = module.AndroidWechatSender(
+                adb="adb",
+                serial="device",
+                target={"name": "EchoMind", "expected_title": "EchoMind"},
+                task_id="task-failed-send",
+                state_db=root / "state.sqlite",
+                output_dir=root / "output",
+            )
+            with mock.patch.object(module, "require_tools"), mock.patch.object(
+                module, "priority_android_control", return_value=nullcontext()
+            ), mock.patch.object(
+                sender,
+                "wake_and_launch",
+                side_effect=module.AndroidWechatError("launch failed"),
+            ), mock.patch.object(sender, "restore_wecom") as restore:
+                with self.assertRaisesRegex(module.AndroidWechatError, "launch failed"):
+                    sender.send(messages=["hello"], files=[])
+
+            restore.assert_called_once_with()
+
+    def test_restore_wecom_waits_for_verified_foreground_package(self):
+        module = load_sender()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            sender = module.AndroidWechatSender(
+                adb="adb",
+                serial="device",
+                target={"name": "EchoMind", "expected_title": "EchoMind"},
+                task_id="task-restore",
+                state_db=root / "state.sqlite",
+                output_dir=root / "output",
+            )
+            with mock.patch.object(sender, "collapse_system_overlays"), mock.patch.object(
+                sender, "dual_virtual_display_id", return_value=None
+            ), mock.patch.object(
+                sender, "shell"
+            ) as shell, mock.patch.object(
+                sender, "current_package", side_effect=["com.tencent.mm", module.WECOM_PACKAGE]
+            ), mock.patch.object(sender_module_time(module), "sleep"):
+                sender.restore_wecom()
+
+            self.assertEqual(shell.call_args_list[0].args[0][:4], ["am", "start", "-W", "-f"])
+            self.assertTrue(any("monkey" in call.args[0] for call in shell.call_args_list[1:]))
+
+    def test_restore_wecom_preserves_dual_display_layout(self):
+        module = load_sender()
+        with tempfile.TemporaryDirectory() as tmp:
+            sender = module.AndroidWechatSender(
+                adb="adb",
+                serial="device",
+                target={"name": "EchoMind", "expected_title": "EchoMind"},
+                task_id="task-dual-restore",
+                state_db=Path(tmp) / "state.sqlite",
+                output_dir=Path(tmp) / "output",
+            )
+            with mock.patch.object(sender, "collapse_system_overlays"), mock.patch.object(
+                sender, "dual_virtual_display_id", return_value=7
+            ), mock.patch.object(sender, "shell") as shell, mock.patch.object(
+                sender,
+                "component_on_display",
+                return_value=(module.WECOM_PACKAGE, ".launch.WwMainActivity"),
+            ), mock.patch.object(sender_module_time(module), "sleep"):
+                sender.restore_wecom()
+
+            command = shell.call_args_list[0].args[0]
+            self.assertEqual(
+                command[:6],
+                ["am", "start", "-W", "--display", "7", "-f"],
+            )
+            self.assertIn(module.WECOM_MAIN_ACTIVITY, command)
+
+    def test_current_component_uses_physical_display_in_split_mode(self):
+        module = load_sender()
+        payload = """Display #7 (activities from top to bottom):
+    mResumedActivity: ActivityRecord{x u0 com.tencent.wework/.launch.WwMainActivity t2}
+Display #0 (activities from top to bottom):
+    mResumedActivity: ActivityRecord{y u0 com.tencent.mm/.ui.LauncherUI t1}
+"""
+        self.assertEqual(
+            module.resumed_component_on_display(payload, 0),
+            (module.PACKAGE, ".ui.LauncherUI"),
+        )
+        self.assertEqual(
+            module.virtual_display_id_from_stack_list("displayId=0 displayId=7"),
+            7,
+        )
 
     def test_unknown_target_is_rejected_by_allowlist(self):
         module = load_sender()

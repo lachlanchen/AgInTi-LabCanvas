@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 from datetime import datetime, timedelta
 import hashlib
 import html
@@ -40,7 +41,11 @@ from wechat_completion_audit import (
 )
 from wechat_document_reader import READABLE_STATUSES as DOCUMENT_READABLE_STATUSES
 from wechat_document_reader import analyze_document, is_document_candidate
-from wechat_message_policy import file_transport_identity, is_no_reply_control
+from wechat_message_policy import (
+    file_transport_identity,
+    has_explicit_video_generation_intent,
+    is_no_reply_control,
+)
 from wechat_message_shards import list_message_db_paths, normalize_message_db_name
 from wechat_mirror import DEFAULT_DB, record_event
 from wechat_routines import (
@@ -508,6 +513,89 @@ def stored_result_repair_fingerprint(result: dict[str, Any], raw_text: str) -> s
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
+def stored_result_repair_delivery(
+    task: dict[str, Any],
+    result: dict[str, Any],
+    *,
+    fingerprint: str,
+) -> dict[str, Any]:
+    """Build a supplemental delivery without replaying verified chat content."""
+    delivery = copy.deepcopy(result)
+    required_files = required_delivery_file_paths(delivery, task)
+    if not required_files:
+        return delivery
+
+    sent_messages: set[str] = set()
+    for key in (
+        "wecom_delivery",
+        "wechat_delivery",
+        "gui_delivery",
+        "android_delivery",
+    ):
+        payload = task.get(key)
+        if not isinstance(payload, dict) or payload.get("status") != "sent":
+            continue
+        sent_messages.update(
+            str(value).strip()
+            for value in payload.get("sent_messages") or []
+            if str(value).strip()
+        )
+
+    message = str(delivery.get("message") or "").strip()
+    confirmation = str(delivery.get("confirmation") or "").strip()
+    combined = "\n\n".join(value for value in (message, confirmation) if value)
+    data = delivery.get("data") if isinstance(delivery.get("data"), dict) else {}
+    nested_data = data.get("data") if isinstance(data.get("data"), dict) else {}
+    stored_recovery = bool(
+        data.get("stored_result_contract_recovery")
+        or nested_data.get("stored_result_contract_recovery")
+    )
+    if sent_messages and stored_recovery:
+        delivery["message"] = ""
+        delivery["confirmation"] = ""
+    elif combined and combined in sent_messages:
+        delivery["message"] = ""
+        delivery["confirmation"] = ""
+    else:
+        if message and message in sent_messages:
+            delivery["message"] = ""
+        if confirmation and confirmation in sent_messages:
+            delivery["confirmation"] = ""
+
+    sent_paths = {
+        str(Path(str(path)).expanduser().resolve())
+        for path in task.get("sent_file_paths") or []
+    }
+    copied_files: dict[str, str] = {}
+    delivery_files: list[str] = []
+    for raw_path in delivery.get("files") or []:
+        path = Path(str(raw_path)).expanduser().resolve()
+        if str(path) not in sent_paths or not path.is_file():
+            delivery_files.append(str(path))
+            continue
+        suffix = fingerprint[:10]
+        supplemental = path.with_name(
+            f"{path.stem}-quality-repaired-{suffix}{path.suffix}"
+        )
+        if (
+            not supplemental.is_file()
+            or supplemental.stat().st_size != path.stat().st_size
+            or sha256_file(supplemental) != sha256_file(path)
+        ):
+            shutil.copy2(path, supplemental)
+        copied_files[str(path)] = str(supplemental)
+        delivery_files.append(str(supplemental))
+    delivery["files"] = delivery_files
+    if copied_files:
+        data = delivery.get("data") if isinstance(delivery.get("data"), dict) else {}
+        delivery["data"] = {
+            **data,
+            "supplemental_contract_repair": True,
+            "supplemental_file_copies": copied_files,
+        }
+    return delivery
+
+
 def reconcile_repaired_artifact_coverage(
     task: dict[str, Any],
     result: dict[str, Any],
@@ -791,13 +879,18 @@ def repair_stored_result_contract(
         return task
 
     target_chat = str(task.get("chat") or chat)
-    errors = send_result_with_retries(
+    delivery_result = stored_result_repair_delivery(
+        task,
         repaired,
+        fingerprint=fingerprint,
+    )
+    errors = send_result_with_retries(
+        delivery_result,
         target_chat,
         send_targets,
         task=task,
     )
-    apply_send_outcome(task, repaired, errors)
+    apply_send_outcome(task, delivery_result, errors)
     finished_at = datetime.now().isoformat(timespec="seconds")
     repair_state = dict(task.get("stored_contract_repair") or {})
     repair_state.update(
@@ -811,6 +904,13 @@ def repair_stored_result_contract(
             ),
             "delivery_attempted_at": finished_at,
             "send_errors": errors[:3],
+            "delivery_files": [
+                str(path) for path in delivery_result.get("files") or []
+            ],
+            "repeated_text_suppressed": not bool(
+                str(delivery_result.get("message") or "").strip()
+                or str(delivery_result.get("confirmation") or "").strip()
+            ),
         }
     )
     task["stored_contract_repair"] = repair_state
@@ -821,7 +921,11 @@ def repair_stored_result_contract(
         chat_name=target_chat,
         action="worker_result_contract_repair",
         direction="outbound",
-        message=repaired.get("confirmation") or repaired.get("message") or "",
+        message=(
+            delivery_result.get("confirmation")
+            or delivery_result.get("message")
+            or ""
+        ),
         status="repair-sent" if not errors else str(task.get("status") or "send_failed"),
         db_path=DEFAULT_DB,
         metadata=task,
@@ -2747,7 +2851,14 @@ def send_result_text_parts(
         ).hexdigest()[:24]
         if fingerprint in sent_hashes:
             continue
-        send_message(part, target_chat, send_targets, target=target)
+        task_id = str((task or {}).get("id") or "adhoc")
+        send_message(
+            part,
+            target_chat,
+            send_targets,
+            target=target,
+            task={"id": f"{task_id}:{field}:{fingerprint}"},
+        )
         sent_hashes.add(fingerprint)
         if task is not None:
             task["sent_message_part_hashes"] = sorted(sent_hashes)
@@ -7539,6 +7650,13 @@ def run_task_orchestrator(task: dict[str, Any], policy: dict[str, Any]) -> str:
     # This heartbeat makes an active routine and its artifact directory
     # recoverable even when preflight has nothing additional to persist.
     persist_task_progress(task)
+    terminal_publish = recover_verified_publish_delivery_result(task)
+    if terminal_publish is not None:
+        task["orchestrator"]["last_action"] = "recover_terminal_lazyedit_publish"
+        task["orchestrator"]["last_action_at"] = datetime.now().isoformat(timespec="seconds")
+        task["publish_terminal_recovered_at"] = task["orchestrator"]["last_action_at"]
+        persist_task_progress(task)
+        return json.dumps(terminal_publish, ensure_ascii=False)
     if task.get("artifact_recovery_only"):
         recovered = recover_completed_research_artifacts(task, force=True)
         if recovered is not None:
@@ -7616,9 +7734,107 @@ def run_task_orchestrator(task: dict[str, Any], policy: dict[str, Any]) -> str:
     return run_worker_agent_session(task, policy)
 
 
+def explicit_current_video_paths(task: dict[str, Any]) -> list[Path]:
+    """Resolve video paths explicitly named by the current task request."""
+    paths: list[Path] = []
+    for token in extract_artifact_paths(task_focus_text(task)):
+        try:
+            path = resolve_candidate_path(token)
+        except OSError:
+            continue
+        if path.suffix.casefold() in VIDEO_SUFFIXES and path.is_file() and path not in paths:
+            paths.append(path)
+    return paths
+
+
+def clear_stale_generated_video_state(task: dict[str, Any], *, reason: str) -> None:
+    """Archive a compact summary, then remove generation-only polling state."""
+    generation_keys = (
+        "generated_video_claim_baseline",
+        "generated_video_submit_probe",
+        "generated_video_monitor",
+        "generated_video_poststage",
+        "generation_started_at",
+        "generation_wait_count",
+        "generation_poll_history",
+        "last_generation_status_at",
+        "next_poll_at",
+        "next_poll_at_iso",
+    )
+    present = [key for key in generation_keys if key in task]
+    if not present:
+        return
+    history = task.get("route_repair_history")
+    if not isinstance(history, list):
+        history = []
+    history.append(
+        {
+            "reason": reason,
+            "repaired_at": datetime.now().isoformat(timespec="seconds"),
+            "previous_status": task.get("status"),
+            "previous_routine_id": (
+                (task.get("routine") or {}).get("id")
+                if isinstance(task.get("routine"), dict)
+                else None
+            ),
+            "generation_wait_count": int_or_none(task.get("generation_wait_count")),
+            "cleared_fields": present,
+        }
+    )
+    task["route_repair_history"] = history[-10:]
+    for key in present:
+        task.pop(key, None)
+
+
 def enforce_current_task_route_safety(task: dict[str, Any]) -> bool:
-    """Repair stale/model routes when an exact Finder source is not a publish command."""
+    """Repair stale routes when exact current source evidence contradicts them."""
     current_request = task_focus_text(task)
+    explicit_paths = explicit_current_video_paths(task)
+    explicit_existing_publish = bool(
+        explicit_paths
+        and has_public_publish_intent(current_request)
+        and not has_explicit_video_generation_intent(current_request)
+    )
+    if explicit_existing_publish:
+        route = dict(task_route_decision(task))
+        previous_kind = str(route.get("route_kind") or "")
+        previous_routine = (
+            str((task.get("routine") or {}).get("id") or "")
+            if isinstance(task.get("routine"), dict)
+            else ""
+        )
+        changed = previous_kind != "publish_video" or previous_routine != "video_publish_existing"
+        route.update(
+            {
+                "route_kind": "publish_video",
+                "project": "lazyedit",
+                "worker_needed": True,
+                "needs_recent_media": False,
+                "delivery_mode": "chat_message",
+                "public_publish_intent": True,
+                "public_publish_allowed": True,
+                "external_action_allowed": True,
+                "source_policy": "exact_current_local_video_path",
+                "exact_source_paths": [str(path) for path in explicit_paths],
+                "reason": "current request explicitly publishes an existing local video; metadata/subtitle generation is not video generation",
+            }
+        )
+        task["route_decision"] = route
+        instruction = dict(task.get("instruction_contract") or {})
+        instruction["route_kind"] = "publish_video"
+        instruction["irreversible_actions_require_current_message_intent"] = True
+        task["instruction_contract"] = instruction
+        if changed:
+            clear_stale_generated_video_state(
+                task,
+                reason="explicit_existing_video_publish_misclassified_as_generation",
+            )
+            task.pop("routine", None)
+            task.pop("routine_contract", None)
+            task["route_repaired_at"] = datetime.now().isoformat(timespec="seconds")
+            task["route_repair_reason"] = "explicit_existing_video_publish"
+        return changed
+
     profile = extract_shipinhao_media_profile(source_recovery_task_text(task))
     exact_finder_source = bool(
         "weixin.qq.com/sph/" in current_request.casefold()
@@ -7678,13 +7894,54 @@ def recover_verified_publish_delivery_result(
             video_id = int(match.group(1))
             if video_id not in video_ids:
                 video_ids.append(video_id)
-    if not video_ids:
+
+    result_sources: list[str] = []
+    result = task.get("result") if isinstance(task.get("result"), dict) else {}
+    for value in (
+        result.get("message"),
+        result.get("raw"),
+        (task.get("publish_agent_supervision") or {}).get("result_excerpt")
+        if isinstance(task.get("publish_agent_supervision"), dict)
+        else "",
+    ):
+        text = str(value or "")
+        if text:
+            result_sources.append(text)
+    for attempt in task.get("worker_policy_attempts") or []:
+        if isinstance(attempt, dict):
+            result_sources.append(str(attempt.get("result_excerpt") or ""))
+    result_video_ids: list[int] = []
+    for text in result_sources:
+        for match in re.finditer(r"\bvideo_id\s*[=: ]\s*(\d+)\b", text):
+            video_id = int(match.group(1))
+            if video_id not in video_ids and video_id not in result_video_ids:
+                result_video_ids.append(video_id)
+    video_ids.extend(result_video_ids)
+
+    explicit_sources = explicit_current_video_paths(task)
+    explicit_stems = {path.stem.casefold() for path in explicit_sources}
+    if not video_ids and not explicit_stems:
         return None
 
     payload = lazyedit_api_get("/api/autopublish/queue", timeout=20)
     jobs = payload.get("jobs") if isinstance(payload.get("jobs"), list) else []
     terminal = {"done", "completed", "success", "succeeded"}
-    for video_id in video_ids:
+    ordered_video_ids = list(video_ids)
+    if explicit_stems:
+        for job in jobs:
+            if not isinstance(job, dict):
+                continue
+            job_stem = Path(str(job.get("file_path") or "")).stem.casefold()
+            video_id = int_or_none(job.get("video_id"))
+            if (
+                job_stem in explicit_stems
+                and video_id is not None
+                and video_id not in ordered_video_ids
+            ):
+                ordered_video_ids.append(video_id)
+    requested_platforms = set(detect_publish_platforms(task, current_only=True))
+    trusted_history_ids = set(video_ids) - set(result_video_ids)
+    for video_id in ordered_video_ids:
         candidates = [
             job
             for job in jobs
@@ -7702,6 +7959,14 @@ def recover_verified_publish_delivery_result(
             remote_status = normalized_status(job.get("remote_status"))
             remote_id = str(job.get("remote_job_id") or "").strip()
             platforms = normalize_platforms(job.get("platforms"))
+            job_stem = Path(str(job.get("file_path") or "")).stem.casefold()
+            source_matches = bool(explicit_stems and job_stem in explicit_stems)
+            if explicit_stems and not source_matches:
+                continue
+            if video_id in result_video_ids and video_id not in trusted_history_ids and not source_matches:
+                continue
+            if requested_platforms and set(platforms) != requested_platforms:
+                continue
             if (
                 status not in terminal
                 or not remote_id
@@ -13924,12 +14189,7 @@ def is_generate_video_task(task: dict[str, Any]) -> bool:
     route = task_route_decision(task)
     if route:
         return str(route.get("route_kind") or "") == "generate_video"
-    text = task_focus_text(task).lower()
-    generation_markers = ("generate", "create", "make", "生成", "创作", "做")
-    video_markers = ("video", "视频", "影片", "短片", "动画", "動畫")
-    return any(marker in text for marker in video_markers) and any(
-        marker in text for marker in generation_markers
-    )
+    return has_explicit_video_generation_intent(task_focus_text(task))
 
 
 def generated_video_monitor_only(task: dict[str, Any]) -> bool:
@@ -19654,6 +19914,22 @@ PDF_BROKEN_TEXT_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\ufffd]")
 PDF_LAYOUT_AUDIT_VERSION = 1
 PDF_FINAL_PAGE_MIN_BODY_CHARS = 220
 PDF_PREVIOUS_PAGE_MIN_BODY_CHARS = 600
+PDF_BASE14_FONT_NAMES = {
+    "courier",
+    "courier-bold",
+    "courier-boldoblique",
+    "courier-oblique",
+    "helvetica",
+    "helvetica-bold",
+    "helvetica-boldoblique",
+    "helvetica-oblique",
+    "symbol",
+    "times-bold",
+    "times-bolditalic",
+    "times-italic",
+    "times-roman",
+    "zapfdingbats",
+}
 
 
 def task_expects_reader_facing_pdf(task: dict[str, Any]) -> bool:
@@ -19711,6 +19987,72 @@ def extract_pdf_page_texts_for_quality(path: Path) -> tuple[list[str], str]:
     while pages and not pages[-1].strip():
         pages.pop()
     return pages, ""
+
+
+def analyze_pdf_font_embedding(path: Path) -> dict[str, Any]:
+    """Find non-embedded fonts that can render clean text as missing glyph boxes."""
+    executable = shutil.which("pdffonts")
+    if not executable:
+        return {
+            "status": "unavailable",
+            "error": "pdffonts_unavailable",
+            "font_count": 0,
+            "unembedded_fonts": [],
+        }
+    try:
+        completed = subprocess.run(
+            [executable, str(path)],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {
+            "status": "unavailable",
+            "error": f"pdffonts_failed:{type(exc).__name__}",
+            "font_count": 0,
+            "unembedded_fonts": [],
+        }
+    if completed.returncode != 0:
+        return {
+            "status": "unavailable",
+            "error": "pdffonts_failed",
+            "font_count": 0,
+            "unembedded_fonts": [],
+        }
+    rows: list[tuple[str, str]] = []
+    for line in completed.stdout.splitlines():
+        fields = line.split()
+        if (
+            len(fields) < 7
+            or not all(
+                value.casefold() in {"yes", "no"}
+                for value in fields[-5:-2]
+            )
+            or not all(value.isdigit() for value in fields[-2:])
+        ):
+            continue
+        rows.append((fields[0], fields[-5]))
+    if not rows:
+        return {
+            "status": "unavailable",
+            "error": "pdffonts_empty",
+            "font_count": 0,
+            "unembedded_fonts": [],
+        }
+    unembedded: list[str] = []
+    for raw_name, raw_embedded in rows:
+        name = re.sub(r"^[A-Z]{6}\+", "", raw_name).casefold()
+        embedded = raw_embedded.strip().casefold()
+        if embedded != "yes" and name not in PDF_BASE14_FONT_NAMES:
+            unembedded.append(raw_name)
+    return {
+        "status": "checked",
+        "error": "",
+        "font_count": len(rows),
+        "unembedded_fonts": unique_strings(unembedded),
+    }
 
 
 def pdf_page_body_text(page_text: str) -> str:
@@ -19883,6 +20225,7 @@ def reader_facing_pdf_quality_issues(
     path: Path,
     *,
     layout_audit: dict[str, Any] | None = None,
+    font_audit: dict[str, Any] | None = None,
 ) -> list[str]:
     """Reject generated reports that are unreadable or expose orchestration internals."""
     if not task_expects_reader_facing_pdf(task):
@@ -19900,6 +20243,9 @@ def reader_facing_pdf_quality_issues(
         issues.append("broken_text_extraction")
     layout = layout_audit or analyze_pdf_layout_for_quality(path)
     issues.extend(str(item) for item in layout.get("issues") or [])
+    fonts = font_audit or analyze_pdf_font_embedding(path)
+    if fonts.get("status") == "checked" and fonts.get("unembedded_fonts"):
+        issues.append("unembedded_nonbase_pdf_fonts")
     for pattern, label in PDF_INTERNAL_TRANSPORT_PATTERNS:
         if pattern.search(text):
             issues.append(label)
@@ -20098,13 +20444,16 @@ def enforce_reader_facing_pdf_quality(
             continue
         inspected_pdf = True
         layout = analyze_pdf_layout_for_quality(path)
+        font_audit = analyze_pdf_font_embedding(path)
         issues = reader_facing_pdf_quality_issues(
             task,
             path,
             layout_audit=layout,
+            font_audit=font_audit,
         )
         render_audit = persist_pdf_render_audit(task, path, layout)
         if render_audit:
+            render_audit["font_audit"] = font_audit
             render_audits.append(render_audit)
         if issues:
             rejected.append(
@@ -20606,10 +20955,31 @@ def gui_search_allowed_for_target(target: dict[str, Any]) -> bool:
     return bool(target.get("allow_search", False))
 
 
-def send_message(message: str, chat: str, send_targets: Path, *, target: dict[str, Any] | None = None) -> None:
+def send_message(
+    message: str,
+    chat: str,
+    send_targets: Path,
+    *,
+    target: dict[str, Any] | None = None,
+    task: dict[str, Any] | None = None,
+) -> None:
     message = sanitize_chat_visible_text(message)
     target = target if target is not None else guarded_send_target(chat, send_targets)
     if target:
+        transport = os.environ.get("WECHAT_WORKER_TEXT_TRANSPORT", "auto").strip().casefold()
+        if transport not in {"auto", "android", "desktop"}:
+            raise RuntimeError(
+                "Unsupported WECHAT_WORKER_TEXT_TRANSPORT; expected auto, android, or desktop"
+            )
+        task_id = str((task or {}).get("id") or f"adhoc-text-{time.time_ns()}")
+        if transport == "android":
+            run_android_wechat_sender(
+                chat=chat,
+                target=target,
+                task_id=task_id,
+                messages=[message],
+            )
+            return
         command = [
             sys.executable,
             str(ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wechat_gui_send.py"),
@@ -20631,7 +21001,17 @@ def send_message(message: str, chat: str, send_targets: Path, *, target: dict[st
         else:
             command.append("--no-search")
         try:
-            run_send_subprocess(command)
+            try:
+                run_send_subprocess(command)
+            except RuntimeError as exc:
+                if transport != "auto" or not desktop_message_can_fallback_to_android(exc):
+                    raise
+                run_android_wechat_sender(
+                    chat=chat,
+                    target=target,
+                    task_id=task_id,
+                    messages=[message],
+                )
         finally:
             target_file.unlink(missing_ok=True)
         return
@@ -20650,6 +21030,18 @@ def send_message(message: str, chat: str, send_targets: Path, *, target: dict[st
         ],
         cwd=ROOT,
         check=False,
+    )
+
+
+def desktop_message_can_fallback_to_android(exc: BaseException) -> bool:
+    """Fail over only when desktop preflight proves no message was submitted."""
+    message = str(exc).casefold()
+    return any(
+        marker in message
+        for marker in (
+            "wechat_entry_required",
+            "no visible wechat window found",
+        )
     )
 
 

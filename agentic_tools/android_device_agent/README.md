@@ -15,6 +15,22 @@ The real device is the default target because it keeps the user's actual app
 state, logins, files, and notifications. The AVD profile is only for app testing
 or dry automation that does not need the real phone state.
 
+When the health guard reports `wechat_login_required`, the bounded repair is to
+restart the exact `labcanvas-android-mix2s` tmux window via
+`android_device_desktop.sh restart --serial <MIX2S_SERIAL> --open-wechat` and
+then verify with `android_control.py status --serial <MIX2S_SERIAL>` plus a
+screenshot under `output/android_device_agent/`. Do not bypass QR/CAPTCHA or
+change credentials; the account owner must complete any login prompt manually.
+If the restart succeeds but the login prompt is still pending, leave the phone
+on the WeChat login screen and report the `wechat_login_required` code as
+awaiting manual account-owner action rather than retrying repeatedly. When the
+health guard reports a repeated `wechat_login_required` that survives the
+restart, first confirm the exact `labcanvas-android-mix2s` tmux window is the
+only Android transport target, then verify the device is still reachable via
+`adb devices -l` before concluding the login is genuinely pending; a stale or
+orphaned scrcpy process can mask a healthy device and should be cleared only
+after proving it is orphaned.
+
 ## Dedicated noVNC Desktop
 
 Use the short on/off routine for a persistent phone-control desktop:
@@ -24,6 +40,14 @@ scripts/mix2s on --serial <MIX2S_SERIAL>
 scripts/mix2s status --serial <MIX2S_SERIAL>
 scripts/mix2s off --serial <MIX2S_SERIAL>
 ```
+
+Use `scripts/mix2s dual --serial <MIX2S_SERIAL>` to keep personal WeChat on
+the physical display and WeCom on a dedicated virtual display in the same
+noVNC desktop. `dual` is persisted as the desired layout: Android senders may
+temporarily take the physical display, then restore both panes. If WeCom's
+single-task activity leaves the virtual surface stale, the relay verifies the
+surface and recreates only the `wecom-virtual` pane; it does not restart
+personal WeChat, noVNC, or the complete relay stack.
 
 Open the printed noVNC URL. The desktop runs `scrcpy` for direct mouse/keyboard
 control and keeps the phone awake while connected. Its tmux pane also retries
@@ -95,6 +119,19 @@ emulator -avd LabCanvas_MIX2S_API34 -no-snapshot-load
 
 The emulator is useful for app installation tests. Do not use it for WeChat or
 other account-bound workflows unless the account owner logs in there manually.
+
+## Transport Repair Notes
+
+When the deterministic health guard reports a repeated WeChat/WeCom runtime
+fault that survives normal scripted recovery, treat this agent as the bounded
+transport repair layer. Allowed recovery actions are local and reversible:
+inspect status/logs, restart an exact dead or stalled tmux window, resume a
+durable task, clear an orphaned process only after proving it is orphaned, and
+run focused tests. Never send chat messages, publish, place orders, change
+credentials/accounts, bypass QR/CAPTCHA, delete user data, rewrite unrelated
+code, or restart a healthy logged-in GUI. If the fault is genuinely too complex
+for medium reasoning and still unresolved, emit the exact marker `ESCALATE_HIGH`
+once and stop.
 
 ## Safety
 

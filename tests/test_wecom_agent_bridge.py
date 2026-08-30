@@ -82,7 +82,120 @@ def load_gui_bridge():
     )
 
 
+def load_android_bridge():
+    return load_module(
+        "wecom_android_bridge_for_tests",
+        ROOT / "agentic_tools" / "wecom_agent" / "scripts" / "wecom_android_bridge.py",
+    )
+
+
 class WeComAgentBridgeTests(unittest.TestCase):
+    def test_android_bridge_restores_requested_dual_layout(self) -> None:
+        bridge_module = load_android_bridge()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            layout = root / "layout"
+            layout.write_text("dual\n", encoding="utf-8")
+            bridge = bridge_module.AndroidBridge(
+                {
+                    "serial": "device",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(root / "state.sqlite"),
+                    "queue": str(root / "queue.jsonl"),
+                    "history_db": str(root / "history.sqlite"),
+                    "staging_dir": str(root / "staging"),
+                    "android_layout_path": str(layout),
+                }
+            )
+
+            def adb_shell(*args, **_kwargs):
+                if args[:3] == ("am", "stack", "list"):
+                    return "Stack id=1 displayId=0\nStack id=2 displayId=7\n"
+                if args[:3] == ("dumpsys", "window", "displays"):
+                    return (
+                        "Display: mDisplayId=7\n"
+                        "  mFocusedApp=com.tencent.wework/.launch.WwMainActivity\n"
+                        "Display: mDisplayId=0\n"
+                    )
+                return ""
+
+            with mock.patch.object(bridge, "adb_shell", side_effect=adb_shell) as shell:
+                restored = bridge.restore_dual_layout_locked()
+
+            self.assertTrue(restored)
+            calls = [call.args for call in shell.call_args_list]
+            self.assertIn(
+                (
+                    "am",
+                    "start",
+                    "--display",
+                    "0",
+                    "-f",
+                    "0x04000000",
+                    "-n",
+                    bridge_module.PERSONAL_WECHAT_MAIN_ACTIVITY,
+                ),
+                calls,
+            )
+            self.assertTrue(
+                any(call[:4] == ("am", "start", "--display", "7") for call in calls)
+            )
+            self.assertFalse(bridge.refresh_dual_mirror_if_needed())
+
+    def test_android_bridge_restarts_only_blank_virtual_wecom_mirror(self) -> None:
+        bridge_module = load_android_bridge()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            layout = root / "layout"
+            layout.write_text("dual\n", encoding="utf-8")
+            bridge = bridge_module.AndroidBridge(
+                {
+                    "serial": "device",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(root / "state.sqlite"),
+                    "queue": str(root / "queue.jsonl"),
+                    "history_db": str(root / "history.sqlite"),
+                    "staging_dir": str(root / "staging"),
+                    "android_layout_path": str(layout),
+                    "android_dual_tmux_target": "dual-session:wecom-virtual.0",
+                }
+            )
+
+            def adb_shell(*args, **_kwargs):
+                if args[:3] == ("am", "stack", "list"):
+                    return "Stack id=1 displayId=0\nStack id=2 displayId=7\n"
+                if args[:3] == ("dumpsys", "window", "displays"):
+                    return (
+                        "Display: mDisplayId=7\n"
+                        "  mFocusedApp=com.miui.home/.launcher.SecondaryDisplayLauncher\n"
+                        "Display: mDisplayId=0\n"
+                    )
+                return ""
+
+            with mock.patch.object(bridge, "adb_shell", side_effect=adb_shell):
+                restored = bridge.restore_dual_layout_locked()
+
+            self.assertTrue(restored)
+            with mock.patch.object(
+                bridge_module.subprocess,
+                "run",
+                return_value=SimpleNamespace(returncode=0),
+            ) as run:
+                refreshed = bridge.refresh_dual_mirror_if_needed()
+
+            self.assertTrue(refreshed)
+            run.assert_called_once()
+            self.assertEqual(
+                run.call_args.args[0],
+                [
+                    "tmux",
+                    "respawn-pane",
+                    "-k",
+                    "-t",
+                    "dual-session:wecom-virtual.0",
+                ],
+            )
+
     def test_wecom_router_preserves_complete_long_response(self) -> None:
         ingest = load_ingest()
         answer = "完整回答。" * 500
@@ -2953,13 +3066,34 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertIn("resize=scale", android_source)
         self.assertNotIn("vnc_lite.html", android_source)
         self.assertIn("ANDROID_DEVICE_RETRY_SECONDS", android_source)
-        self.assertIn('--app-match "^scrcpy --serial $serial([[:space:]]|$)"', android_source)
+        self.assertIn(
+            '--app-match "^([^[:space:]]*/)?scrcpy --serial $serial([[:space:]]|$)"',
+            android_source,
+        )
         self.assertIn("while true; do $command || true", android_source)
         self.assertIn("mirror: waiting for scrcpy retry", android_source)
-        self.assertIn("on|off|start|stop|restart|status|dual|single", android_source)
+        self.assertIn(
+            "on|off|start|stop|restart|status|dual|single|wechat|wecom",
+            android_source,
+        )
         self.assertIn("--new-display=1080x2160/440", android_source)
+        self.assertIn('help_output="$("$1" --help 2>&1)"', android_source)
         self.assertIn("--start-app=com.tencent.wework", android_source)
         self.assertIn("LabCanvas WeCom Virtual", android_source)
+        self.assertIn("Keep WeChat physical and WeCom virtual side by side", android_source)
+        self.assertIn("mix2s_dual_setup", android_source)
+        self.assertIn(
+            "Holding the shared Android lock for",
+            android_source,
+        )
+        self.assertNotIn('--purpose mix2s_dual_review \\', android_source)
+        self.assertIn("trap cleanup EXIT HUP INT TERM", android_source)
+        self.assertIn('kill -TERM -- "-$child_pid"', android_source)
+        self.assertIn("while [[ ", android_source)
+        self.assertNotIn("ANDROID_DEVICE_DUAL_REVIEW_SECONDS", android_source)
+        self.assertIn("dual_process_live", android_source)
+        self.assertIn("android_control_lease.py", android_source)
+        self.assertIn("tail -n 1 || true", android_source)
         self.assertIn("LAYOUT_FILE", android_source)
         self.assertIn('shell svc power stayon false', android_source)
         self.assertIn('shell input keyevent 223', android_source)

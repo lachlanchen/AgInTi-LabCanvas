@@ -393,6 +393,45 @@ def unlock_desktop_from_mobile(
         time.sleep(1.0)
     focus_device_page = focused_window(adb, serial)
     chat_list_recovery = False
+    launcher_recovery = False
+    if (
+        "WebWXLogoutUI" not in focus_device_page
+        and "com.tencent.mm" in focus_device_page
+        and "LauncherUI" not in focus_device_page
+    ):
+        # A Finder, article, image, or mini-program activity can remain above
+        # LauncherUI even after foregrounding WeChat. Bring the existing task
+        # back to its launcher without force-stopping the app or losing login.
+        adb_shell(
+            adb,
+            serial,
+            [
+                "am",
+                "start",
+                "-a",
+                "android.intent.action.MAIN",
+                "-c",
+                "android.intent.category.LAUNCHER",
+                "-f",
+                "0x14200000",
+                "-n",
+                "com.tencent.mm/.ui.LauncherUI",
+            ],
+            check=False,
+        )
+        time.sleep(1.0)
+        focus_launcher = focused_window(adb, serial)
+        if "com.tencent.mm" in focus_launcher:
+            launcher_recovery = True
+            chat_list_recovery = True
+            adb_shell(
+                adb,
+                serial,
+                ["input", "tap", str(banner_tap[0]), str(banner_tap[1])],
+                check=False,
+            )
+            time.sleep(1.0)
+            focus_device_page = focused_window(adb, serial)
     if "WebWXLogoutUI" not in focus_device_page and "com.tencent.mm" in focus_device_page:
         # LauncherUI is shared by the chat list and an open conversation. One
         # bounded Back returns an open conversation to the list so the desktop
@@ -417,6 +456,7 @@ def unlock_desktop_from_mobile(
             "focus_before": focus_before,
             "focus_after_banner": focus_device_page,
             "chat_list_recovery": chat_list_recovery,
+            "launcher_recovery": launcher_recovery,
             "before_screenshot": str(before),
         }
     device_page_screenshot = mobile_screenshot(adb, serial, output_dir, "device-page")
@@ -459,6 +499,7 @@ def unlock_desktop_from_mobile(
         "focus_before": focus_before,
         "focus_after_banner": focus_device_page,
         "chat_list_recovery": chat_list_recovery,
+        "launcher_recovery": launcher_recovery,
         "after_focus": focused_window(adb, serial),
         "state_before": state_before,
         "states_after_tap": states_after_tap,

@@ -33,6 +33,7 @@ from wechat_agent_backend import (
 )
 from wechat_memory import organize_messages
 from wechat_message_policy import (
+    has_explicit_video_generation_intent,
     is_no_reply_control,
     recorded_android_outbound_echo,
     recorded_android_outbound_file_echo,
@@ -4760,14 +4761,7 @@ def is_story_or_script_task(text: str) -> bool:
 
 
 def has_video_generation_intent(text: str) -> bool:
-    lowered = str(text or "").lower()
-    if any(marker in lowered for marker in ("xiaoyunque", "seedance", "xyq", "小云雀")):
-        return True
-    if any(marker in lowered for marker in ("video", "mp4", "movie", "film", "animation", "animate", "视频", "影片", "短片", "动画", "動畫")):
-        if re.search(r"\b(?:generate|create|make|write|do|produce|animate)\b", lowered):
-            return True
-        return any(marker in lowered for marker in ("生成", "做", "创作", "創作", "制作", "製作"))
-    return False
+    return has_explicit_video_generation_intent(text)
 
 
 def has_visual_generation_intent(text: str) -> bool:

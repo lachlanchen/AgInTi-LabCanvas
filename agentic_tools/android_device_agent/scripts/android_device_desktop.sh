@@ -27,11 +27,16 @@ DUAL_WINDOW_HEIGHT="${ANDROID_DEVICE_DUAL_WINDOW_HEIGHT:-1360}"
 DUAL_WINDOW_Y="${ANDROID_DEVICE_DUAL_WINDOW_Y:-500}"
 DUAL_LEFT_X="${ANDROID_DEVICE_DUAL_LEFT_X:-20}"
 DUAL_RIGHT_X="${ANDROID_DEVICE_DUAL_RIGHT_X:-740}"
+PRIVATE_SCRCPY="$ROOT/agentic_tools/wechat_gui_agent/.private/external/scrcpy-v4.1/scrcpy"
+SCRCPY_OVERRIDE="${ANDROID_DEVICE_SCRCPY_BIN:-}"
+CONTROL_LEASE="$ROOT/agentic_tools/android_device_agent/scripts/android_control_lease.py"
+CONTROL_LOCK="$ROOT/agentic_tools/wecom_agent/.private/wecom_android_bridge.lock"
+CONTROL_PRIORITY="$ROOT/agentic_tools/android_device_agent/.private/android_control_priority.json"
 
 usage() {
   cat <<'EOF'
 Usage:
-  android_device_desktop.sh [on|off|start|stop|restart|status|dual|single] [--serial SERIAL] [--open-wechat]
+  android_device_desktop.sh [on|off|start|stop|restart|status|dual|single|wechat|wecom] [--serial SERIAL] [--open-wechat]
 
 Starts a dedicated tmux-held noVNC desktop running scrcpy for an Android device.
 
@@ -40,8 +45,9 @@ Actions:
   off, stop         Stop the complete desktop stack and sleep the phone.
   restart           Perform a complete off/on cycle.
   status            Report mirror, transport, and phone power state.
-  dual              Show WeChat and WeCom side by side in one noVNC desktop.
-  single            Return to one physical-phone mirror window.
+  dual              Keep WeChat physical and WeCom virtual side by side.
+  single, wecom      Return to the automation-safe physical WeCom mirror.
+  wechat             Show WeChat on the physical mirror with media muted.
 
 Environment defaults:
   ANDROID_DEVICE_TMUX_SESSION=labcanvas-android-mix2s
@@ -57,7 +63,7 @@ EOF
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    on|off|start|stop|restart|status|dual|single) ACTION="$1"; shift ;;
+    on|off|start|stop|restart|status|dual|single|wechat|wecom) ACTION="$1"; shift ;;
     --serial) SERIAL="$2"; shift 2 ;;
     --open-wechat) OPEN_WECHAT="1"; shift ;;
     --no-wake) WAKE_DEVICE="0"; shift ;;
@@ -71,6 +77,43 @@ need() {
     echo "Missing required command: $1" >&2
     exit 3
   fi
+}
+
+resolve_scrcpy_bin() {
+  local candidate=""
+  for candidate in "$SCRCPY_OVERRIDE" "$PRIVATE_SCRCPY" "$(command -v scrcpy 2>/dev/null || true)"; do
+    if [[ -n "$candidate" && -x "$candidate" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  echo "Missing usable scrcpy binary." >&2
+  return 1
+}
+
+scrcpy_supports_new_display() {
+  local help_output
+  help_output="$("$1" --help 2>&1)" || return 1
+  grep -F -- '--new-display' <<<"$help_output" >/dev/null
+}
+
+mute_media() {
+  local serial="$1"
+  adb -s "$serial" shell media volume --stream 3 --set 0 >/dev/null 2>&1 || \
+    adb -s "$serial" shell cmd media_session volume --stream 3 --set 0 >/dev/null 2>&1 || true
+}
+
+launch_physical_app() {
+  local serial="$1"
+  local package="$2"
+  python3 "$CONTROL_LEASE" run \
+    --lock-path "$CONTROL_LOCK" \
+    --priority-path "$CONTROL_PRIORITY" \
+    --purpose "mix2s_show:$package" \
+    --timeout-seconds 120 \
+    --lease-seconds 180 \
+    -- adb -s "$serial" shell monkey -p "$package" -c android.intent.category.LAUNCHER 1 \
+    >/dev/null
 }
 
 device_serial() {
@@ -169,10 +212,19 @@ tmux_window_exists() {
     awk -v expected="$window_name" '$0 == expected {found=1} END {exit !found}'
 }
 
+dual_process_live() {
+  local escaped_serial serial="$1"
+  [[ -n "$serial" ]] || return 1
+  escaped_serial="$(regex_escape "$serial")"
+  pgrep -u "$USER_NAME" -f \
+    "^([^[:space:]]*/)?scrcpy --serial $escaped_serial --new-display(=|[[:space:]])" \
+    >/dev/null 2>&1
+}
+
 window_id_by_title() {
   local title="$1"
   DISPLAY="$DISPLAY_ID" xdotool search --name "^$(regex_escape "$title")$" 2>/dev/null |
-    tail -n 1
+    tail -n 1 || true
 }
 
 tile_dual_windows() {
@@ -196,17 +248,47 @@ tile_dual_windows() {
 }
 
 ensure_dual_layout() {
-  local dual_command serial
+  local dual_loop_command review_body review_command scrcpy_bin serial setup_command
   need adb
-  need scrcpy
   need tmux
   need xdotool
   serial="$(device_serial)"
-  adb -s "$serial" shell am start --display 0 -n com.tencent.mm/.ui.LauncherUI >/dev/null 2>&1 || true
+  scrcpy_bin="$(resolve_scrcpy_bin)"
+  if ! scrcpy_supports_new_display "$scrcpy_bin"; then
+    echo "Dual review requires scrcpy with --new-display support: $scrcpy_bin" >&2
+    return 1
+  fi
+  mute_media "$serial"
   tmux rename-window -t "$SESSION:0" wechat-physical 2>/dev/null || true
+  if tmux_window_exists "$DUAL_WINDOW_NAME" && ! dual_process_live "$serial"; then
+    tmux kill-window -t "$SESSION:$DUAL_WINDOW_NAME"
+  fi
   if ! tmux_window_exists "$DUAL_WINDOW_NAME"; then
-    dual_command=$(printf '%q ' \
-      scrcpy \
+    # The mirror is passive after startup. Holding the shared Android lock for
+    # its full review lifetime would block scheduled sends and relay polling.
+    setup_command=$(printf '%q ' \
+      python3 "$CONTROL_LEASE" run \
+      --lock-path "$CONTROL_LOCK" \
+      --priority-path "$CONTROL_PRIORITY" \
+      --purpose mix2s_dual_setup \
+      --timeout-seconds 120 \
+      --lease-seconds 180 \
+      -- adb -s "$serial" shell monkey -p com.tencent.mm -c android.intent.category.LAUNCHER 1)
+    review_body='set -e
+child_pid=""
+cleanup() {
+  if [[ "$child_pid" =~ ^[1-9][0-9]*$ ]] && kill -0 "$child_pid" 2>/dev/null; then
+    kill -TERM -- "-$child_pid" 2>/dev/null || true
+    wait "$child_pid" 2>/dev/null || true
+  fi
+}
+trap cleanup EXIT HUP INT TERM
+setsid "$@" &
+child_pid=$!
+wait "$child_pid"'
+    review_command=$(printf '%q ' \
+      bash -c "$review_body" _ \
+      env DISPLAY="$DISPLAY_ID" "$scrcpy_bin" \
       --serial "$serial" \
       --new-display=1080x2160/440 \
       --start-app=com.tencent.wework \
@@ -220,14 +302,16 @@ ensure_dual_layout() {
       --window-y "$DUAL_WINDOW_Y" \
       --window-width "$DUAL_WINDOW_WIDTH" \
       --window-height "$DUAL_WINDOW_HEIGHT")
+    dual_loop_command="while [[ \"\$(cat '$LAYOUT_FILE' 2>/dev/null || true)\" == dual ]]; do $setup_command >/dev/null 2>&1 || true; $review_command || true; sleep '$RETRY_SECONDS'; done"
     tmux new-window -d -t "$SESSION" -n "$DUAL_WINDOW_NAME" \
-      "cd '$ROOT' && while true; do DISPLAY='$DISPLAY_ID' $dual_command || true; sleep '$RETRY_SECONDS'; done"
+      "cd '$ROOT' && $dual_loop_command"
   fi
   tile_dual_windows "$serial"
   echo "dual displays: online (WeChat physical, WeCom virtual)"
 }
 
 ensure_single_layout() {
+  local app_package="${1:-com.tencent.wework}"
   local serial window=""
   need xdotool
   serial="$(known_serial 2>/dev/null || true)"
@@ -235,7 +319,10 @@ ensure_single_layout() {
     tmux kill-window -t "$SESSION:$DUAL_WINDOW_NAME"
   fi
   if [[ -n "$serial" ]]; then
-    adb -s "$serial" shell am start --display 0 -n com.tencent.mm/.ui.LauncherUI >/dev/null 2>&1 || true
+    if [[ "$app_package" == "com.tencent.mm" ]]; then
+      mute_media "$serial"
+    fi
+    launch_physical_app "$serial" "$app_package"
     window="$(window_id_by_title "LabCanvas Android MIX 2S ($serial)")"
   fi
   if [[ -n "$window" ]]; then
@@ -257,14 +344,15 @@ status() {
     echo "status: stopped"
   fi
   echo "layout: $layout"
-  if [[ "$layout" == "dual" ]] && tmux has-session -t "$SESSION" 2>/dev/null && tmux_window_exists "$DUAL_WINDOW_NAME"; then
+  serial="$(known_serial 2>/dev/null || true)"
+  if [[ "$layout" == "dual" ]] && tmux has-session -t "$SESSION" 2>/dev/null &&
+    tmux_window_exists "$DUAL_WINDOW_NAME" && dual_process_live "$serial"; then
     echo "dual displays: online (WeChat physical, WeCom virtual)"
   elif [[ "$layout" == "dual" ]]; then
     echo "dual displays: waiting for restore"
   else
     echo "dual displays: off"
   fi
-  serial="$(known_serial 2>/dev/null || true)"
   if [[ -n "$serial" ]] && pgrep -u "$USER_NAME" -f "^([^[:space:]]*/)?scrcpy --serial $(regex_escape "$serial")([[:space:]]|$)" >/dev/null 2>&1; then
     echo "mirror: connected ($serial)"
   elif tmux has-session -t "$SESSION" 2>/dev/null; then
@@ -330,10 +418,10 @@ stop_session() {
 }
 
 start_session() {
-  local attempt escaped_serial serial
+  local attempt escaped_serial scrcpy_bin serial
   need adb
-  need scrcpy
   need tmux
+  scrcpy_bin="$(resolve_scrcpy_bin)"
   if [[ ! "$RETRY_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
     echo "ANDROID_DEVICE_RETRY_SECONDS must be a positive integer." >&2
     exit 3
@@ -384,9 +472,9 @@ start_session() {
     --vnc-port "$VNC_PORT" \
     --novnc-port "$NOVNC_PORT" \
     --log-dir "$log_dir" \
-    --app-match "^scrcpy --serial $serial([[:space:]]|$)" \
+    --app-match "^([^[:space:]]*/)?scrcpy --serial $serial([[:space:]]|$)" \
     -- \
-    scrcpy \
+    "$scrcpy_bin" \
     --serial "$serial" \
     --stay-awake \
     --disable-screensaver \
@@ -434,7 +522,19 @@ case "$ACTION" in
   single)
     save_layout single
     start_session
-    ensure_single_layout
+    ensure_single_layout com.tencent.wework
+    status
+    ;;
+  wechat)
+    save_layout single
+    start_session
+    ensure_single_layout com.tencent.mm
+    status
+    ;;
+  wecom)
+    save_layout single
+    start_session
+    ensure_single_layout com.tencent.wework
     status
     ;;
 esac

@@ -1523,6 +1523,7 @@ class WeChatTransportStallGuardTests(unittest.TestCase):
             "poll_in_progress": True,
             "poll_stale": False,
             "surface_state": "polling",
+            "consecutive_poll_failures": 1,
             "last_poll_error": "BridgeError: WECOM_ANDROID_BUSY: serialized GUI control exceeded 5.0s",
         }
 
@@ -1530,6 +1531,21 @@ class WeChatTransportStallGuardTests(unittest.TestCase):
         self.assertTrue(
             guard.android_poll_failure_is_actionable(
                 {**busy, "poll_stale": True}
+            )
+        )
+        self.assertTrue(
+            guard.android_poll_failure_is_actionable(
+                {**busy, "consecutive_poll_failures": 3}
+            )
+        )
+        self.assertFalse(
+            guard.android_poll_failure_is_actionable(
+                {
+                    **busy,
+                    "consecutive_poll_failures": 12,
+                    "external_control_active": True,
+                    "external_control_purpose": "mix2s_dual_review",
+                }
             )
         )
         self.assertTrue(
@@ -1653,6 +1669,8 @@ class WeChatTransportStallGuardTests(unittest.TestCase):
                 "poll_healthy": False,
                 "consecutive_poll_failures": 7,
                 "blocked_media_recoveries": 3,
+                "external_control_active": True,
+                "external_control_purpose": "mix2s_dual_review",
                 "last_poll_error": "BridgeError: WeCom chat list is not visible",
             }
         ).encode()
@@ -1664,6 +1682,8 @@ class WeChatTransportStallGuardTests(unittest.TestCase):
         self.assertEqual(result["surface_state"], "anr")
         self.assertEqual(result["consecutive_poll_failures"], 7)
         self.assertEqual(result["blocked_media_recoveries"], 3)
+        self.assertTrue(result["external_control_active"])
+        self.assertEqual(result["external_control_purpose"], "mix2s_dual_review")
         self.assertIn("chat list", result["last_poll_error"])
 
     def test_supervisors_use_idempotent_missing_window_repair(self) -> None:

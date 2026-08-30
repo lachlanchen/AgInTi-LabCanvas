@@ -31,6 +31,9 @@ CHAT_SYNC_MAX_TARGETS_PER_CYCLE="${WECHAT_CHAT_SYNC_MAX_TARGETS_PER_CYCLE:-0}"
 WORKER_COUNT="${WECHAT_WORKER_COUNT:-2}"
 LOG_MAINTENANCE="${WECHAT_LOG_MAINTENANCE:-1}"
 LOG_MAINTENANCE_INTERVAL="${WECHAT_LOG_MAINTENANCE_INTERVAL:-300}"
+LOG_MAX_MIB="${WECHAT_LOG_MAX_MIB:-4}"
+LOG_KEEP_MIB="${WECHAT_LOG_KEEP_MIB:-1}"
+LOG_RETENTION_DAYS="${WECHAT_LOG_RETENTION_DAYS:-3}"
 export WECHAT_DECRYPT_REFRESH_INTERVAL="${WECHAT_DECRYPT_REFRESH_INTERVAL:-1}"
 export WECHAT_RESTART_DELAY="${WECHAT_RESTART_DELAY:-2}"
 export WECHAT_WORKER_EXPIRE_LEGACY_QUEUE="${WECHAT_WORKER_EXPIRE_LEGACY_QUEUE:-1}"
@@ -118,6 +121,9 @@ Environment:
   WECHAT_WORKER_COUNT         parallel queue workers, default 2
   WECHAT_LOG_MAINTENANCE      1 to cap generated logs/evidence, default 1
   WECHAT_LOG_MAINTENANCE_INTERVAL  retention pass interval, default 300 seconds
+  WECHAT_LOG_MAX_MIB          maximum generated log size, default 4 MiB
+  WECHAT_LOG_KEEP_MIB         recent complete-line tail retained after trimming, default 1 MiB
+  WECHAT_LOG_RETENTION_DAYS   generated log retention, default 3 days
   WECHAT_WORKER_PENDING_TASK_TTL_SECONDS  expire ordinary task backlog, default 900
   WECHAT_WORKER_DEFERRED_SEND_TTL_SECONDS expire outbound backlog, default 600
   WECHAT_WORKER_DEFERRED_SEND_GLOBAL_COOLDOWN_SECONDS deferred-send spacing, default 30
@@ -226,8 +232,8 @@ chat_sync_command() {
 }
 
 log_maintenance_command() {
-  printf "cd %q && python3 -u agentic_tools/wechat_gui_agent/scripts/wechat_output_retention.py --root %q --extra-root %q --interval %q --loop" \
-    "$ROOT" "$ROOT/output/wechat_gui_agent" "$ROOT/output/wecom" "$LOG_MAINTENANCE_INTERVAL"
+  printf "cd %q && python3 -u agentic_tools/wechat_gui_agent/scripts/wechat_output_retention.py --root %q --extra-root %q --max-log-mib %q --keep-log-mib %q --log-retention-days %q --interval %q --loop" \
+    "$ROOT" "$ROOT/output/wechat_gui_agent" "$ROOT/output/wecom" "$LOG_MAX_MIB" "$LOG_KEEP_MIB" "$LOG_RETENTION_DAYS" "$LOG_MAINTENANCE_INTERVAL"
 }
 
 worker_window_name() {

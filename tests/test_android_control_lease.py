@@ -76,3 +76,29 @@ class AndroidControlLeaseTests(unittest.TestCase):
             with mock.patch.object(module, "process_is_alive", return_value=True):
                 active = module.read_active_priority(marker, exclude_pid=999, now=10.0)
             self.assertEqual(active["purpose"], "personal_wechat_send")
+
+    def test_run_cli_returns_child_status_and_cleans_priority_marker(self):
+        module = load_lease()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            marker = root / "priority.json"
+            lock = root / "android.lock"
+            argv = [
+                "android_control_lease.py",
+                "run",
+                "--lock-path",
+                str(lock),
+                "--priority-path",
+                str(marker),
+                "--purpose",
+                "dual-review-test",
+                "--",
+                sys.executable,
+                "-c",
+                "raise SystemExit(7)",
+            ]
+            with mock.patch.object(sys, "argv", argv):
+                returncode = module.main()
+
+            self.assertEqual(returncode, 7)
+            self.assertFalse(marker.exists())

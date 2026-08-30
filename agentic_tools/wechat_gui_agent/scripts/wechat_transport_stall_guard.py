@@ -419,6 +419,8 @@ def probe_json_url(url: str, *, timeout: float = 4.0, attempts: int = 2) -> dict
         "poll_healthy": bool(payload.get("poll_healthy", payload.get("ok"))),
         "poll_stale": bool(payload.get("poll_stale")),
         "poll_in_progress": bool(payload.get("poll_in_progress")),
+        "external_control_active": bool(payload.get("external_control_active")),
+        "external_control_purpose": str(payload.get("external_control_purpose") or "")[:160],
         "consecutive_poll_failures": int(payload.get("consecutive_poll_failures") or 0),
         "blocked_media_recoveries": int(payload.get("blocked_media_recoveries") or 0),
         "last_poll_success_at": str(payload.get("last_poll_success_at") or ""),
@@ -1467,7 +1469,11 @@ def android_poll_failure_is_actionable(android: dict[str, Any]) -> bool:
         and bool(android.get("poll_in_progress"))
         and not bool(android.get("poll_stale"))
     )
-    return not serialized_busy
+    if not serialized_busy:
+        return True
+    if android.get("external_control_active"):
+        return False
+    return int(android.get("consecutive_poll_failures") or 0) >= 3
 
 
 def load_state(path: Path) -> dict[str, Any]:

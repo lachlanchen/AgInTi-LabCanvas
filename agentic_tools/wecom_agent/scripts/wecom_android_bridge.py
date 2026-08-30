@@ -59,6 +59,11 @@ DEFAULT_CONTROL_PRIORITY = (
     / ".private"
     / "android_control_priority.json"
 )
+DEFAULT_ANDROID_LAYOUT = (
+    ROOT / "output" / "android_device_agent" / "android-mix2s.layout"
+)
+DEFAULT_DUAL_TMUX_TARGET = "labcanvas-android-mix2s:wecom-virtual.0"
+PERSONAL_WECHAT_MAIN_ACTIVITY = "com.tencent.mm/.ui.LauncherUI"
 INGEST = TOOL_ROOT / "scripts" / "wecom_ingest.py"
 PACKAGE = "com.tencent.wework"
 DOCUMENTS_PACKAGE = "com.google.android.documentsui"
@@ -947,6 +952,9 @@ def initialize_config(
         "account_id": str(existing.get("account_id") or "external-gui"),
         "display": str(existing.get("display") or ":99"),
         "scrcpy_window_name": str(existing.get("scrcpy_window_name") or "LabCanvas Android MIX 2S"),
+        "android_dual_tmux_target": str(
+            existing.get("android_dual_tmux_target") or DEFAULT_DUAL_TMUX_TARGET
+        ),
         "novnc_url": str(
             existing.get("novnc_url")
             or "http://127.0.0.1:6129/vnc.html?host=127.0.0.1&port=6129&autoconnect=1&resize=scale"
@@ -1538,6 +1546,15 @@ class AndroidBridge:
         self.control_priority_path = Path(
             str(config.get("control_priority_path") or DEFAULT_CONTROL_PRIORITY)
         ).expanduser().resolve()
+        self.android_layout_path = Path(
+            str(config.get("android_layout_path") or DEFAULT_ANDROID_LAYOUT)
+        ).expanduser().resolve()
+        self.android_dual_tmux_target = str(
+            config.get("android_dual_tmux_target") or DEFAULT_DUAL_TMUX_TARGET
+        ).strip()
+        self._dual_refresh_lock = threading.Lock()
+        self._dual_refresh_requested = False
+        self._last_dual_refresh_at = 0.0
         self.reconcile_seconds = bounded_float(
             config.get("reconcile_seconds"), 20.0, 5.0, 600.0
         )
@@ -1732,8 +1749,14 @@ class AndroidBridge:
                     # relay that is waiting to send.
                     pass
         try:
-            with self.serialized(timeout_seconds=timeout_seconds):
-                yield
+            try:
+                with self.serialized(timeout_seconds=timeout_seconds):
+                    try:
+                        yield
+                    finally:
+                        self.restore_dual_layout_locked()
+            finally:
+                self.refresh_dual_mirror_if_needed()
         finally:
             with self._outbound_waiter_lock:
                 self._outbound_waiters = max(0, self._outbound_waiters - 1)
@@ -1783,14 +1806,140 @@ class AndroidBridge:
     ) -> Iterator[None]:
         """Yield passive GUI ownership while allowing explicit work to preempt it."""
         self.assert_passive_control_available()
-        with self.serialized(timeout_seconds=timeout_seconds):
-            self.assert_passive_control_available()
-            previous = bool(getattr(self._passive_control, "active", False))
-            self._passive_control.active = True
-            try:
-                yield
-            finally:
-                self._passive_control.active = previous
+        try:
+            with self.serialized(timeout_seconds=timeout_seconds):
+                self.assert_passive_control_available()
+                previous = bool(getattr(self._passive_control, "active", False))
+                self._passive_control.active = True
+                try:
+                    yield
+                finally:
+                    self._passive_control.active = previous
+                    self.restore_dual_layout_locked()
+        finally:
+            self.refresh_dual_mirror_if_needed()
+
+    def dual_layout_requested(self) -> bool:
+        try:
+            return self.android_layout_path.read_text(encoding="utf-8").strip() == "dual"
+        except OSError:
+            return False
+
+    def dual_virtual_display_id(self) -> int | None:
+        if not self.dual_layout_requested():
+            return None
+        output = self.adb_shell("am", "stack", "list", timeout=15, check=False)
+        display_ids = {
+            int(value)
+            for value in re.findall(r"\bdisplayId=(\d+)\b", output)
+            if int(value) > 0
+        }
+        return max(display_ids) if display_ids else None
+
+    def dual_virtual_wecom_drawn(self, display_id: int) -> bool:
+        output = self.adb_shell(
+            "dumpsys", "window", "displays", timeout=15, check=False
+        )
+        marker = f"Display: mDisplayId={display_id}"
+        start = output.find(marker)
+        if start < 0:
+            return False
+        section = output[start + len(marker) :]
+        next_display = section.find("Display: mDisplayId=")
+        if next_display >= 0:
+            section = section[:next_display]
+        return self.package in section
+
+    def request_dual_mirror_refresh(self) -> None:
+        with self._dual_refresh_lock:
+            self._dual_refresh_requested = True
+
+    def refresh_dual_mirror_if_needed(self) -> bool:
+        """Restart only a stale virtual mirror after releasing Android control."""
+        with self._dual_refresh_lock:
+            if not self._dual_refresh_requested:
+                return False
+            if not self.dual_layout_requested() or not self.android_dual_tmux_target:
+                self._dual_refresh_requested = False
+                return False
+            now = time.monotonic()
+            if now - self._last_dual_refresh_at < 3.0:
+                return False
+            self._dual_refresh_requested = False
+            self._last_dual_refresh_at = now
+        try:
+            process = subprocess.run(
+                [
+                    "tmux",
+                    "respawn-pane",
+                    "-k",
+                    "-t",
+                    self.android_dual_tmux_target,
+                ],
+                cwd=str(ROOT),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=5,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            process = None
+        if process is None or process.returncode != 0:
+            with self._dual_refresh_lock:
+                self._dual_refresh_requested = True
+            return False
+        self.record_recovery("dual_virtual_mirror_refresh")
+        return True
+
+    def restore_dual_layout_locked(self) -> bool:
+        """Restore both review panes before releasing shared GUI ownership."""
+        try:
+            virtual_display = self.dual_virtual_display_id()
+            if virtual_display is None:
+                return False
+            self.adb_shell(
+                "am",
+                "start",
+                "--display",
+                "0",
+                "-f",
+                "0x04000000",
+                "-n",
+                PERSONAL_WECHAT_MAIN_ACTIVITY,
+                timeout=25,
+                check=False,
+            )
+            self.adb_shell(
+                "am",
+                "start",
+                "--display",
+                str(virtual_display),
+                "-f",
+                "0x04000000",
+                "-n",
+                str(
+                    self.config.get("launch_component")
+                    or f"{self.package}/{WECOM_LAUNCH_COMPONENT}"
+                ),
+                timeout=25,
+                check=False,
+            )
+            for attempt in range(4):
+                if self.dual_virtual_wecom_drawn(virtual_display):
+                    break
+                if attempt < 3:
+                    time.sleep(0.25)
+            else:
+                # WeCom is single-task on this Android build. A relay restart
+                # can migrate the task while leaving the old virtual surface
+                # alive but blank. Recreate only that mirror after the shared
+                # Android lock is released.
+                self.request_dual_mirror_refresh()
+            return True
+        except (BridgeError, OSError, subprocess.SubprocessError):
+            # Display restoration is best-effort evidence/UI hygiene. It must
+            # never turn a verified message or artifact send into a failure.
+            return False
 
     def assert_passive_control_available(self) -> None:
         if self.outbound_waiting():
@@ -5582,6 +5731,7 @@ class AndroidBridge:
             and surface_state not in {"anr", "authentication", "crash_report"}
         )
         storage = self.device_data_storage_status() if authorized else dict(self._storage_status)
+        external_priority = self.external_control_priority() if authorized else None
         return {
             "ok": healthy,
             "enabled": bool(self.config.get("enabled", True)),
@@ -5600,6 +5750,12 @@ class AndroidBridge:
                 ),
             },
             "blocked_media_recoveries": self.blocked_media_recovery_count(),
+            "external_control_active": external_priority is not None,
+            "external_control_purpose": (
+                normalize_visible_text(external_priority.get("purpose"))[:160]
+                if isinstance(external_priority, dict)
+                else ""
+            ),
             **health,
             "target_groups": self.target_groups,
             "novnc_url": str(self.config.get("novnc_url") or ""),

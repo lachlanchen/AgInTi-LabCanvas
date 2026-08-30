@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import copy
 from datetime import datetime, timedelta
 import hashlib
 import io
@@ -2898,6 +2899,101 @@ stderr: noisy internal trace
         self.assertFalse(worker.has_public_publish_intent("https://weixin.qq.com/sph/Ae2UMH6gqr"))
         self.assertTrue(worker.has_public_publish_intent("Publish this video to Shipinhao"))
 
+    def test_worker_repairs_existing_video_publish_misclassified_as_generation(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "exact-current.mp4"
+            source.write_bytes(b"exact-video")
+            task = {
+                "id": "stale-generation-route",
+                "status": worker.GENERATED_VIDEO_WAITING_STATUS,
+                "request": (
+                    f"Publish the exact current video at {source}. "
+                    "Correct subtitles and generate concise metadata."
+                ),
+                "routine": {"id": "story_script_generation"},
+                "generated_video_monitor": {"last_status": "waiting"},
+                "generation_wait_count": 96,
+                "generation_poll_history": [{"wait_count": 95}],
+            }
+
+            changed = worker.enforce_current_task_route_safety(task)
+
+        self.assertTrue(changed)
+        self.assertEqual(task["route_decision"]["route_kind"], "publish_video")
+        self.assertEqual(task["route_decision"]["project"], "lazyedit")
+        self.assertTrue(task["route_decision"]["public_publish_allowed"])
+        self.assertFalse(task["route_decision"]["needs_recent_media"])
+        self.assertNotIn("routine", task)
+        self.assertNotIn("generated_video_monitor", task)
+        self.assertNotIn("generation_poll_history", task)
+        self.assertEqual(task["route_repair_history"][-1]["generation_wait_count"], 96)
+        self.assertFalse(worker.is_generate_video_task(task))
+
+    def test_orchestrator_closes_terminal_exact_publish_without_generation_or_agent(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "exact-current.mp4"
+            source.write_bytes(b"exact-video")
+            artifact_dir = root / "artifacts"
+            task = {
+                "id": "terminal-exact-publish",
+                "chat": "My devices",
+                "status": worker.CLAIMED_STATUS,
+                "request": (
+                    f"Publish the exact current video at {source}. "
+                    "Generate concise metadata after correcting subtitles."
+                ),
+                "routine": {"id": "story_script_generation"},
+                "generated_video_monitor": {"last_status": "waiting"},
+                "generation_wait_count": 12,
+                "result": {
+                    "message": (
+                        "Exact durable job verified; video_id=547, "
+                        "job_id=386, remote_job_id=job-22, status=done."
+                    ),
+                    "files": [],
+                    "confirmation": "",
+                },
+            }
+            queue_payload = {
+                "jobs": [
+                    {
+                        "id": 386,
+                        "video_id": 547,
+                        "status": "done",
+                        "remote_status": "done",
+                        "remote_job_id": "job-22",
+                        "platforms": ["shipinhao", "youtube", "instagram"],
+                        "filename": "exact-current.zip",
+                        "file_path": str(source),
+                        "updated_at": "2026-08-30T17:21:32+08:00",
+                    }
+                ]
+            }
+            policy = {
+                "model": "gpt-5.6-sol",
+                "reasoning_effort": "low",
+                "timeout_seconds": 30,
+                "reuse_session": True,
+            }
+            with mock.patch.object(worker, "worker_artifact_dir", return_value=artifact_dir), mock.patch.object(
+                worker, "persist_task_progress"
+            ), mock.patch.object(worker, "lazyedit_api_get", return_value=queue_payload), mock.patch.object(
+                worker, "prepare_worker_preflight"
+            ) as preflight, mock.patch.object(worker, "run_worker_agent_session") as agent:
+                raw = worker.run_task_orchestrator(task, policy)
+
+        payload = json.loads(raw)
+        self.assertEqual(payload["data"]["publish_stage"]["stage"], "published_verified")
+        self.assertEqual(payload["data"]["publish_stage"]["video_id"], 547)
+        self.assertEqual(task["routine"]["id"], "video_publish_existing")
+        self.assertEqual(task["orchestrator"]["last_action"], "recover_terminal_lazyedit_publish")
+        self.assertNotIn("generated_video_monitor", task)
+        preflight.assert_not_called()
+        agent.assert_not_called()
+
     def test_worker_repairs_native_shipinhao_card_to_download_delivery(self) -> None:
         worker = load_worker()
         exact_card = (
@@ -5088,6 +5184,105 @@ stderr: noisy internal trace
         )
         self.assertEqual(repaired["message_coverage"]["status"], "covered")
         self.assertFalse(repaired["stored_contract_repair"]["model_invoked"])
+
+    def test_repair_stored_result_sends_changed_file_without_repeating_text(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            report = root / "organoid-research-brief.pdf"
+            report.write_bytes(b"%PDF-1.4\n% repaired exact-task report\n")
+            message = "完整研究报告已整理完成。"
+            raw = json.dumps(
+                {
+                    "message": message,
+                    "files": [str(report)],
+                    "confirmation": "",
+                    "data": {"stored_result_contract_recovery": True},
+                },
+                ensure_ascii=False,
+            )
+            queue = root / "queue.jsonl"
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "supplemental-pdf-repair",
+                        "chat": "LabAgent",
+                        "status": "done",
+                        "request": "请发送完整研究 PDF。",
+                        "routine": {"id": "research_summary"},
+                        "route_decision": {
+                            "route_kind": "research_or_summary",
+                            "require_file_delivery": True,
+                        },
+                        "execution_contract": {
+                            "required_artifacts": ["compiled_pdf"],
+                        },
+                        "sent_file_paths": [str(report.resolve())],
+                        "wecom_delivery": {
+                            "status": "sent",
+                            "sent_messages": ["Earlier verified answer."],
+                            "sent_file_count": 1,
+                        },
+                        "result": {
+                            "message": message,
+                            "confirmation": "",
+                            "files": [str(report)],
+                            "raw": raw,
+                        },
+                    }
+                ],
+            )
+
+            delivered: list[dict[str, object]] = []
+
+            def send_once(result, _target_chat, _targets, *, task=None):
+                delivered.append(copy.deepcopy(result))
+                assert task is not None
+                sent = {
+                    str(Path(str(path)).expanduser().resolve())
+                    for path in task.get("sent_file_paths") or []
+                }
+                sent.update(
+                    str(Path(str(path)).expanduser().resolve())
+                    for path in result.get("files") or []
+                )
+                task["sent_file_paths"] = sorted(sent)
+                return []
+
+            with (
+                mock.patch.object(
+                    worker,
+                    "reader_facing_pdf_quality_issues",
+                    return_value=[],
+                ),
+                mock.patch.object(
+                    worker,
+                    "send_result_with_retries",
+                    side_effect=send_once,
+                ),
+                mock.patch.object(worker, "record_event"),
+            ):
+                repaired = worker.repair_stored_result_contract(
+                    queue,
+                    "supplemental-pdf-repair",
+                    send=True,
+                    send_targets=root / "targets.json",
+                )
+
+            self.assertEqual(len(delivered), 1)
+            self.assertEqual(delivered[0]["message"], "")
+            delivered_files = delivered[0]["files"]
+            self.assertEqual(len(delivered_files), 1)
+            supplemental = Path(str(delivered_files[0]))
+            self.assertIn("quality-repaired", supplemental.name)
+            self.assertTrue(supplemental.is_file())
+            self.assertEqual(supplemental.read_bytes(), report.read_bytes())
+            self.assertEqual(repaired["result"]["message"], message)
+            self.assertTrue(
+                repaired["stored_contract_repair"]["repeated_text_suppressed"]
+            )
+            self.assertEqual(repaired["status"], "done")
 
     def test_reconcile_repaired_artifact_coverage_keeps_unrelated_gap(self) -> None:
         worker = load_worker()
@@ -13752,6 +13947,62 @@ stderr: noisy internal trace
             ["/usr/bin/pdftotext", "-layout", str(report), "-"],
         )
 
+    def test_pdf_font_audit_rejects_unembedded_nonbase_font(self) -> None:
+        worker = load_worker()
+        report = Path("/tmp/reader-report.pdf")
+        output = """name                                 type              encoding         emb sub uni object ID
+------------------------------------ ----------------- ---------------- --- --- --- ---------
+Helvetica                            Type 1            WinAnsi          no  no  no       2  0
+STSong-Light                         CID Type 0        UniGB-UCS2-H     no  no  no       3  0
+ABCDEF+NotoSansCJK-Regular           CID TrueType      Identity-H       yes yes yes      4  0
+NVQNIF+NotoSansCJKjp-Regular-Identity-H CID Type 0C       Identity-H       yes yes yes      5  0
+"""
+        completed = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=output, stderr=""
+        )
+        with (
+            mock.patch.object(worker.shutil, "which", return_value="/usr/bin/pdffonts"),
+            mock.patch.object(worker.subprocess, "run", return_value=completed) as run,
+        ):
+            audit = worker.analyze_pdf_font_embedding(report)
+
+        self.assertEqual(audit["status"], "checked")
+        self.assertEqual(audit["font_count"], 4)
+        self.assertEqual(audit["unembedded_fonts"], ["STSong-Light"])
+        self.assertEqual(run.call_args.args[0], ["/usr/bin/pdffonts", str(report)])
+
+    def test_reader_facing_pdf_quality_rejects_unembedded_cjk_font(self) -> None:
+        worker = load_worker()
+        task = {
+            "routine": {"id": "research_summary"},
+            "route_decision": {"route_kind": "research_or_summary"},
+            "request": "Prepare and send a PDF research report.",
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            report = Path(tmp) / "report.pdf"
+            report.write_bytes(b"%PDF-1.4\n")
+            clean_text = "Research report\n" + ("Verified evidence and analysis. " * 30)
+            with (
+                mock.patch.object(
+                    worker,
+                    "extract_pdf_text_for_quality",
+                    return_value=(clean_text, ""),
+                ),
+                mock.patch.object(
+                    worker,
+                    "analyze_pdf_font_embedding",
+                    return_value={
+                        "status": "checked",
+                        "error": "",
+                        "font_count": 2,
+                        "unembedded_fonts": ["STSong-Light"],
+                    },
+                ),
+            ):
+                issues = worker.reader_facing_pdf_quality_issues(task, report)
+
+        self.assertIn("unembedded_nonbase_pdf_fonts", issues)
+
     def test_pdf_layout_quality_rejects_orphan_final_page(self) -> None:
         worker = load_worker()
         pages = [
@@ -14822,6 +15073,56 @@ stderr: noisy internal trace
         self.assertEqual(len(calls), 1)
         self.assertNotIn("--no-search", calls[0])
         self.assertIn("--allow-search", calls[0])
+
+    def test_worker_send_message_falls_back_to_android_before_desktop_submission(self) -> None:
+        worker = load_worker()
+        android_calls = []
+        with (
+            mock.patch.object(
+                worker,
+                "run_send_subprocess",
+                side_effect=RuntimeError("WECHAT_ENTRY_REQUIRED: log in first"),
+            ),
+            mock.patch.object(
+                worker,
+                "run_android_wechat_sender",
+                side_effect=lambda **kwargs: android_calls.append(kwargs) or {"ok": True},
+            ),
+            mock.patch.dict(os.environ, {"WECHAT_WORKER_TEXT_TRANSPORT": "auto"}),
+        ):
+            worker.send_message(
+                "done",
+                "My devices",
+                Path("/tmp/no-targets.json"),
+                target={"name": "My devices", "expected_title": "My devices"},
+                task={"id": "task-1:message:abc"},
+            )
+
+        self.assertEqual(len(android_calls), 1)
+        self.assertEqual(android_calls[0]["task_id"], "task-1:message:abc")
+        self.assertEqual(android_calls[0]["messages"], ["done"])
+
+    def test_worker_send_message_does_not_fallback_after_uncertain_timeout(self) -> None:
+        worker = load_worker()
+        with (
+            mock.patch.object(
+                worker,
+                "run_send_subprocess",
+                side_effect=RuntimeError("WECHAT_SEND_TIMEOUT: uncertain submission"),
+            ),
+            mock.patch.object(worker, "run_android_wechat_sender") as android_send,
+            mock.patch.dict(os.environ, {"WECHAT_WORKER_TEXT_TRANSPORT": "auto"}),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "WECHAT_SEND_TIMEOUT"):
+                worker.send_message(
+                    "done",
+                    "My devices",
+                    Path("/tmp/no-targets.json"),
+                    target={"name": "My devices", "expected_title": "My devices"},
+                    task={"id": "task-1:message:abc"},
+                )
+
+        android_send.assert_not_called()
 
     def test_required_file_send_failure_blocks_completion_message(self) -> None:
         worker = load_worker()

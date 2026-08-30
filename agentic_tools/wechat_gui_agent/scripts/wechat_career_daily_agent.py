@@ -104,7 +104,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "action",
-        choices=["run", "loop", "organize", "retry", "catch-up"],
+        choices=["run", "loop", "organize", "retry", "retry-organize", "catch-up"],
         nargs="?",
         default="run",
     )
@@ -145,6 +145,16 @@ def main() -> int:
         else:
             print(payload.get("status") or "done")
         return 0 if payload.get("ok") else 1
+    if args.action == "retry-organize":
+        payload = run_with_daily_operation_lock(
+            "organizer",
+            lambda: run_organizer(args, force_delivery=True),
+        )
+        if args.json:
+            print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+        else:
+            print(payload.get("status") or "done")
+        return 0 if payload.get("ok") else 1
     if args.action == "catch-up":
         payload = run_catch_up(args)
         if args.json:
@@ -168,6 +178,7 @@ def main() -> int:
 
 
 def loop_daily(args: argparse.Namespace) -> int:
+    active_run_key = ""
     last_run_key = ""
     organizer_done_key = ""
     career_retry_at: datetime | None = None
@@ -178,6 +189,14 @@ def loop_daily(args: argparse.Namespace) -> int:
         now = datetime.now()
         run_at = scheduled_run_time(now, args.morning_time)
         run_key = run_at.strftime("%Y-%m-%d")
+        if run_key != active_run_key:
+            active_run_key = run_key
+            last_run_key = ""
+            organizer_done_key = ""
+            career_retry_at = None
+            organizer_retry_at = None
+            career_status = "waiting"
+            organizer_status = "waiting"
         due = now >= run_at
         career_complete = career_delivery_complete_for_date(
             run_key,
@@ -949,7 +968,7 @@ def run_organizer(
     force_delivery: bool = False,
 ) -> dict[str, Any]:
     chat = str(getattr(args, "organize_chat", DEFAULT_ORGANIZER_CHAT) or DEFAULT_ORGANIZER_CHAT)
-    stamp = datetime.now().strftime("%Y-%m-%d")
+    stamp = str(getattr(args, "date", "") or "").strip() or datetime.now().strftime("%Y-%m-%d")
     state_path = organizer_state_path()
     state = read_json_file(state_path)
     report = OUTPUT / f"{stamp}-recent-items.zh.md"
@@ -2805,7 +2824,13 @@ def send_daily_result_reserved(
         status["file_sent"] = expected.issubset(set(status["files_sent"]))
     if not status["message_sent"]:
         try:
-            send_daily_with_busy_retry(send_message, message, args.send_chat, args.send_targets)
+            send_daily_with_busy_retry(
+                send_message,
+                message,
+                args.send_chat,
+                args.send_targets,
+                task={"id": f"daily-career-summary-{report.stem}-v1"},
+            )
             status["message_sent"] = True
         except Exception as exc:  # noqa: BLE001 - preserve send blocker for operator.
             status["errors"].append(f"message: {exc}")

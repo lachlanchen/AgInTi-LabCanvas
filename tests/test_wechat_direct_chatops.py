@@ -50,6 +50,24 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
             direct_chatops.direct_reply_requires_worker_delivery(config, "简短回答。")
         )
 
+    def test_metadata_generation_does_not_mean_video_generation(self) -> None:
+        self.assertFalse(
+            direct_chatops.has_video_generation_intent(
+                "Publish this existing video and generate concise metadata after correcting subtitles."
+            )
+        )
+        self.assertFalse(
+            direct_chatops.has_video_generation_intent(
+                "发布这个现有视频，并生成简洁的元数据和字幕。"
+            )
+        )
+        self.assertTrue(
+            direct_chatops.has_video_generation_intent(
+                "Generate a new video from these reference images."
+            )
+        )
+        self.assertTrue(direct_chatops.has_video_generation_intent("请生成一个新视频。"))
+
     def test_idle_monitor_result_is_quiet_but_real_work_is_logged(self) -> None:
         idle = {
             "new_rows": 0,

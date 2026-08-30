@@ -101,6 +101,34 @@ class WeChatCareerDailyAgentTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(captured, {"stamp": "2026-07-29", "force": True})
 
+    def test_retry_organizer_action_reuses_explicit_date(self):
+        module = load_wechat_career_daily_agent()
+        captured = {}
+        original_argv = sys.argv[:]
+        original_run = module.run_organizer
+        try:
+            sys.argv = [
+                "wechat_career_daily_agent.py",
+                "retry-organize",
+                "--date",
+                "2026-07-29",
+                "--json",
+            ]
+            module.run_organizer = lambda args, force_delivery=False, **_kwargs: (
+                captured.update({"date": args.date, "force_delivery": force_delivery})
+                or {"ok": True, "status": "done"}
+            )
+            rc = module.main()
+        finally:
+            sys.argv = original_argv
+            module.run_organizer = original_run
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(
+            captured,
+            {"date": "2026-07-29", "force_delivery": True},
+        )
+
     def test_uncertain_file_delivery_reconciles_from_exact_outbound_echo(self):
         module = load_wechat_career_daily_agent()
         original_private = module.PRIVATE
@@ -295,7 +323,7 @@ Q3: 今天谁可以给我一个真实反馈?
         module = load_wechat_career_daily_agent()
         sent_messages = []
         sent_files = []
-        module.send_message = lambda message, chat, send_targets: sent_messages.append((message, chat, send_targets))
+        module.send_message = lambda message, chat, send_targets, **_kwargs: sent_messages.append((message, chat, send_targets))
         module.send_file = lambda report, chat, send_targets: sent_files.append((report, chat, send_targets))
         module.ensure_markdown_pdf_companions = lambda report: [
             report.with_name("report.zh.pdf"),
@@ -341,7 +369,7 @@ Why it matters: It turns reflection into evidence.
         module = load_wechat_career_daily_agent()
         sent_messages = []
         sent_files = []
-        module.send_message = lambda message, chat, send_targets: sent_messages.append((message, chat, send_targets))
+        module.send_message = lambda message, chat, send_targets, **_kwargs: sent_messages.append((message, chat, send_targets))
         module.send_file = lambda report, chat, send_targets: sent_files.append((report, chat, send_targets))
         module.ensure_markdown_pdf_companions = lambda report: []
         args = argparse.Namespace(
@@ -367,7 +395,7 @@ Why it matters: It turns reflection into evidence.
         module.GUI_SEND_PRIORITY = Path(temp_dir.name) / "send-priority.json"
         observed = []
 
-        def fake_send(message, chat, send_targets):
+        def fake_send(message, chat, send_targets, **_kwargs):
             payload = json.loads(module.GUI_SEND_PRIORITY.read_text(encoding="utf-8"))
             observed.append((message, chat, send_targets, payload))
 
@@ -394,7 +422,7 @@ Why it matters: It turns reflection into evidence.
         temp_dir = tempfile.TemporaryDirectory()
         self.addCleanup(temp_dir.cleanup)
         module.GUI_SEND_PRIORITY = Path(temp_dir.name) / "send-priority.json"
-        module.send_message = lambda *_args: (_ for _ in ()).throw(RuntimeError("send failed"))
+        module.send_message = lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("send failed"))
         args = argparse.Namespace(
             send_chat="lachlanchan",
             send_targets=Path("/tmp/send-targets.json"),
@@ -1381,6 +1409,54 @@ Nature 光计算维度和视觉大模型预测实验属于另一条技术探索�
         self.assertTrue(payload["ok"])
         self.assertFalse(payload["generated"])
         self.assertEqual(sent, [(pdf, "写作 外语 挣钱")])
+
+    def test_organizer_retries_explicit_previous_date_after_midnight(self):
+        module = load_wechat_career_daily_agent()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            module.ROOT = root
+            module.PRIVATE = root / ".private"
+            module.OUTPUT = root / "output"
+            module.OUTPUT.mkdir(parents=True)
+            stamp = "2026-08-30"
+            report = module.OUTPUT / f"{stamp}-recent-items.zh.md"
+            pdf = module.OUTPUT / f"{stamp}-recent-items.zh.pdf"
+            report.write_text("# Existing", encoding="utf-8")
+            pdf.write_bytes(b"%PDF existing")
+            module.write_json_file(
+                module.organizer_state_path(),
+                {
+                    "date": stamp,
+                    "chat": "MEMO写作—外语—挣钱",
+                    "status": "delivery_failed",
+                    "report": str(report),
+                    "pdf": str(pdf),
+                    "quality": {"accepted": True},
+                },
+            )
+            module.run_agent_session = lambda *_args, **_kwargs: self.fail(
+                "agent must not rerun"
+            )
+            sent = []
+            module.send_file = lambda path, chat, targets, **_kwargs: sent.append(
+                (path, chat)
+            )
+            args = argparse.Namespace(
+                organize_chat="MEMO写作—外语—挣钱",
+                date=stamp,
+                memory_db=root / "memory.sqlite",
+                model="gpt-test",
+                reasoning_effort="medium",
+                timeout_seconds=30,
+                send=True,
+                send_targets=root / "targets.json",
+            )
+
+            payload = module.run_organizer(args)
+
+        self.assertTrue(payload["ok"])
+        self.assertFalse(payload["generated"])
+        self.assertEqual(sent, [(pdf, "MEMO写作—外语—挣钱")])
 
     def test_generated_only_organizer_can_be_reviewed_then_sent_without_rerun(self):
         module = load_wechat_career_daily_agent()

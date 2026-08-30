@@ -44,6 +44,44 @@ def is_no_reply_control(text: str) -> bool:
     return bool(NO_REPLY_RE.match(value))
 
 
+def has_explicit_video_generation_intent(text: str) -> bool:
+    """Match creation of the video itself, not metadata or subtitle work.
+
+    A message such as ``publish this video and generate concise metadata``
+    contains both ``video`` and ``generate`` but is not a video-generation
+    request. Keep the action and its video object coupled in the same phrase.
+    """
+    value = normalize_transport_text(text).casefold()
+    if not value:
+        return False
+    if any(marker in value for marker in ("xiaoyunque", "seedance", "xyq", "小云雀")):
+        return True
+    if re.search(
+        r"\b(?:text|image|audio|music)[ -]to[ -](?:video|film|animation)\b",
+        value,
+    ):
+        return True
+    video = r"(?:video|movie|film|animation|clip)"
+    action = r"(?:generate|create|make|produce|animate|regenerate)"
+    if re.search(
+        rf"\b{action}\b(?:\s+[\w'-]+){{0,5}}\s+\b{video}\b",
+        value,
+    ):
+        return True
+    if re.search(
+        rf"\b{video}\b(?:\s+[\w'-]+){{0,3}}\s+\b(?:generation|creation|regeneration)\b",
+        value,
+    ):
+        return True
+    chinese_video = r"(?:视频|視頻|影片|短片|动画|動畫)"
+    chinese_action = r"(?:生成|制作|製作|创作|創作|重做|重新生成|做)"
+    if re.search(rf"{chinese_action}[^,;:，；：。！？\n]{{0,10}}{chinese_video}", value):
+        return True
+    if re.search(rf"{chinese_video}[^,;:，；：。！？\n]{{0,6}}(?:生成|制作|製作|创作|創作|重做)", value):
+        return True
+    return False
+
+
 def recorded_outbound_echo(
     db_path: Path,
     chat_name: str,

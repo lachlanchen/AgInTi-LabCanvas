@@ -9,6 +9,15 @@ state files, route guards, media sync, worker tasks, skills, and safety rules,
 read [docs/FULL_CONTROL_MANUAL.md](docs/FULL_CONTROL_MANUAL.md).
 For the reliability and efficiency contract used by future agents, read
 [docs/ROBUST_EFFICIENT_OPERATIONS.md](docs/ROBUST_EFFICIENT_OPERATIONS.md).
+For the transport repair runbook covering the `wechat_login_required` and
+`wecom_login_required` health-guard issue codes, including how to restart an
+exact dead or stalled tmux window, resume a durable task, and clear an orphaned
+process only after proving it is orphaned, read
+[docs/TRANSPORT_REPAIR_RUNBOOK.md](docs/TRANSPORT_REPAIR_RUNBOOK.md).
+The runbook also documents the `wechat_login_required` recovery sequence:
+confirm the exact tmux window is dead or stalled, restart only that window via
+`labcanvas wechat hold start` / `labcanvas wechat stack start`, then verify the
+health probe returns to `ok` before resuming any queued durable task.
 For the reusable routine registry that keeps agents supervising known workflows
 instead of inventing new ones, read
 [docs/ROUTINE_ORCHESTRATOR.md](docs/ROUTINE_ORCHESTRATOR.md).

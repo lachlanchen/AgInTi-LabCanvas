@@ -125,7 +125,9 @@ supervises the external bridge. Authorization/restart touches only the
 `bind` remains a bounded one-shot diagnostic.
 
 The Android helper installs Tencent's official APK into the ignored private
-directory and waits for the owner to unlock and authorize the device:
+directory and waits for the owner to unlock and authorize the device. The
+installer never runs under a root shell; it requires an interactive owner
+session so the keyguard and authorization prompts stay visible:
 
 ```bash
 agentic_tools/wecom_agent/scripts/wecom_android_setup.sh prepare
@@ -197,6 +199,42 @@ non-GUI health window; an Android bridge update reloads only `android-relay`,
 preserving WeCom app data and the logged-in account. This activates bounded
 recovery fixes without restarting either desktop client.
 
+### Login-required recovery
+
+When the health guard reports `wechat_login_required`, the desktop WeCom
+client has lost its authenticated session. This is a degraded state, not a
+crash: the supervisor does not force-restart the client, because a restart
+would not restore the login and could discard the owner's session state.
+Recovery is bounded to the following reversible steps, in order:
+
+1. Confirm the client window is alive and not stalled (health probe).
+2. If the window is dead or stalled, restart only that exact tmux window.
+3. If the window is healthy but logged out, surface the login prompt to the
+   owner for a normal human QR/CAPTCHA unlock. The agent never bypasses
+   QR/CAPTCHA or changes credentials.
+4. Resume any durable queued task that was paused by the login loss, using the
+   repository's queue recovery command, after the session is restored.
+
+The supervisor keeps the transport degraded (not restart-looping) while the
+owner completes the human unlock, matching the Android keyguard handling above.
+
+### Health-guard issue codes
+
+The deterministic health guard reports the following bounded issue codes. Each
+maps to a single reversible recovery action; the agent inspects only the
+operational logs needed for the code and never reads or quotes chat content.
+
+| Code | Meaning | Bounded recovery |
+| --- | --- | --- |
+| `wechat_login_required` | Desktop WeCom lost its authenticated session | Surface login prompt to owner; never bypass QR/CAPTCHA; keep transport degraded until human unlock. The Wine client must be restarted only when its tmux window is confirmed dead or stalled; a healthy logged-in client is never force-restarted. |
+| `wecom_queue_stalled` | Durable queue task paused by transport loss | Resume with the repository's queue recovery command |
+| `wecom_window_dead` | Exact tmux window is dead or stalled | Restart only that exact tmux window |
+| `wecom_orphan_process` | Orphaned process left after a crash | Clear only after proving it is orphaned |
+
+These codes are degraded states, not crashes. The supervisor does not
+force-restart a healthy logged-in client, does not change credentials or
+accounts, and does not delete user data. Recovery stays local and reversible.
+
 On Linux, the official download page does not provide a native desktop build.
 The optional enrollment helper installs Tencent's official Windows client in a
 dedicated ignored Wine prefix and exposes only that client on localhost noVNC:
@@ -236,7 +274,16 @@ The CLI bridge admits one exact configured group-name match, stores raw IDs and
 message fingerprints privately, processes only the latest recent message on
 first binding, and prevents restart backlog floods. Its official message API
 currently supports text replies; do not claim generic outbound file delivery
-for this channel.
+for this channel. When the tenant lacks `msg` permission, the bridge reports
+`wechat_login_required` as a degraded health state rather than a hard failure,
+so the supervisor can keep the transport warm and retry binding on the next
+poll cycle without restarting a healthy logged-in GUI. The health guard treats
+`wechat_login_required` as a recoverable degraded state: it inspects only the
+bounded operational status/logs for that issue code, restarts an exact dead or
+stalled tmux window when proven, resumes a durable task, and clears an orphaned
+process only after proving it is orphaned. It never sends chat messages,
+publishes, changes credentials/accounts, bypasses QR/CAPTCHA, deletes user
+data, or restarts a healthy logged-in GUI.
 
 Tencent currently documents that long-connection AI bots do not participate in
 external/customer groups. The official CLI guard therefore verifies `msg`

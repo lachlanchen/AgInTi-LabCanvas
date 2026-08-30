@@ -42,8 +42,13 @@ DEFAULT_DEVICE_LOCK = (
 )
 DEFAULT_PRIORITY = ANDROID_PRIVATE / "android_control_priority.json"
 DEFAULT_OUTPUT = ROOT / "output" / "wechat_android_send"
+DEFAULT_ANDROID_LAYOUT = (
+    ROOT / "output" / "android_device_agent" / "android-mix2s.layout"
+)
 PACKAGE = "com.tencent.mm"
 MAIN_ACTIVITY = "com.tencent.mm/.ui.LauncherUI"
+WECOM_PACKAGE = "com.tencent.wework"
+WECOM_MAIN_ACTIVITY = "com.tencent.wework/.launch.LaunchSplashActivity"
 SHARE_ACTIVITY = "com.tencent.mm/.ui.tools.ShareImgUI"
 REMOTE_STAGING = "/sdcard/Download"
 WEBWX_DEVICE_ACTIVITY_SUFFIX = ".plugin.webwx.ui.WebWXLogoutUI"
@@ -104,6 +109,31 @@ def main() -> int:
     return 0
 
 
+def resumed_component_on_display(payload: str, display_id: int) -> tuple[str, str]:
+    """Read the resumed component from one logical Android display only."""
+    section_match = re.search(
+        rf"^Display #{int(display_id)} \(.*?\):(?P<body>.*?)(?=^Display #|\Z)",
+        str(payload or ""),
+        flags=re.MULTILINE | re.DOTALL,
+    )
+    body = section_match.group("body") if section_match else str(payload or "")
+    match = re.search(
+        r"mResumedActivity:.*?\s([A-Za-z0-9_.]+)/([A-Za-z0-9_.$]+)",
+        body,
+    )
+    return (match.group(1), match.group(2)) if match else ("", "")
+
+
+def virtual_display_id_from_stack_list(payload: str) -> int | None:
+    """Find the secondary Android display created for split review."""
+    display_ids = {
+        int(value)
+        for value in re.findall(r"\bdisplayId=(\d+)\b", str(payload or ""))
+        if int(value) > 0
+    }
+    return max(display_ids) if display_ids else None
+
+
 class AndroidWechatSender:
     def __init__(
         self,
@@ -155,6 +185,8 @@ class AndroidWechatSender:
         if not components:
             raise AndroidWechatError("all outbound components were empty")
         results: list[dict[str, Any]] = []
+        restore_error = ""
+        wecom_restored = False
         purpose = f"personal_wechat_send:{self.task_id[:80]}"
         with priority_android_control(
             lock_path=DEFAULT_DEVICE_LOCK,
@@ -163,27 +195,36 @@ class AndroidWechatSender:
             timeout_seconds=float(os.environ.get("WECHAT_ANDROID_LOCK_TIMEOUT", "120")),
             lease_seconds=float(os.environ.get("WECHAT_ANDROID_LEASE_SECONDS", "420")),
         ):
-            self.wake_and_launch()
-            self.ensure_exact_chat()
-            for component in components:
-                status = self.component_status(component["key"])
-                if status == "sent":
-                    results.append({"key": component["key"], "status": "already_sent"})
-                    continue
-                if status == "uncertain":
-                    raise AndroidWechatError(
-                        f"ANDROID_WECHAT_UNCERTAIN: component {component['key']} requires review"
-                    )
-                if component["kind"] == "file":
-                    results.append(self.send_file_component(component))
-                else:
-                    results.append(self.send_text_component(component))
+            try:
+                self.wake_and_launch()
+                self.ensure_exact_chat()
+                for component in components:
+                    status = self.component_status(component["key"])
+                    if status == "sent":
+                        results.append({"key": component["key"], "status": "already_sent"})
+                        continue
+                    if status == "uncertain":
+                        raise AndroidWechatError(
+                            f"ANDROID_WECHAT_UNCERTAIN: component {component['key']} requires review"
+                        )
+                    if component["kind"] == "file":
+                        results.append(self.send_file_component(component))
+                    else:
+                        results.append(self.send_text_component(component))
+            finally:
+                try:
+                    self.restore_wecom()
+                    wecom_restored = True
+                except (AndroidWechatError, OSError, subprocess.SubprocessError) as exc:
+                    restore_error = f"{type(exc).__name__}: {exc}"[:300]
         return {
             "ok": True,
             "transport": "wechat_android",
             "task_id": self.task_id,
             "chat": self.chat,
             "components": results,
+            "wecom_restored": wecom_restored,
+            "restore_error": restore_error,
         }
 
     def text_component(self, text: str) -> dict[str, Any]:
@@ -304,17 +345,79 @@ class AndroidWechatSender:
 
     def launch_wechat_main(self) -> None:
         self.shell(
-            ["am", "start", "-W", "-f", "0x04000000", "-n", MAIN_ACTIVITY],
+            [
+                "am",
+                "start",
+                "-W",
+                "--display",
+                "0",
+                "-f",
+                "0x04000000",
+                "-n",
+                MAIN_ACTIVITY,
+            ],
             timeout=25,
         )
 
+    def restore_wecom(self) -> None:
+        """Return the shared physical display to its passive polling owner."""
+        self.collapse_system_overlays()
+        virtual_display = self.dual_virtual_display_id()
+        if virtual_display is not None:
+            self.shell(
+                [
+                    "am",
+                    "start",
+                    "-W",
+                    "--display",
+                    str(virtual_display),
+                    "-f",
+                    "0x04000000",
+                    "-n",
+                    WECOM_MAIN_ACTIVITY,
+                ],
+                timeout=25,
+            )
+            for _ in range(4):
+                time.sleep(0.7)
+                if self.component_on_display(virtual_display)[0] == WECOM_PACKAGE:
+                    return
+            raise AndroidWechatError(
+                "WeCom did not return to the requested virtual display"
+            )
+        self.shell(
+            ["am", "start", "-W", "-f", "0x04000000", "-n", WECOM_MAIN_ACTIVITY],
+            timeout=25,
+        )
+        for _ in range(4):
+            time.sleep(0.7)
+            if self.current_package() == WECOM_PACKAGE:
+                return
+            self.shell(
+                ["monkey", "-p", WECOM_PACKAGE, "-c", "android.intent.category.LAUNCHER", "1"],
+                timeout=20,
+                check=False,
+            )
+        raise AndroidWechatError("WeCom did not return to the shared physical display")
+
+    def dual_virtual_display_id(self) -> int | None:
+        """Return the active scrcpy display only while split review is requested."""
+        try:
+            layout = DEFAULT_ANDROID_LAYOUT.read_text(encoding="utf-8").strip()
+        except OSError:
+            return None
+        if layout != "dual":
+            return None
+        proc = self.shell(["am", "stack", "list"], timeout=15, check=False)
+        return virtual_display_id_from_stack_list(str(proc.stdout or ""))
+
+    def component_on_display(self, display_id: int) -> tuple[str, str]:
+        proc = self.shell(["dumpsys", "activity", "activities"], timeout=15, check=False)
+        return resumed_component_on_display(str(proc.stdout or ""), display_id)
+
     def current_component(self) -> tuple[str, str]:
         proc = self.shell(["dumpsys", "activity", "activities"], timeout=15, check=False)
-        match = re.search(
-            r"mResumedActivity:.*?\s([A-Za-z0-9_.]+)/([A-Za-z0-9_.$]+)",
-            str(proc.stdout or ""),
-        )
-        return (match.group(1), match.group(2)) if match else ("", "")
+        return resumed_component_on_display(str(proc.stdout or ""), 0)
 
     def current_package(self) -> str:
         return self.current_component()[0]
@@ -339,6 +442,19 @@ class AndroidWechatSender:
     def current_chat_matches(self, screenshot: Path | None = None) -> bool:
         shot = screenshot or self.screenshot("title-guard")
         if text_matches_alias(self.header_text(shot), self.aliases):
+            return True
+        width, height = image_size(shot)
+        centered_header_lines = [
+            line
+            for line in ocr_lines(shot)
+            if line.center_y <= int(height * 0.12)
+            and line.left >= int(width * 0.18)
+            and line.right <= int(width * 0.82)
+        ]
+        if any(
+            text_matches_alias(line.text, self.aliases)
+            for line in centered_header_lines
+        ):
             return True
         return text_matches_alias(enhanced_header_text(shot), self.aliases)
 

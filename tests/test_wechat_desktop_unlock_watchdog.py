@@ -306,6 +306,44 @@ class WeChatDesktopUnlockWatchdogTests(unittest.TestCase):
         self.assertEqual(commands.count(["input", "keyevent", "4"]), 1)
         self.assertEqual(commands.count(["input", "tap", "505", "282"]), 2)
 
+    def test_mobile_device_page_recovers_from_finder_activity_without_force_stop(self) -> None:
+        screenshot = Path("/tmp/watchdog-finder-recovery.png")
+        focuses = [
+            "mCurrentFocus=Window{ u0 com.tencent.mm/.plugin.finder.ui.FinderShareFeedRelUI}",
+            "mCurrentFocus=Window{ u0 com.tencent.mm/.plugin.finder.ui.FinderShareFeedRelUI}",
+            "mCurrentFocus=Window{ u0 com.tencent.mm/.ui.LauncherUI}",
+            "mCurrentFocus=Window{ u0 com.tencent.mm/.plugin.webwx.ui.WebWXLogoutUI}",
+            "mCurrentFocus=Window{ u0 com.tencent.mm/.plugin.webwx.ui.WebWXLogoutUI}",
+        ]
+        with (
+            mock.patch.object(watchdog, "keep_android_awake"),
+            mock.patch.object(watchdog, "start_android_package"),
+            mock.patch.object(watchdog, "focused_window", side_effect=focuses),
+            mock.patch.object(watchdog, "mobile_desktop_lock_state", side_effect=["locked", "unlocked"]),
+            mock.patch.object(watchdog, "mobile_screenshot", return_value=screenshot),
+            mock.patch.object(
+                watchdog,
+                "adb_shell",
+                return_value=subprocess.CompletedProcess([], 0, "", ""),
+            ) as shell,
+            mock.patch.object(watchdog.time, "sleep"),
+        ):
+            result = watchdog.unlock_desktop_from_mobile(
+                "adb",
+                "physical-phone",
+                (505, 282),
+                (540, 690),
+                Path("/tmp"),
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["launcher_recovery"])
+        commands = [call.args[2] for call in shell.call_args_list]
+        launcher_commands = [command for command in commands if command[:2] == ["am", "start"]]
+        self.assertEqual(len(launcher_commands), 1)
+        self.assertNotIn(["am", "force-stop", "com.tencent.mm"], commands)
+        self.assertEqual(commands.count(["input", "tap", "505", "282"]), 2)
+
     def test_phone_unlocked_label_uses_reset_cycle_not_single_lock_tap(self) -> None:
         screenshot = Path("/tmp/watchdog-test.png")
         with (

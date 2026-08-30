@@ -33,9 +33,9 @@ def main() -> int:
         default=[],
         help="Additional generated-output root whose logs use the same bounds.",
     )
-    parser.add_argument("--max-log-mib", type=float, default=16.0)
-    parser.add_argument("--keep-log-mib", type=float, default=8.0)
-    parser.add_argument("--log-retention-days", type=float, default=14.0)
+    parser.add_argument("--max-log-mib", type=float, default=4.0)
+    parser.add_argument("--keep-log-mib", type=float, default=1.0)
+    parser.add_argument("--log-retention-days", type=float, default=3.0)
     parser.add_argument("--attempt-evidence-days", type=float, default=1.0)
     parser.add_argument("--sent-evidence-days", type=float, default=30.0)
     parser.add_argument("--diagnostic-evidence-days", type=float, default=14.0)
