@@ -1666,6 +1666,19 @@ stderr: noisy internal trace
         self.assertEqual(result["files"], ["/tmp/result.pdf"])
         self.assertNotIn("AgInTi: starting", result["message"])
 
+    def test_parse_worker_result_does_not_treat_message_prose_as_file_path(self) -> None:
+        worker = load_worker()
+        raw = json.dumps(
+            {
+                "message": "Evidence note saved to output/task/evidence-note.md",
+                "file": "output/task/evidence-note.md",
+            }
+        )
+
+        result = worker.parse_worker_result(raw)
+
+        self.assertEqual(result["files"], ["output/task/evidence-note.md"])
+
     def test_parse_worker_result_sanitizes_unstructured_backend_logs(self) -> None:
         worker = load_worker()
         raw = "aginti: startup\nstdout: hidden details\nUseful result line\nbackend: aginti"
@@ -3435,7 +3448,7 @@ stderr: noisy internal trace
             "recoverable_aginti_permission_pause",
         )
         self.assertIn("grants no new permission", calls[1]["retry_context"]["instruction"])
-        self.assertEqual(calls[0]["sandbox_mode"], "host")
+        self.assertEqual(calls[0]["sandbox_mode"], "docker-workspace")
         self.assertEqual(calls[1]["sandbox_mode"], "docker-workspace")
         self.assertFalse(calls[1]["allow_host_workspace"])
         self.assertNotIn("worker_retry_context", task)
@@ -3508,18 +3521,19 @@ stderr: noisy internal trace
             "output/wechat_worker/scope-test",
         )
         self.assertEqual(config["permission_mode"], "normal")
-        self.assertEqual(config["sandbox_mode"], "host")
-        self.assertTrue(config["allow_host_workspace"])
+        self.assertEqual(config["sandbox_mode"], "docker-workspace")
+        self.assertEqual(config["package_install_policy"], "allow")
+        self.assertFalse(config["allow_host_workspace"])
 
-    def test_worker_backend_config_can_disable_aginti_host_workspace(self) -> None:
+    def test_worker_backend_config_can_explicitly_enable_aginti_host_workspace(self) -> None:
         worker = load_worker()
-        with mock.patch.dict(os.environ, {"WECHAT_AGINTI_HOST_WORKSPACE": "0"}):
+        with mock.patch.dict(os.environ, {"WECHAT_AGINTI_HOST_WORKSPACE": "1"}):
             config = worker.worker_backend_config(
                 {"id": "scope-test", "request": "Inspect only."},
                 "aginti",
             )
-        self.assertNotIn("sandbox_mode", config)
-        self.assertNotIn("allow_host_workspace", config)
+        self.assertEqual(config["sandbox_mode"], "host")
+        self.assertTrue(config["allow_host_workspace"])
 
     def test_worker_backend_config_contains_permission_recovery_in_docker(self) -> None:
         worker = load_worker()
@@ -3558,6 +3572,61 @@ stderr: noisy internal trace
 
         self.assertEqual(config["evidence_scope_request"], "Explicit bounded request.")
         self.assertEqual(config["evidence_scope_artifact_root"], "output/custom")
+
+    def test_failed_worker_records_safe_backend_attribution(self) -> None:
+        worker = load_worker()
+        task = {"id": "failed-worker", "chat": "LabAgent", "request": "Create report."}
+        failed = {
+            "ok": False,
+            "backend": "aginti",
+            "thread_id": "private-session-identifier",
+            "stderr_tail": "permission_required with private diagnostic text",
+            "message_source": "session.stopped",
+            "provider": "deepseek",
+            "backend_attempts": [
+                {
+                    "backend": "aginti",
+                    "model": "aginti",
+                    "reasoning_effort": "medium",
+                    "ok": False,
+                    "failure_kind": "other",
+                    "returncode": 1,
+                    "stderr_tail": "must not persist",
+                }
+            ],
+            "provider_attempts": [
+                {
+                    "provider": "deepseek",
+                    "ok": False,
+                    "returncode": 1,
+                    "failure_kind": "permission_required",
+                    "retry_safe": False,
+                    "private_prompt": "must not persist",
+                }
+            ],
+        }
+
+        with mock.patch.object(worker, "run_codex_session", return_value=failed), mock.patch.object(
+            worker, "task_long_term_history_context", return_value={}
+        ):
+            result = worker.run_worker_agent_session(
+                task,
+                {
+                    "model": "aginti",
+                    "reasoning_effort": "medium",
+                    "sandbox": "danger-full-access",
+                    "timeout_seconds": 300,
+                },
+            )
+
+        self.assertIn("Worker failed via aginti", result)
+        self.assertFalse(task["agent_session"]["ok"])
+        self.assertEqual(task["agent_session"]["failure_kind"], "permission_required")
+        self.assertEqual(task["agent_session"]["message_source"], "session.stopped")
+        serialized = json.dumps(task["agent_session"], ensure_ascii=False)
+        self.assertNotIn("private diagnostic text", serialized)
+        self.assertNotIn("must not persist", serialized)
+        self.assertNotIn("private-session-identifier", serialized)
 
     def test_run_worker_codex_stops_after_completed_artifact_recovery(self) -> None:
         worker = load_worker()

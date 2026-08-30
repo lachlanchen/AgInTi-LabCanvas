@@ -8571,22 +8571,10 @@ Bounded task packet:
         fallback_reasoning_effort=model_policy.get("fallback_reasoning_effort", str(policy["reasoning_effort"])),
         backend_prompts={"aginti": aginti_backend_prompt},
     )
+    record_worker_agent_session(task, result, requested_backend=backend)
     if not result["ok"]:
         actual_backend = str(result.get("backend") or backend)
         return f"Worker failed via {actual_backend}: {str(result.get('stderr_tail') or result.get('message') or '').strip()[:1000]}"
-    actual_backend = str(result.get("backend") or backend)
-    task["agent_session"] = {
-        "backend": actual_backend,
-        "requested_backend": backend,
-        "role": "worker",
-        "thread_id_short": str(result.get("thread_id") or "")[:8],
-        "resumed": bool(result.get("resumed")),
-        "fallback_started": bool(result.get("fallback_started")),
-        "backend_fallback_used": bool(result.get("backend_fallback_used")),
-        "backend_attempts": result.get("backend_attempts") if isinstance(result.get("backend_attempts"), list) else [],
-        "provider": str(result.get("provider") or ""),
-        "provider_attempts": result.get("provider_attempts") if isinstance(result.get("provider_attempts"), list) else [],
-    }
     task["codex_session"] = {
         "role": "worker",
         "thread_id_short": str(result.get("thread_id") or "")[:8],
@@ -8595,6 +8583,67 @@ Bounded task packet:
         "backend_fallback_used": bool(result.get("backend_fallback_used")),
     }
     return str(result.get("message") or "").strip()
+
+
+def safe_agent_attempts(value: Any) -> list[dict[str, Any]]:
+    """Keep backend attribution while excluding prompts and diagnostic text."""
+
+    if not isinstance(value, list):
+        return []
+    allowed = {
+        "backend",
+        "model",
+        "reasoning_effort",
+        "fallback_reason",
+        "credit_retry",
+        "ok",
+        "failure_kind",
+        "returncode",
+        "provider",
+        "retry_safe",
+        "retry_mode",
+        "continued_same_session",
+    }
+    return [
+        {key: item[key] for key in allowed if key in item}
+        for item in value[-8:]
+        if isinstance(item, dict)
+    ]
+
+
+def record_worker_agent_session(
+    task: dict[str, Any],
+    result: dict[str, Any],
+    *,
+    requested_backend: str,
+) -> None:
+    """Persist safe success or failure evidence for exact-task diagnosis."""
+
+    backend_attempts = safe_agent_attempts(result.get("backend_attempts"))
+    provider_attempts = safe_agent_attempts(result.get("provider_attempts"))
+    failure_kind = str(result.get("reason") or "").strip()
+    if not failure_kind:
+        attempts = provider_attempts or backend_attempts
+        if attempts:
+            failure_kind = str(attempts[-1].get("failure_kind") or "").strip()
+    task["agent_session"] = {
+        "ok": bool(result.get("ok")),
+        "backend": str(result.get("backend") or requested_backend),
+        "requested_backend": requested_backend,
+        "role": "worker",
+        "thread_id_short": str(result.get("thread_id") or "")[:8],
+        "resumed": bool(result.get("resumed")),
+        "fallback_started": bool(result.get("fallback_started")),
+        "backend_fallback_used": bool(result.get("backend_fallback_used")),
+        "backend_attempts": backend_attempts,
+        "provider": str(result.get("provider") or ""),
+        "provider_attempts": provider_attempts,
+    }
+    if not result.get("ok"):
+        task["agent_session"]["failure_kind"] = failure_kind or "backend_failed"
+        message_source = str(result.get("message_source") or "").strip()
+        if message_source:
+            task["agent_session"]["message_source"] = message_source
 
 
 def build_existing_video_publish_agent_prompt(task: dict[str, Any]) -> str:
@@ -9079,12 +9128,12 @@ def audit_and_repair_worker_completion(
             correction = enforce_reader_facing_pdf_quality(task, correction)
             if completion_repair_result_usable(correction):
                 combined = merge_completion_results(combined, correction)
-                repaired = True
                 second = run_completion_audit(task, combined)
                 attempts.append(
                     completion_audit_record(second, stage="corrected")
                 )
                 final = second
+                repaired = not bool(second.get("missing"))
             else:
                 attempts.append(
                     {
@@ -9114,12 +9163,19 @@ def audit_and_repair_worker_completion(
         if recovered_audit is not None:
             final = recovered_audit
             repaired = repaired or recovered_ok
-    coverage = completion_message_coverage(task, final, attempts, repaired=repaired)
+    repair_attempted = pre_recovery_attempted or correction_attempted
+    repair_succeeded = bool(repair_attempted and not final.get("missing"))
+    coverage = completion_message_coverage(
+        task,
+        final,
+        attempts,
+        repaired=repair_succeeded,
+    )
     task["completion_audit"] = {
         "status": str(final.get("status") or ""),
         "attempts": attempts,
-        "repair_attempted": pre_recovery_attempted or correction_attempted,
-        "repair_succeeded": repaired,
+        "repair_attempted": repair_attempted,
+        "repair_succeeded": repair_succeeded,
     }
     task["message_coverage"] = coverage
     if coverage["unresolved_item_ids"]:
@@ -9351,10 +9407,17 @@ def worker_backend_config(task: dict[str, Any], backend: str) -> dict[str, Any]:
         config["sandbox_mode"] = "docker-workspace"
         config["package_install_policy"] = "allow"
         config["allow_host_workspace"] = False
-    elif os.environ.get("WECHAT_AGINTI_HOST_WORKSPACE", "1") != "0":
+    elif os.environ.get("WECHAT_AGINTI_HOST_WORKSPACE", "0") == "1":
         config.setdefault("permission_mode", "normal")
         config.setdefault("sandbox_mode", "host")
         config.setdefault("allow_host_workspace", True)
+    else:
+        # Real workers need a writable project sandbox, but they do not need
+        # broad host authority. Keep host execution an explicit operator opt-in.
+        config.setdefault("permission_mode", "normal")
+        config.setdefault("sandbox_mode", "docker-workspace")
+        config.setdefault("package_install_policy", "allow")
+        config.setdefault("allow_host_workspace", False)
     config.setdefault(
         "evidence_scope_request",
         task_focus_text(task) or str(task.get("request") or "").strip(),
@@ -18974,7 +19037,10 @@ def file_entries_from_json(data: Any) -> list[str]:
     def visit(value: Any, *, key: str = "") -> None:
         lowered = key.lower()
         if isinstance(value, str):
-            if lowered in file_keys or looks_like_artifact_path(value):
+            keyed_as_file = lowered in file_keys or lowered.endswith(
+                ("_file", "_path")
+            )
+            if keyed_as_file and looks_like_artifact_path(value):
                 files.append(value)
         elif isinstance(value, list):
             for item in value:

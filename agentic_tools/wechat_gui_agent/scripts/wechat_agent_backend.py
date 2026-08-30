@@ -757,6 +757,18 @@ def classify_backend_failure(result: dict[str, Any]) -> str:
         return "quota"
     if any(marker in text for marker in MODEL_FAILURE_MARKERS):
         return "model_unavailable"
+    if any(
+        marker in text
+        for marker in (
+            "permission_required",
+            "permission required",
+            "requires approval",
+            "allow destructive actions",
+        )
+    ):
+        return "permission_required"
+    if "model_did_not_execute" in text:
+        return "model_did_not_execute"
     if int(result.get("returncode") or 0) == 127 or any(marker in text for marker in UNAVAILABLE_FAILURE_MARKERS):
         return "unavailable"
     return "other"

@@ -538,7 +538,7 @@ The following table separates implemented mechanisms from verified behavior.
 | P0 | Source freshness is conflated with monitor freshness | `caught_up` only means cursor reached stale cache | Track source generation/epoch independently and expose source-stalled versus quiet-chat states | A quiet logged-in fixture stays healthy; a logged-out or frozen-source fixture fails health |
 | P0 | End-to-end current-message behavior is unverified | Loops are alive but recent user messages never reached the decrypted DB | Restore login, reconcile only recent exact rows, and run one real inbound-to-delivery smoke test | Exact new message ID appears in source ledger, task/disposition, outbound ledger, and chat exactly once |
 | P0 | Schedules can appear alive while transport cannot deliver | Scheduler heartbeat can remain fresh during client logout | Separate generation health from delivery health and persist one deferred exact output | Due report is generated once, deferred while logged out, and delivered once after login without regeneration |
-| P0 | WeCom scheduled research can fail before useful work or artifact promotion | Today's exact tasks include safe research ending as `permission_required`, inspiration ending as `model_did_not_execute`, and completed exact-task PDFs left undelivered | Attribute provider versus AgInTi versus LabCanvas completion-gate failure; recover existing exact artifacts without rerunning; fix the owning reusable layer | One bounded daily and one inspiration task execute through AgInTi, promote verified artifacts, and deliver exactly once without false permission gates |
+| P0 | WeCom scheduled research can fail before useful work or artifact promotion | Today's exact tasks include safe research ending as `permission_required`, inspiration ending as `model_did_not_execute`, and completed exact-task PDFs left undelivered. Attribution found that LabCanvas defaulted genuine AgInTi workers to conservative host mode; AgInTi correctly refused broad host shell work. | Default genuine workers to `normal` + `docker-workspace` with package setup allowed; keep host mode explicit; retain safe failure attribution; recover only artifacts that pass the existing content gate | A bounded DeepSeek/AgInTi worker now creates and verifies an exact file in Docker without a permission pause. One bounded daily and one inspiration task must still promote/deliver exactly once before closing this row. |
 | P1 | Consecutive-message coverage has historically been inconsistent | Repeated reports of only the last message being handled | Enforce immutable per-row ledger and post-response coverage audit across all backends | Burst tests show 100% row representation with one coherent response where appropriate |
 | P1 | Duplicate/repeated replies and files have occurred | Repeated acknowledgements, reports, and schedule artifacts were observed | Use one idempotency identity across route, worker, sender, mirror, and restart recovery | Duplicate rate is zero under retry, crash, restart, and outbound-mirror tests |
 | P1 | Login-required sends can become generic failures | GUI sender can return entry-required while upstream marks work failed | Persist deferred delivery with exact artifact/message identity and human-gate state | Login recovery sends the existing result once; model/tool task is not rerun |
@@ -673,9 +673,10 @@ These are local operational targets, not external availability guarantees:
 1. Fix truthful personal-WeChat login/source health.
 2. Keep runtime monitoring evidence bounded without weakening state or failure
    diagnostics.
-3. Diagnose today's exact WeCom `permission_required`,
-   `model_did_not_execute`, and existing-artifact promotion failures; repair the
-   owning AgInTi or LabCanvas layer and recover exact artifacts without reruns.
+3. Validate the repaired WeCom worker sandbox on one bounded daily and one idle
+   inspiration occurrence. Recover existing artifacts only when they pass the
+   current quality gate; never deliver or rerun rejected output merely to clear
+   a queue row.
 4. Restore login through the visible human QR gate and prove one exact live
    round trip.
 5. Audit recent source rows only and recover missing safe work without draining
@@ -716,6 +717,36 @@ The first P0 correction is implemented and locally verified:
   Chat-sync now uses temporary screenshots and retains only one overwriteable
   failure image per chat.
 - The focused monitor, chat-sync, and retention suite passed 189 tests.
+- The WeCom permission failure was reproduced from exact AgInTi session
+  evidence: LabCanvas launched a genuine worker as `permissionMode=normal`,
+  `sandboxMode=host`, and AgInTi stopped at `permission_required` rather than
+  silently granting broad host access. This was a LabCanvas integration
+  regression, not an AgInTi reasoning defect.
+- Genuine AgInTi workers now default to the contained writable Docker workspace
+  with package setup allowed. Host workspace access remains an explicit
+  operator opt-in, and response-only roles remain read-only.
+- Failed worker rows now retain compact backend/provider/failure attribution
+  without prompts, raw diagnostics, full session IDs, or chat content.
+- A live bounded DeepSeek/AgInTi smoke created, read back, and verified
+  `output/aginti-permission-smoke-v3/proof.txt`, returned the exact requested
+  contract string, and exited with code zero. The worker pane was then reloaded
+  through its guarded self-test without restarting the WeCom gateway, GUI,
+  account session, scheduler, or Android relay.
+- An isolated queue/orchestrator research task then ran through AgInTi with
+  DeepSeek, created an exact-task evidence note containing official Python
+  documentation URLs, and reached terminal `done` with complete source-message
+  coverage. It performed no chat delivery or external write.
+- That smoke exposed a completion-audit false negative: outbound Markdown was
+  represented only by filename while generated PDFs had bounded reader-facing
+  content. The auditor now receives bounded exact-task Markdown/text content,
+  treats it as untrusted evidence, and marks a repair successful only when the
+  follow-up audit actually has no missing items.
+- Structured worker parsing now accepts singular/plural file fields but no
+  longer treats ordinary message prose ending in a filename as a file path.
+- The focused backend/worker suite passed 536 tests, the completion-audit
+  regression suite passed, and the full repository suite passed 1,615 tests.
+  The previous storage and health commit also passed GitHub Actions run
+  `33293139708`.
 
 This does not yet prove live end-to-end operation. The remaining human gate is
 one QR login, followed by bounded reconciliation of recent exact rows and one

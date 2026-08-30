@@ -28,6 +28,22 @@ def load_backend():
 
 
 class WeChatAgentBackendTests(unittest.TestCase):
+    def test_backend_failure_classification_preserves_actionable_aginti_reasons(self) -> None:
+        backend = load_backend()
+
+        self.assertEqual(
+            backend.classify_backend_failure(
+                {"ok": False, "stderr_tail": "session stopped: permission_required"}
+            ),
+            "permission_required",
+        )
+        self.assertEqual(
+            backend.classify_backend_failure(
+                {"ok": False, "stderr_tail": "reason=model_did_not_execute"}
+            ),
+            "model_did_not_execute",
+        )
+
     def test_aginti_normal_worker_can_use_explicit_host_workspace(self) -> None:
         backend = load_backend()
         args = backend.aginti_sandbox_args(
