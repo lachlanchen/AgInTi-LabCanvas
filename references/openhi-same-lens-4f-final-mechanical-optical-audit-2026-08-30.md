@@ -21,16 +21,26 @@ lens specification/image folders. The beam-splitter B-rep and its center at
 The holder geometry, lens clearances, support lands, 30 mm lens-retainer
 threads, bounded thread runout, transition chamfers, B-axis shift, nominal
 focal datums, and complete physical path lengths are internally consistent.
-All generated mechanical STEP parts are valid and all printable meshes are
-watertight.
+All generated mechanical STEP parts are valid single solids. Every separate
+STL and 3MF print file is one watertight component, starts at `Z = 0`, crosses
+the first `0.20 mm` layer, and every 3MF contains exactly one millimetre-unit
+mesh object and one build item.
 
-The audit found and corrected one lens-model-only defect: the earlier lens
-proxies approximated spherical surfaces with many conical bands, and the
-short-focus GLA bevel could locally extend above its specified sphere. The
-four lens models now use analytic spherical B-reps. The two GLA lenses use
-true `0.2 mm` CAD chamfers on both rim edges. No holder, thread, seat, arm,
-beam-splitter, or outer-end datum changed. All 24 regenerated mechanical parts
-retain exactly the previous solid count, bounding box, and volume.
+The audit corrected two independent defects. First, the earlier lens proxies
+approximated spherical surfaces with many conical bands, and the short-focus
+GLA bevel could locally extend above its specified sphere. The four lens
+models now use analytic spherical B-reps. The two GLA lenses use true `0.2 mm`
+CAD chamfers on both rim edges. Second, the accepted regenerated A+C+BS source
+contained an accidental `0.10 mm` fusion membrane at the C receiver where a
+fill ended at `X = 269.9 mm` but the smooth bore began at `X = 270.0 mm`.
+Extending only the smooth pilot across that interval removed the membrane
+without moving the helical thread, external envelope, beam-splitter support,
+seat, or focal datum.
+
+The source correction removes `68.811593844 mm3` from the side-receiver region.
+The four derived A+C+BS parts consequently lose approximately
+`68.85-68.87 mm3` after their lens-specific booleans. The other 20 mechanical parts retain
+their previous solid count, bounding box, and volume exactly.
 
 ## Lens Fit And Manufacturability
 
@@ -75,7 +85,7 @@ The regenerated A/B/C lens-retainer pairs are clearance fits:
   parent interval
 
 Direct construction-body checks place the first and last tooth within
-`0.0000001 mm` of the requested end planes. No thread tooth enters a lens
+`0.000001 mm` of the requested end planes. No thread tooth enters a lens
 pocket, transition, or outer body.
 
 The central C interface is deliberately different. The A+C+BS side/C female
@@ -133,18 +143,43 @@ thicknesses, and principal-plane/BFL data. Their external mechanical envelopes
 and holders are valid, but the internal cemented prescription remains an
 explicit reconstruction assumption.
 
+## Optical Bore And Receiver Audit
+
+The validator intersects the complete mechanical assembly with a centered
+`4.0 mm` diameter cylinder along each A, B, and C optical axis. Every part
+reports zero overlap over the complete outer-end-to-beam-splitter ranges. The
+C receiver additionally receives a `29.4 mm` diameter probe from `X = 269.91`
+to `274.95 mm`; both the corrected source A+C+BS body and every generated
+variant report zero overlap.
+
+The `4.0 mm` test is a regression core that proves continuity and catches a
+blocking membrane. It is not a claim that the entire central region has a
+40 mm clear optical aperture. The original 45-degree beam-splitter support
+intentionally occupies part of larger centered probes and remains preserved.
+
 ## Alignment And Geometry Preservation
 
 - A and C use the beam-splitter datum at `X = 255.000 mm`.
 - The complete B chain remains at `X = 254.633 mm`, preserving the accepted
   `-0.367 mm` beam-splitter offset.
+- Holder bore, lens pocket, lens B-rep, cap bore, and output bore axis errors
+  are zero within `0.00000001 mm` for all three branches.
 - Protected beam-splitter geometry difference is zero within the B-rep check.
-- All 24 mechanical parts match the pre-audit run in solid count, bounding box,
-  and volume.
+- Twenty mechanical parts match the pre-audit run in solid count, bounding
+  box, and volume. Only the four A+C+BS bodies contain the deliberate C-bore
+  membrane removal described above.
 - Lens STEP face counts are now `6` for each doublet and `5` for each GLA
   plano-convex lens, replacing the prior 100-386 faceted faces.
-- All assembly STEP files pass OCCT validity checks.
-- All separate part and lens meshes are watertight.
+- All assembly STEP files pass OCCT validity checks; every mechanical part STEP
+  reimports as one valid solid.
+- All separate part and lens meshes are watertight and winding-consistent.
+- Lens B holders are printed after a `180 degree` Y rotation on the outer
+  planar retainer end. C caps and Lens C holders use `-90 degree` Y rotations
+  so the thread axes remain vertical. A, B, and A+C+BS preserve their source
+  orientations.
+- Each design has a checked print release under
+  `runs/run-3-c-path-clear-print-release-20260830T053241Z/`, mirrored to the
+  matching Nutstore LabCanvas subfolder.
 
 ## Remaining Physical Checks
 

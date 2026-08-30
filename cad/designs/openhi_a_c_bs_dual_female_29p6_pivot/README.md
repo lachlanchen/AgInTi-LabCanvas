@@ -30,10 +30,12 @@ The unchanged A top male is approximately `29.8/30.6 mm` root/crest, and the rev
 
 - Source and output bbox: `[40.0, 40.0, 84.9]` mm; preserved: `True`.
 - All material changes are confined to the two receiver envelopes: `True`.
-- Relative to accepted run 1, every change is confined to the lower/A receiver: `True`.
+- Relative to accepted run 1, the deltas match the A fit revision plus the bounded C-membrane removal: `True`.
 - One solid: `True`; OCCT valid after STEP round trip: `True`.
 - Lower/A receiver measured `29.8/30.6 mm`: `True`.
 - Side/C receiver remained `29.6/30.4 mm`: `True`.
+- BS-to-C optical core is clear: `True`.
+- C receiver has no fusion membrane: `True`.
 - Thread runouts remain bounded: `True`.
 - Lower transition endpoints and required slopes preserved: `True`.
 - Render mesh is one watertight, consistently wound component: `True`.
@@ -43,6 +45,7 @@ The unchanged A top male is approximately `29.8/30.6 mm` root/crest, and the rev
 
 - `run-1-dual-female-29p6-20260814T132555Z`: accepted A/C `29.6/29.6 mm` female-pivot build.
 - `run-2-a-female-29p8-c-female-29p6-20260815T035628Z`: current A/C `29.8/29.6 mm` female-pivot build.
+- `run-3-clear-c-optical-bore-20260830T052552Z`: preserves those pivots and removes the accidental `0.10 mm` C-bore fusion membrane.
 - Root `USE_THIS_*` files always point to the current checked build.
 
 ## Rebuild

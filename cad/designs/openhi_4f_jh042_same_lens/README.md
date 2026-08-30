@@ -7,6 +7,8 @@
 - `artifacts/jh042_lens.step`: standalone lens model.
 - `artifacts/manifest.json`: dimensions, source identity, assembly transforms, focal datums, and validation.
 - `artifacts/renders/openhi_4f_spatial_exploded.png`: spatial view with all mechanical parts, lenses, and beam splitter separated along their mating directions.
+- `artifacts/renders/openhi_4f_print_parts_layout.png`: exact orientations used by the separate STL/3MF print files.
+- `runs/run-3-c-path-clear-print-release-20260830T053241Z/`: checked one-object print files and the matching Nutstore handoff.
 
 ## Optical Layout
 
@@ -41,6 +43,8 @@ The output thread also preserves the source OpenHI printed profile (`24.4 mm` ro
 The holder side supplies the flat locating shoulder. A/B/C retain from the opposite side. The 45-degree diameter transition is on the A/B/C-facing receiver side, preserving the original OpenHI design philosophy.
 
 The A and C axes use the beam-splitter datum. The complete B chain, including holder bore, pocket, lens, retainer, and camera thread, preserves the accepted source axis at `X = 254.633 mm`; it must not be recentered to `255 mm`.
+
+The final validator probes a centered `4.0 mm` cylinder through the complete A, B, and C mechanical paths. It also probes a `29.4 mm` smooth core across the A+C+BS C receiver. All probes must have zero solid overlap. This explicitly prevents the earlier `0.10 mm` fusion membrane from returning at the C receiver.
 
 ## Prescription Status
 

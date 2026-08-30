@@ -14,15 +14,18 @@ exports.  The assembly transformation is recorded in the manifest.
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 import hashlib
 import itertools
 import json
 import math
 import shutil
 import sys
+import zipfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Iterable
+from xml.etree import ElementTree
 
 import cadquery as cq
 from cadquery import exporters
@@ -111,6 +114,13 @@ CAMERA_THREAD_END_LEAD_MM = 0.4
 CAMERA_TRANSITION_MM = 3.0
 CAMERA_CLEAR_BORE_MM = 21.0
 MIN_OUTER_COLLAR_MM = 0.1
+OPTICAL_CORE_PROBE_DIAMETER_MM = 4.0
+C_RECEIVER_MEMBRANE_PROBE_DIAMETER_MM = 29.4
+C_RECEIVER_PROBE_X0 = 269.91
+C_RECEIVER_PROBE_X1 = 274.95
+OPTICAL_PATH_END_MARGIN_MM = 0.05
+BREP_BOUND_TOLERANCE_MM = 1e-6
+PRINT_RELEASE_RUN_NAME = "run-3-c-path-clear-print-release-20260830T053241Z"
 
 
 @dataclass(frozen=True)
@@ -639,6 +649,8 @@ def build_a_c_bs(spec: LensSpec, edge: float) -> tuple[cq.Workplane, dict[str, f
         "outer_end_mm": body_z0,
         "aperture_mm": aperture,
         "pocket_mm": pocket,
+        "optical_axis_x_mm": BS_X,
+        "optical_axis_y_mm": BS_Y,
     }
 
 
@@ -676,6 +688,7 @@ def build_b_holder(spec: LensSpec, edge: float) -> tuple[cq.Workplane, dict[str,
         "aperture_mm": aperture,
         "pocket_mm": pocket,
         "optical_axis_x_mm": B_AXIS_X,
+        "optical_axis_y_mm": BS_Y,
         "preserved_outer_skin_axis_x_mm": 254.633,
     }
 
@@ -736,6 +749,8 @@ def build_c_holder(spec: LensSpec, edge: float) -> tuple[cq.Workplane, dict[str,
         "aperture_mm": aperture,
         "pocket_mm": pocket,
         "assembly_translation_x_mm": 0.0,
+        "optical_axis_y_mm": BS_Y,
+        "optical_axis_z_mm": BS_Z,
         "legacy_male_root_mm": LEGACY_MALE_ROOT_MM,
         "legacy_male_fuse_diameter_mm": LEGACY_MALE_FUSE_DIAMETER_MM,
     }
@@ -1020,6 +1035,24 @@ def mesh_summary(path: Path) -> dict[str, Any]:
         union(indices[1], indices[2])
     components = len({find(index) for index in referenced})
 
+    minimum_z = float(loaded.bounds[0][2])
+    face_z = loaded.vertices[loaded.faces][:, :, 2]
+    first_layer_height_mm = 0.20
+    first_layer_z = minimum_z + first_layer_height_mm
+    first_layer_triangle_count = int(
+        np.count_nonzero(
+            (face_z.min(axis=1) <= first_layer_z)
+            & (face_z.max(axis=1) >= first_layer_z)
+            & (loaded.area_faces > 1e-10)
+        )
+    )
+    base_face_count = int(
+        np.count_nonzero(
+            np.all(np.abs(face_z - minimum_z) <= 1e-4, axis=1)
+            & (loaded.area_faces > 1e-10)
+        )
+    )
+
     return {
         "vertices": int(len(loaded.vertices)),
         "faces": int(len(loaded.faces)),
@@ -1027,10 +1060,143 @@ def mesh_summary(path: Path) -> dict[str, Any]:
         "winding_consistent": bool(loaded.is_winding_consistent),
         "components": int(components),
         "bounds_mm": [[round(float(v), 6) for v in row] for row in loaded.bounds],
+        "minimum_z_mm": round(minimum_z, 6),
+        "first_layer_height_mm": first_layer_height_mm,
+        "first_layer_triangle_count": first_layer_triangle_count,
+        "base_face_count": base_face_count,
     }
 
 
-def sanitize_stl(path: Path) -> None:
+def three_mf_summary(path: Path) -> dict[str, Any]:
+    """Validate the native 3MF mesh without relying on optional graph packages."""
+    with zipfile.ZipFile(path) as archive:
+        model_name = next(
+            name for name in archive.namelist() if name.lower().endswith(".model")
+        )
+        root = ElementTree.fromstring(archive.read(model_name))
+
+    namespace_uri = root.tag.split("}", 1)[0].lstrip("{")
+    namespace = {"m": namespace_uri}
+    mesh_objects = root.findall(".//m:resources/m:object[m:mesh]", namespace)
+    meshes = [item.find("./m:mesh", namespace) for item in mesh_objects]
+    if len(meshes) != 1:
+        raise RuntimeError(f"expected one 3MF mesh object in {path}, found {len(meshes)}")
+    mesh = meshes[0]
+    if mesh is None:
+        raise RuntimeError(f"3MF mesh object has no mesh payload: {path}")
+    vertices = [
+        (
+            float(vertex.attrib["x"]),
+            float(vertex.attrib["y"]),
+            float(vertex.attrib["z"]),
+        )
+        for vertex in mesh.findall("./m:vertices/m:vertex", namespace)
+    ]
+    triangles = [
+        (
+            int(triangle.attrib["v1"]),
+            int(triangle.attrib["v2"]),
+            int(triangle.attrib["v3"]),
+        )
+        for triangle in mesh.findall("./m:triangles/m:triangle", namespace)
+    ]
+    if not vertices or not triangles:
+        raise RuntimeError(f"3MF contains no usable mesh: {path}")
+
+    parent = list(range(len(vertices)))
+
+    def find(index: int) -> int:
+        while parent[index] != index:
+            parent[index] = parent[parent[index]]
+            index = parent[index]
+        return index
+
+    def union(left: int, right: int) -> None:
+        left_root = find(left)
+        right_root = find(right)
+        if left_root != right_root:
+            parent[right_root] = left_root
+
+    edge_counts: Counter[tuple[int, int]] = Counter()
+    edge_orientation: Counter[tuple[int, int]] = Counter()
+    referenced: set[int] = set()
+    indices_valid = True
+    for triangle in triangles:
+        if any(index < 0 or index >= len(vertices) for index in triangle):
+            indices_valid = False
+            continue
+        referenced.update(triangle)
+        union(triangle[0], triangle[1])
+        union(triangle[1], triangle[2])
+        for start, end in (
+            (triangle[0], triangle[1]),
+            (triangle[1], triangle[2]),
+            (triangle[2], triangle[0]),
+        ):
+            edge = (min(start, end), max(start, end))
+            edge_counts[edge] += 1
+            edge_orientation[edge] += 1 if start < end else -1
+
+    minimum = [min(vertex[axis] for vertex in vertices) for axis in range(3)]
+    maximum = [max(vertex[axis] for vertex in vertices) for axis in range(3)]
+    base_face_count = sum(
+        1
+        for triangle in triangles
+        if indices_valid
+        and all(abs(vertices[index][2] - minimum[2]) <= 1e-4 for index in triangle)
+    )
+    first_layer_height_mm = 0.20
+    first_layer_z = minimum[2] + first_layer_height_mm
+    first_layer_triangle_count = sum(
+        1
+        for triangle in triangles
+        if indices_valid
+        and min(vertices[index][2] for index in triangle) <= first_layer_z
+        and max(vertices[index][2] for index in triangle) >= first_layer_z
+    )
+    build_items = root.findall("./m:build/m:item", namespace)
+    mesh_object_ids = {item.attrib.get("id") for item in mesh_objects}
+    build_object_ids = [item.attrib.get("objectid") for item in build_items]
+    return {
+        "unit": root.attrib.get("unit"),
+        "mesh_object_count": len(meshes),
+        "build_item_count": len(build_items),
+        "build_items_reference_mesh_objects": all(
+            object_id in mesh_object_ids for object_id in build_object_ids
+        ),
+        "vertices": len(vertices),
+        "faces": len(triangles),
+        "components": len({find(index) for index in referenced}),
+        "indices_valid": indices_valid,
+        "watertight": bool(edge_counts)
+        and all(count == 2 for count in edge_counts.values()),
+        "winding_consistent": bool(edge_orientation)
+        and all(orientation == 0 for orientation in edge_orientation.values()),
+        "bounds_mm": [
+            [round(value, 6) for value in minimum],
+            [round(value, 6) for value in maximum],
+        ],
+        "minimum_z_mm": round(minimum[2], 6),
+        "first_layer_height_mm": first_layer_height_mm,
+        "first_layer_triangle_count": first_layer_triangle_count,
+        "base_face_count": base_face_count,
+    }
+
+
+def bounds_match(
+    first: list[list[float]],
+    second: list[list[float]],
+    *,
+    tolerance: float = 1e-5,
+) -> bool:
+    return all(
+        math.isclose(left, right, abs_tol=tolerance)
+        for first_row, second_row in zip(first, second)
+        for left, right in zip(first_row, second_row)
+    )
+
+
+def sanitize_stl(path: Path, *, normalize_z: bool = False) -> None:
     """Remove tessellation-only degenerate faces without changing the B-rep."""
     mesh = trimesh.load_mesh(path, force="mesh", process=True)
     if isinstance(mesh, trimesh.Scene):
@@ -1054,6 +1220,8 @@ def sanitize_stl(path: Path) -> None:
                 if trial.is_watertight and trial.is_winding_consistent:
                     mesh = trial
                     break
+    if normalize_z:
+        mesh.apply_translation((0.0, 0.0, -float(mesh.bounds[0][2])))
     mesh.export(path)
 
 
@@ -1085,8 +1253,174 @@ def localize_for_print(shape: cq.Workplane) -> cq.Workplane:
     return shape.translate((-box.xmin, -box.ymin, -box.zmin))
 
 
+def orient_for_print(name: str, shape: cq.Workplane) -> tuple[cq.Workplane, str]:
+    """Keep thread axes vertical while preserving STEP assembly coordinates."""
+    if name == "C":
+        oriented = shape.rotate((0, 0, 0), (0, 1, 0), -90.0)
+        note = "rotate -90 degrees about Y; lens-retainer end on build plate"
+    elif name == "Lens_B_holder":
+        oriented = shape.rotate((0, 0, 0), (0, 1, 0), 180.0)
+        note = "rotate 180 degrees about Y; outer lens-retainer end on build plate"
+    elif name == "Lens_C_holder":
+        oriented = shape.rotate((0, 0, 0), (0, 1, 0), -90.0)
+        note = "rotate -90 degrees about Y; broad central mating end on build plate"
+    else:
+        oriented = shape
+        note = "preserve assembly orientation; translate minimum Z to build plate"
+    return localize_for_print(oriented), note
+
+
 def overlap_length(first: tuple[float, float], second: tuple[float, float]) -> float:
     return max(0.0, min(first[1], second[1]) - max(first[0], second[0]))
+
+
+def mechanical_path_probe(
+    parts: dict[str, cq.Workplane],
+    probe: cq.Workplane,
+    *,
+    axis: str,
+    axial_range_mm: tuple[float, float],
+    center_mm: tuple[float, float],
+) -> dict[str, Any]:
+    overlaps = {
+        name: round(abs(shape.val().intersect(probe.val()).Volume()), 9)
+        for name, shape in parts.items()
+    }
+    return {
+        "axis": axis,
+        "diameter_mm": OPTICAL_CORE_PROBE_DIAMETER_MM,
+        "axial_range_mm": [round(value, 6) for value in axial_range_mm],
+        "center_mm": [round(value, 6) for value in center_mm],
+        "part_overlap_mm3": overlaps,
+        "total_overlap_mm3": round(sum(overlaps.values()), 9),
+    }
+
+
+def build_optical_path_audit(
+    parts: dict[str, cq.Workplane],
+    cap_info: dict[str, dict[str, float]],
+) -> dict[str, Any]:
+    margin = OPTICAL_PATH_END_MARGIN_MM
+    a_range = (cap_info["A"]["outer_end_mm"] + margin, BS_Z - margin)
+    b_range = (BS_Z + margin, cap_info["B"]["outer_end_mm"] - margin)
+    c_range = (BS_X + margin, cap_info["C"]["outer_end_mm"] - margin)
+    paths = {
+        "A": mechanical_path_probe(
+            parts,
+            z_cylinder(
+                OPTICAL_CORE_PROBE_DIAMETER_MM,
+                a_range[0],
+                a_range[1] - a_range[0],
+                BS_X,
+                BS_Y,
+            ),
+            axis="Z",
+            axial_range_mm=a_range,
+            center_mm=(BS_X, BS_Y),
+        ),
+        "B": mechanical_path_probe(
+            parts,
+            z_cylinder(
+                OPTICAL_CORE_PROBE_DIAMETER_MM,
+                b_range[0],
+                b_range[1] - b_range[0],
+                B_AXIS_X,
+                BS_Y,
+            ),
+            axis="Z",
+            axial_range_mm=b_range,
+            center_mm=(B_AXIS_X, BS_Y),
+        ),
+        "C": mechanical_path_probe(
+            parts,
+            x_cylinder(
+                OPTICAL_CORE_PROBE_DIAMETER_MM,
+                c_range[0],
+                c_range[1] - c_range[0],
+                BS_Y,
+                BS_Z,
+            ),
+            axis="X",
+            axial_range_mm=c_range,
+            center_mm=(BS_Y, BS_Z),
+        ),
+    }
+    c_receiver_probe = x_cylinder(
+        C_RECEIVER_MEMBRANE_PROBE_DIAMETER_MM,
+        C_RECEIVER_PROBE_X0,
+        C_RECEIVER_PROBE_X1 - C_RECEIVER_PROBE_X0,
+        BS_Y,
+        BS_Z,
+    )
+    c_receiver_overlap = abs(
+        parts["A_C_BS"].val().intersect(c_receiver_probe.val()).Volume()
+    )
+    source = cq.importers.importStep(str(SOURCE_AC_BS)).val()
+    source_c_receiver_overlap = abs(source.intersect(c_receiver_probe.val()).Volume())
+    return {
+        "minimum_verified_core_diameter_mm": OPTICAL_CORE_PROBE_DIAMETER_MM,
+        "paths": paths,
+        "c_receiver_membrane_probe": {
+            "diameter_mm": C_RECEIVER_MEMBRANE_PROBE_DIAMETER_MM,
+            "x_range_mm": [C_RECEIVER_PROBE_X0, C_RECEIVER_PROBE_X1],
+            "generated_a_c_bs_overlap_mm3": round(c_receiver_overlap, 9),
+            "source_a_c_bs_overlap_mm3": round(source_c_receiver_overlap, 9),
+        },
+    }
+
+
+def build_thread_construction_audit() -> dict[str, Any]:
+    samples = {
+        "female_lens_z": (z_female_thread(0.0, THREAD_LENGTH_MM, 0.0, 0.0), "z", THREAD_LENGTH_MM),
+        "female_lens_x": (x_female_thread(0.0, THREAD_LENGTH_MM, 0.0, 0.0), "x", THREAD_LENGTH_MM),
+        "male_lens_z": (
+            z_male_thread(MALE_LENS_ROOT_MM, 0.0, THREAD_LENGTH_MM, 0.0, 0.0),
+            "z",
+            THREAD_LENGTH_MM,
+        ),
+        "male_lens_x": (
+            x_male_thread(MALE_LENS_ROOT_MM, 0.0, THREAD_LENGTH_MM, 0.0, 0.0),
+            "x",
+            THREAD_LENGTH_MM,
+        ),
+        "male_camera_z": (
+            z_male_thread(
+                CAMERA_MALE_ROOT_MM,
+                0.0,
+                CAMERA_THREAD_LENGTH_MM,
+                0.0,
+                0.0,
+                phase_shift=0.0,
+            ),
+            "z",
+            CAMERA_THREAD_LENGTH_MM,
+        ),
+    }
+    records: dict[str, dict[str, Any]] = {}
+    for name, (shape, axis, expected_length) in samples.items():
+        box = shape.val().BoundingBox()
+        minimum = box.xmin if axis == "x" else box.zmin
+        maximum = box.xmax if axis == "x" else box.zmax
+        records[name] = {
+            "axis": axis.upper(),
+            "expected_bounds_mm": [0.0, expected_length],
+            "measured_bounds_mm": [round(minimum, 9), round(maximum, 9)],
+            "start_error_mm": round(abs(minimum), 9),
+            "end_error_mm": round(abs(maximum - expected_length), 9),
+            "clipped_to_parent_interval": (
+                abs(minimum) <= BREP_BOUND_TOLERANCE_MM
+                and abs(maximum - expected_length) <= BREP_BOUND_TOLERANCE_MM
+            ),
+        }
+    return {
+        "pitch_mm": PITCH_MM,
+        "radial_tooth_height_mm": TOOTH_RADIAL_HEIGHT_MM,
+        "construction_runout_mm": THREAD_RUNOUT_MM,
+        "samples": records,
+        "all_samples_clipped_to_parent_interval": all(
+            record["clipped_to_parent_interval"] for record in records.values()
+        ),
+    }
 
 
 def build_dimensional_audit(
@@ -1271,20 +1605,29 @@ def export_shape_set(
         stl = parts_dir / f"{stem}.stl"
         threemf = parts_dir / f"{stem}.3mf"
         exporters.export(shape, str(step))
+        print_shape, print_orientation = orient_for_print(name, shape)
         exporters.export(
-            localize_for_print(shape),
+            print_shape,
             str(stl),
             tolerance=0.035,
             angularTolerance=0.10,
         )
-        sanitize_stl(stl)
+        sanitize_stl(stl, normalize_z=True)
         export_stl_as_3mf(stl, threemf, title=stem)
+        mesh_validation = mesh_summary(stl)
+        three_mf_validation = three_mf_summary(threemf)
+        three_mf_validation["bounds_match_stl"] = bounds_match(
+            mesh_validation["bounds_mm"],
+            three_mf_validation["bounds_mm"],
+        )
         outputs[name] = {
             "step": str(step.relative_to(ROOT)),
             "stl": str(stl.relative_to(ROOT)),
             "3mf": str(threemf.relative_to(ROOT)),
             "step_validation": step_summary(step),
-            "mesh_validation": mesh_summary(stl),
+            "mesh_validation": mesh_validation,
+            "3mf_validation": three_mf_validation,
+            "print_orientation": print_orientation,
             "sha256": {p.suffix.lstrip("."): sha256(p) for p in (step, stl, threemf)},
         }
     return outputs
@@ -1312,6 +1655,8 @@ def write_readme(
 - `artifacts/{spec.key}_lens.step`: standalone lens model.
 - `artifacts/manifest.json`: dimensions, source identity, assembly transforms, focal datums, and validation.
 - `artifacts/renders/openhi_4f_spatial_exploded.png`: spatial view with all mechanical parts, lenses, and beam splitter separated along their mating directions.
+- `artifacts/renders/openhi_4f_print_parts_layout.png`: exact orientations used by the separate STL/3MF print files.
+- `runs/{PRINT_RELEASE_RUN_NAME}/`: checked one-object print files and the matching Nutstore handoff.
 
 ## Optical Layout
 
@@ -1346,6 +1691,8 @@ The output thread also preserves the source OpenHI printed profile (`24.4 mm` ro
 The holder side supplies the flat locating shoulder. A/B/C retain from the opposite side. The 45-degree diameter transition is on the A/B/C-facing receiver side, preserving the original OpenHI design philosophy.
 
 The A and C axes use the beam-splitter datum. The complete B chain, including holder bore, pocket, lens, retainer, and camera thread, preserves the accepted source axis at `X = {B_AXIS_X:.3f} mm`; it must not be recentered to `255 mm`.
+
+The final validator probes a centered `{OPTICAL_CORE_PROBE_DIAMETER_MM:.1f} mm` cylinder through the complete A, B, and C mechanical paths. It also probes a `{C_RECEIVER_MEMBRANE_PROBE_DIAMETER_MM:.1f} mm` smooth core across the A+C+BS C receiver. All probes must have zero solid overlap. This explicitly prevents the earlier `0.10 mm` fusion membrane from returning at the C receiver.
 
 ## Prescription Status
 
@@ -1427,15 +1774,22 @@ def build_system(spec_key: str, design_dir: Path, *, sync: bool = True) -> dict[
     exporters.export(lens, str(lens_step))
     lens_mesh_shape = fuse_source_solids(lens.val(), label=f"{spec.key} lens mesh")
     exporters.export(localize_for_print(lens_mesh_shape), str(lens_stl), tolerance=0.015, angularTolerance=0.05)
-    sanitize_stl(lens_stl)
+    sanitize_stl(lens_stl, normalize_z=True)
     export_stl_as_3mf(lens_stl, lens_3mf, title=f"{spec.key}_lens")
+    lens_mesh_validation = mesh_summary(lens_stl)
+    lens_three_mf_validation = three_mf_summary(lens_3mf)
+    lens_three_mf_validation["bounds_match_stl"] = bounds_match(
+        lens_mesh_validation["bounds_mm"],
+        lens_three_mf_validation["bounds_mm"],
+    )
 
     lens_contact = lens_info["mechanical_inward_contact_z_mm"]
     lens_a = place_lens(lens, a_info["seat_mm"], "A", lens_contact)
     lens_b = place_lens(lens, b_info["seat_mm"], "B", lens_contact)
     lens_c = place_lens(lens, c_info["seat_mm"], "C", lens_contact)
+    lens_a_box = lens_a.val().BoundingBox()
     lens_b_box = lens_b.val().BoundingBox()
-    lens_b_axis_x = (lens_b_box.xmin + lens_b_box.xmax) / 2.0
+    lens_c_box = lens_c.val().BoundingBox()
     assembly_parts = {
         "A": caps["A"],
         "A_C_BS": ac_bs,
@@ -1518,8 +1872,44 @@ def build_system(spec_key: str, design_dir: Path, *, sync: bool = True) -> dict[
     b_axis_chain_error_mm = {
         "holder_declared_axis": abs(b_info["optical_axis_x_mm"] - B_AXIS_X),
         "cap_declared_axis": abs(cap_info["B"]["axis_x_mm"] - B_AXIS_X),
-        "lens_measured_bbox_axis": abs(lens_b_axis_x - B_AXIS_X),
+        "lens_measured_bbox_axis": abs(
+            (lens_b_box.xmin + lens_b_box.xmax) / 2.0 - B_AXIS_X
+        ),
     }
+    complete_axis_chain_error_mm = {
+        "A_holder_declared_x": abs(a_info["optical_axis_x_mm"] - BS_X),
+        "A_holder_declared_y": abs(a_info["optical_axis_y_mm"] - BS_Y),
+        "A_cap_declared_x": abs(cap_info["A"]["axis_x_mm"] - BS_X),
+        "A_cap_declared_y": abs(cap_info["A"]["axis_y_mm"] - BS_Y),
+        "A_lens_measured_x": abs(
+            (lens_a_box.xmin + lens_a_box.xmax) / 2.0 - BS_X
+        ),
+        "A_lens_measured_y": abs(
+            (lens_a_box.ymin + lens_a_box.ymax) / 2.0 - BS_Y
+        ),
+        "B_holder_declared_x": abs(b_info["optical_axis_x_mm"] - B_AXIS_X),
+        "B_holder_declared_y": abs(b_info["optical_axis_y_mm"] - BS_Y),
+        "B_cap_declared_x": abs(cap_info["B"]["axis_x_mm"] - B_AXIS_X),
+        "B_cap_declared_y": abs(cap_info["B"]["axis_y_mm"] - BS_Y),
+        "B_lens_measured_x": abs(
+            (lens_b_box.xmin + lens_b_box.xmax) / 2.0 - B_AXIS_X
+        ),
+        "B_lens_measured_y": abs(
+            (lens_b_box.ymin + lens_b_box.ymax) / 2.0 - BS_Y
+        ),
+        "C_holder_declared_y": abs(c_info["optical_axis_y_mm"] - BS_Y),
+        "C_holder_declared_z": abs(c_info["optical_axis_z_mm"] - BS_Z),
+        "C_cap_declared_y": abs(cap_info["C"]["axis_y_mm"] - BS_Y),
+        "C_cap_declared_z": abs(cap_info["C"]["axis_z_mm"] - BS_Z),
+        "C_lens_measured_y": abs(
+            (lens_c_box.ymin + lens_c_box.ymax) / 2.0 - BS_Y
+        ),
+        "C_lens_measured_z": abs(
+            (lens_c_box.zmin + lens_c_box.zmax) / 2.0 - BS_Z
+        ),
+    }
+    optical_path_audit = build_optical_path_audit(parts, cap_info)
+    thread_construction_audit = build_thread_construction_audit()
     dimensional_audit = build_dimensional_audit(spec, lens_info, arm_info, cap_info)
     for name, shape in assembly_parts.items():
         export_shape = (
@@ -1580,18 +1970,68 @@ def build_system(spec_key: str, design_dir: Path, *, sync: bool = True) -> dict[
         "b_axis_chain_error_mm": {
             key: round(value, 9) for key, value in b_axis_chain_error_mm.items()
         },
+        "complete_axis_chain_error_mm": {
+            key: round(value, 9)
+            for key, value in complete_axis_chain_error_mm.items()
+        },
+        "mechanical_optical_path_audit": optical_path_audit,
+        "plano_face_orientation": {
+            "A": "plane face points +Z toward beam splitter",
+            "B": "plane face points -Z toward beam splitter",
+            "C": "plane face points -X toward beam splitter",
+        }
+        if spec.kind == "plano_convex"
+        else None,
         "source_st018_focal_length_mm": SOURCE_FOCAL_LENGTH_MM,
         "end_to_end_seat_allowance_mm": END_TO_END_SEAT_ALLOWANCE_MM,
         "expected_end_path_4f_plus_seat_mm": round(expected_end_path_mm, 9),
         "measured_end_path_mm": {key: round(value, 9) for key, value in end_path_mm.items()},
         "end_path_error_mm": {key: round(value, 9) for key, value in end_path_error_mm.items()},
     }
-    lens_mesh_validation = mesh_summary(lens_stl)
     checks = {
-        "all_part_steps_valid": all(row["step_validation"]["occt_valid"] for row in part_outputs.values()),
-        "all_part_meshes_watertight": all(row["mesh_validation"]["watertight"] for row in part_outputs.values()),
+        "all_part_steps_valid": all(
+            row["step_validation"]["occt_valid"] for row in part_outputs.values()
+        ),
+        "all_part_steps_are_single_solids": all(
+            row["step_validation"]["solid_count"] == 1
+            for row in part_outputs.values()
+        ),
+        "all_part_meshes_watertight": all(
+            row["mesh_validation"]["watertight"]
+            for row in part_outputs.values()
+        ),
+        "all_part_meshes_cross_first_layer_from_z0": all(
+            abs(row["mesh_validation"]["minimum_z_mm"]) <= 1e-5
+            and row["mesh_validation"]["first_layer_triangle_count"] > 0
+            for row in part_outputs.values()
+        ),
+        "all_part_3mfs_are_single_watertight_objects": all(
+            row["3mf_validation"]["unit"] == "millimeter"
+            and row["3mf_validation"]["mesh_object_count"] == 1
+            and row["3mf_validation"]["build_item_count"] == 1
+            and row["3mf_validation"]["build_items_reference_mesh_objects"]
+            and row["3mf_validation"]["components"] == 1
+            and row["3mf_validation"]["indices_valid"]
+            and row["3mf_validation"]["watertight"]
+            and row["3mf_validation"]["winding_consistent"]
+            and row["3mf_validation"]["bounds_match_stl"]
+            and abs(row["3mf_validation"]["minimum_z_mm"]) <= 1e-5
+            and row["3mf_validation"]["first_layer_triangle_count"] > 0
+            for row in part_outputs.values()
+        ),
         "lens_step_valid": step_summary(lens_step)["occt_valid"],
         "lens_mesh_watertight": lens_mesh_validation["watertight"],
+        "lens_3mf_is_single_watertight_object": (
+            lens_three_mf_validation["unit"] == "millimeter"
+            and lens_three_mf_validation["mesh_object_count"] == 1
+            and lens_three_mf_validation["build_item_count"] == 1
+            and lens_three_mf_validation["build_items_reference_mesh_objects"]
+            and lens_three_mf_validation["components"] == 1
+            and lens_three_mf_validation["indices_valid"]
+            and lens_three_mf_validation["watertight"]
+            and lens_three_mf_validation["winding_consistent"]
+            and lens_three_mf_validation["bounds_match_stl"]
+        ),
         "assembly_step_valid": step_summary(assembly_step)["occt_valid"],
         "three_identical_lens_copies": True,
         "nominal_4f_spacing_matches_catalog_efl": max(focal_datum_error_mm.values()) <= 1e-8,
@@ -1605,6 +2045,28 @@ def build_system(spec_key: str, design_dir: Path, *, sync: bool = True) -> dict[
         "minimum_thread_engagement_is_at_least_5mm": min(thread_engagement_mm.values()) >= 5.0,
         "end_paths_equal_4f_plus_measured_seat": max(end_path_error_mm.values()) <= 1e-8,
         "b_axis_shift_preserved": max(b_axis_chain_error_mm.values()) <= 1e-8,
+        "all_lens_holder_cap_axes_are_centered": (
+            max(complete_axis_chain_error_mm.values()) <= 1e-8
+        ),
+        "all_three_mechanical_optical_cores_are_clear": all(
+            path["total_overlap_mm3"] <= 1e-6
+            for path in optical_path_audit["paths"].values()
+        ),
+        "central_c_receiver_has_no_membrane": (
+            optical_path_audit["c_receiver_membrane_probe"][
+                "generated_a_c_bs_overlap_mm3"
+            ]
+            <= 1e-6
+            and optical_path_audit["c_receiver_membrane_probe"][
+                "source_a_c_bs_overlap_mm3"
+            ]
+            <= 1e-6
+        ),
+        "thread_construction_is_bounded_to_parent_intervals": (
+            thread_construction_audit[
+                "all_samples_clipped_to_parent_interval"
+            ]
+        ),
         "lens_model_uses_analytic_optical_surfaces": bool(
             lens_info.get("analytic_spherical_faces")
         ),
@@ -1653,6 +2115,7 @@ def build_system(spec_key: str, design_dir: Path, *, sync: bool = True) -> dict[
         "lens_model": lens_info,
         "optical_layout": optical,
         "final_dimensional_audit": dimensional_audit,
+        "thread_construction_audit": thread_construction_audit,
         "arms": {"A": a_info, "B": b_info, "C": c_info},
         "caps": cap_info,
         "thread_interfaces": {
@@ -1708,6 +2171,7 @@ def build_system(spec_key: str, design_dir: Path, *, sync: bool = True) -> dict[
             "3mf": str(lens_3mf.relative_to(ROOT)),
             "step_validation": step_summary(lens_step),
             "mesh_validation": lens_mesh_validation,
+            "3mf_validation": lens_three_mf_validation,
         },
         "assembly": {
             "step": str(assembly_step.relative_to(ROOT)),

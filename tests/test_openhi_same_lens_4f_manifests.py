@@ -12,6 +12,12 @@ DESIGN_NAMES = (
     "openhi_4f_jh036_same_lens",
     "openhi_4f_jh042_same_lens",
 )
+AC_BS_MANIFEST = (
+    DESIGN_ROOT
+    / "openhi_a_c_bs_dual_female_29p6_pivot"
+    / "artifacts"
+    / "manifest.json"
+)
 
 
 class OpenHISameLens4fManifestTests(unittest.TestCase):
@@ -205,6 +211,93 @@ class OpenHISameLens4fManifestTests(unittest.TestCase):
                         model["modeled_edge_thickness_mm"],
                         model["unbeveled_edge_thickness_mm"],
                     )
+
+    def test_complete_axes_and_mechanical_optical_cores_are_clear(self):
+        for design_name in DESIGN_NAMES:
+            with self.subTest(design=design_name):
+                optical = self.load_manifest(design_name)["optical_layout"]
+                self.assertTrue(
+                    all(
+                        math.isclose(error, 0.0, abs_tol=1e-8)
+                        for error in optical[
+                            "complete_axis_chain_error_mm"
+                        ].values()
+                    )
+                )
+                audit = optical["mechanical_optical_path_audit"]
+                self.assertAlmostEqual(
+                    audit["minimum_verified_core_diameter_mm"], 4.0
+                )
+                self.assertEqual(set(audit["paths"]), {"A", "B", "C"})
+                for path in audit["paths"].values():
+                    self.assertAlmostEqual(path["total_overlap_mm3"], 0.0)
+                membrane = audit["c_receiver_membrane_probe"]
+                self.assertAlmostEqual(
+                    membrane["generated_a_c_bs_overlap_mm3"], 0.0
+                )
+                self.assertAlmostEqual(
+                    membrane["source_a_c_bs_overlap_mm3"], 0.0
+                )
+
+    def test_thread_construction_and_print_artifacts_are_bounded(self):
+        for design_name in DESIGN_NAMES:
+            with self.subTest(design=design_name):
+                manifest = self.load_manifest(design_name)
+                thread_audit = manifest["thread_construction_audit"]
+                self.assertTrue(
+                    thread_audit["all_samples_clipped_to_parent_interval"]
+                )
+                self.assertTrue(
+                    all(
+                        sample["clipped_to_parent_interval"]
+                        for sample in thread_audit["samples"].values()
+                    )
+                )
+                for name, part in manifest["parts"].items():
+                    self.assertEqual(part["step_validation"]["solid_count"], 1)
+                    mesh_validation = part["mesh_validation"]
+                    self.assertAlmostEqual(
+                        mesh_validation["minimum_z_mm"], 0.0, places=5
+                    )
+                    self.assertGreater(
+                        mesh_validation["first_layer_triangle_count"], 0
+                    )
+                    validation = part["3mf_validation"]
+                    self.assertEqual(validation["unit"], "millimeter")
+                    self.assertEqual(validation["mesh_object_count"], 1)
+                    self.assertEqual(validation["build_item_count"], 1)
+                    self.assertTrue(
+                        validation["build_items_reference_mesh_objects"]
+                    )
+                    self.assertEqual(validation["components"], 1)
+                    self.assertTrue(validation["indices_valid"])
+                    self.assertTrue(validation["watertight"])
+                    self.assertTrue(validation["winding_consistent"])
+                    self.assertTrue(validation["bounds_match_stl"])
+                    self.assertAlmostEqual(
+                        validation["minimum_z_mm"], 0.0, places=5
+                    )
+                    self.assertGreater(
+                        validation["first_layer_triangle_count"], 0
+                    )
+                    if name in {"C", "Lens_B_holder", "Lens_C_holder"}:
+                        self.assertIn("rotate", part["print_orientation"])
+
+    def test_fixed_a_c_bs_source_has_no_c_receiver_membrane(self):
+        manifest = json.loads(AC_BS_MANIFEST.read_text(encoding="utf-8"))
+        validation = manifest["validation"]
+        self.assertTrue(validation["checks"]["all_pass"])
+        self.assertTrue(
+            validation["checks"]["beam_splitter_to_C_centerline_is_clear"]
+        )
+        self.assertTrue(validation["checks"]["C_receiver_has_no_fusion_membrane"])
+        probes = validation["optical_bore_probes"]
+        self.assertAlmostEqual(
+            probes["beam_splitter_to_c_core"]["solid_overlap_mm3"], 0.0
+        )
+        self.assertAlmostEqual(
+            probes["c_receiver_smooth_core"]["solid_overlap_mm3"], 0.0
+        )
 
 
 if __name__ == "__main__":

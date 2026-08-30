@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import sys
 from pathlib import Path
 
@@ -264,6 +263,7 @@ def main():
         camera,
         [*component_objects.values(), *exploded_axes],
         aspect,
+        margin=1.65,
     )
     floor.hide_render = True
     scene.render.engine = "BLENDER_WORKBENCH"
@@ -276,6 +276,58 @@ def main():
     scene.display.shading.background_type = "VIEWPORT"
     scene.display.shading.background_color = (0.055, 0.07, 0.09)
     scene.render.filepath = str(render_dir / "openhi_4f_spatial_exploded.png")
+    bpy.ops.render.render(write_still=True)
+
+    # Show the exact local orientations used by the separate print STL/3MF
+    # files. This is a preview only; each part remains its own one-object file.
+    bpy.ops.object.select_all(action="SELECT")
+    bpy.ops.object.delete(use_global=False)
+    bpy.ops.object.camera_add()
+    camera = bpy.context.object
+    camera.data.type = "ORTHO"
+    scene.camera = camera
+    print_objects = []
+    part_paths = sorted((artifact_dir / "parts").glob("openhi_*.stl"))
+    rows = (part_paths[:3], part_paths[3:])
+    y_cursor = 0.0
+    for row in rows:
+        x_cursor = 0.0
+        row_depth = 0.0
+        for path in row:
+            bpy.ops.wm.stl_import(filepath=str(path))
+            obj = bpy.context.object
+            key = path.stem.removeprefix("openhi_")
+            obj.name = f"PRINT_THIS_{key}"
+            obj.data.materials.append(body_mats[key])
+            lower, upper = object_bounds([obj])
+            obj.location += Vector(
+                (x_cursor - lower.x, y_cursor - lower.y, -lower.z)
+            )
+            bpy.context.view_layer.update()
+            lower, upper = object_bounds([obj])
+            x_cursor = upper.x + 18.0
+            row_depth = max(row_depth, upper.y - y_cursor)
+            print_objects.append(obj)
+        y_cursor += row_depth + 18.0
+
+    lower, upper = object_bounds(print_objects)
+    center = (lower + upper) / 2.0
+    span = upper - lower
+    bpy.ops.mesh.primitive_plane_add(
+        size=max(span.x, span.y) + 80.0,
+        location=(center.x, center.y, lower.z - 0.4),
+    )
+    print_floor = bpy.context.object
+    print_floor.data.materials.append(floor_mat)
+    camera.location = center + Vector((1.1, -1.2, 1.35)).normalized() * 420.0
+    look_at(camera, center)
+    fit_orthographic_camera(
+        camera,
+        print_objects,
+        scene.render.resolution_x / scene.render.resolution_y,
+        margin=1.55,
+    )
+    scene.render.filepath = str(render_dir / "openhi_4f_print_parts_layout.png")
     bpy.ops.render.render(write_still=True)
 
 
