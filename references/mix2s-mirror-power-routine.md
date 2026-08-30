@@ -9,6 +9,8 @@ automation runs on separate computer desktops and does not require this mirror.
 ```bash
 cd /home/lachlan/ProjectsLFS/AgenticApp
 scripts/mix2s on
+scripts/mix2s dual
+scripts/mix2s single
 scripts/mix2s status
 scripts/mix2s off
 ```
@@ -23,12 +25,27 @@ To open mobile WeChat after starting the mirror:
 scripts/mix2s on --open-wechat
 ```
 
+To show both logged-in clients without creating another noVNC stack:
+
+```bash
+scripts/mix2s dual
+```
+
+This keeps WeChat on the physical phone display and starts WeCom on one Android
+virtual display. Both scrcpy windows are tiled side by side inside the same
+display `:99` and the same noVNC URL. The selected layout is persisted under
+ignored `output/android_device_agent/`, so a later `on` or `restart` restores
+the dual view. Use `scripts/mix2s single` to remove the virtual display and
+return to one centered physical-phone mirror.
+
 ## What On Owns
 
 The routine starts only these dedicated resources:
 
 - tmux session `labcanvas-android-mix2s`;
 - scrcpy for the exact saved Android serial;
+- in `dual` mode, one additional scrcpy window and one Android virtual display
+  for WeCom;
 - X display `:99` at `1440x2400x24`;
 - localhost VNC `5929` and noVNC `6129`;
 - the X11 keep-awake loop for display `:99`.
@@ -79,5 +96,6 @@ USB stay-awake: 0
 ```
 
 Expected on state reports a running tmux session, connected mirror, online
-transport, and the noVNC URL. If the phone is disconnected, `off` still cleans
-the computer-side stack and reports that it could not change phone power.
+transport, current `single` or `dual` layout, and the noVNC URL. If the phone is
+disconnected, `off` still cleans the computer-side stack and reports that it
+could not change phone power.

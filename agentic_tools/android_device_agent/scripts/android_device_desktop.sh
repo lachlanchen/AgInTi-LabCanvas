@@ -20,11 +20,18 @@ DISPLAY_NUMBER="${DISPLAY_ID#:}"
 DISPLAY_NUMBER="${DISPLAY_NUMBER%%.*}"
 KEEP_AWAKE_PID_FILE="$STATE_DIR/${NAME}_${DISPLAY_NUMBER}_keep_awake.pid"
 SERIAL_FILE="$STATE_DIR/${NAME}.serial"
+LAYOUT_FILE="$STATE_DIR/${NAME}.layout"
+DUAL_WINDOW_NAME="${ANDROID_DEVICE_DUAL_WINDOW_NAME:-wecom-virtual}"
+DUAL_WINDOW_WIDTH="${ANDROID_DEVICE_DUAL_WINDOW_WIDTH:-680}"
+DUAL_WINDOW_HEIGHT="${ANDROID_DEVICE_DUAL_WINDOW_HEIGHT:-1360}"
+DUAL_WINDOW_Y="${ANDROID_DEVICE_DUAL_WINDOW_Y:-500}"
+DUAL_LEFT_X="${ANDROID_DEVICE_DUAL_LEFT_X:-20}"
+DUAL_RIGHT_X="${ANDROID_DEVICE_DUAL_RIGHT_X:-740}"
 
 usage() {
   cat <<'EOF'
 Usage:
-  android_device_desktop.sh [on|off|start|stop|restart|status] [--serial SERIAL] [--open-wechat]
+  android_device_desktop.sh [on|off|start|stop|restart|status|dual|single] [--serial SERIAL] [--open-wechat]
 
 Starts a dedicated tmux-held noVNC desktop running scrcpy for an Android device.
 
@@ -33,6 +40,8 @@ Actions:
   off, stop         Stop the complete desktop stack and sleep the phone.
   restart           Perform a complete off/on cycle.
   status            Report mirror, transport, and phone power state.
+  dual              Show WeChat and WeCom side by side in one noVNC desktop.
+  single            Return to one physical-phone mirror window.
 
 Environment defaults:
   ANDROID_DEVICE_TMUX_SESSION=labcanvas-android-mix2s
@@ -48,7 +57,7 @@ EOF
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    on|off|start|stop|restart|status) ACTION="$1"; shift ;;
+    on|off|start|stop|restart|status|dual|single) ACTION="$1"; shift ;;
     --serial) SERIAL="$2"; shift 2 ;;
     --open-wechat) OPEN_WECHAT="1"; shift ;;
     --no-wake) WAKE_DEVICE="0"; shift ;;
@@ -136,15 +145,124 @@ phone_power_state() {
     awk -F= '/mWakefulness=/ {gsub(/^[[:space:]]+/, "", $2); print $2; exit}'
 }
 
+stored_layout() {
+  local layout="single"
+  if [[ -s "$LAYOUT_FILE" ]]; then
+    layout="$(cat "$LAYOUT_FILE" 2>/dev/null || true)"
+  fi
+  if [[ "$layout" != "dual" ]]; then
+    layout="single"
+  fi
+  printf '%s\n' "$layout"
+}
+
+save_layout() {
+  local layout="$1"
+  mkdir -p "$STATE_DIR"
+  printf '%s\n' "$layout" >"$LAYOUT_FILE"
+  chmod 600 "$LAYOUT_FILE"
+}
+
+tmux_window_exists() {
+  local window_name="$1"
+  tmux list-windows -t "$SESSION" -F '#{window_name}' 2>/dev/null |
+    awk -v expected="$window_name" '$0 == expected {found=1} END {exit !found}'
+}
+
+window_id_by_title() {
+  local title="$1"
+  DISPLAY="$DISPLAY_ID" xdotool search --name "^$(regex_escape "$title")$" 2>/dev/null |
+    tail -n 1
+}
+
+tile_dual_windows() {
+  local attempt left_title right_title left_window="" right_window=""
+  left_title="LabCanvas Android MIX 2S ($1)"
+  right_title="LabCanvas WeCom Virtual ($1)"
+  for attempt in {1..40}; do
+    left_window="$(window_id_by_title "$left_title")"
+    right_window="$(window_id_by_title "$right_title")"
+    if [[ -n "$left_window" && -n "$right_window" ]]; then
+      DISPLAY="$DISPLAY_ID" xdotool windowsize "$left_window" "$DUAL_WINDOW_WIDTH" "$DUAL_WINDOW_HEIGHT"
+      DISPLAY="$DISPLAY_ID" xdotool windowmove "$left_window" "$DUAL_LEFT_X" "$DUAL_WINDOW_Y"
+      DISPLAY="$DISPLAY_ID" xdotool windowsize "$right_window" "$DUAL_WINDOW_WIDTH" "$DUAL_WINDOW_HEIGHT"
+      DISPLAY="$DISPLAY_ID" xdotool windowmove "$right_window" "$DUAL_RIGHT_X" "$DUAL_WINDOW_Y"
+      return 0
+    fi
+    sleep 0.25
+  done
+  echo "Dual mirror windows did not both become visible." >&2
+  return 1
+}
+
+ensure_dual_layout() {
+  local dual_command serial
+  need adb
+  need scrcpy
+  need tmux
+  need xdotool
+  serial="$(device_serial)"
+  adb -s "$serial" shell am start --display 0 -n com.tencent.mm/.ui.LauncherUI >/dev/null 2>&1 || true
+  tmux rename-window -t "$SESSION:0" wechat-physical 2>/dev/null || true
+  if ! tmux_window_exists "$DUAL_WINDOW_NAME"; then
+    dual_command=$(printf '%q ' \
+      scrcpy \
+      --serial "$serial" \
+      --new-display=1080x2160/440 \
+      --start-app=com.tencent.wework \
+      --no-audio \
+      --keyboard=sdk \
+      --mouse=sdk \
+      --stay-awake \
+      --disable-screensaver \
+      --window-title "LabCanvas WeCom Virtual ($serial)" \
+      --window-x "$DUAL_RIGHT_X" \
+      --window-y "$DUAL_WINDOW_Y" \
+      --window-width "$DUAL_WINDOW_WIDTH" \
+      --window-height "$DUAL_WINDOW_HEIGHT")
+    tmux new-window -d -t "$SESSION" -n "$DUAL_WINDOW_NAME" \
+      "cd '$ROOT' && while true; do DISPLAY='$DISPLAY_ID' $dual_command || true; sleep '$RETRY_SECONDS'; done"
+  fi
+  tile_dual_windows "$serial"
+  echo "dual displays: online (WeChat physical, WeCom virtual)"
+}
+
+ensure_single_layout() {
+  local serial window=""
+  need xdotool
+  serial="$(known_serial 2>/dev/null || true)"
+  if tmux has-session -t "$SESSION" 2>/dev/null && tmux_window_exists "$DUAL_WINDOW_NAME"; then
+    tmux kill-window -t "$SESSION:$DUAL_WINDOW_NAME"
+  fi
+  if [[ -n "$serial" ]]; then
+    adb -s "$serial" shell am start --display 0 -n com.tencent.mm/.ui.LauncherUI >/dev/null 2>&1 || true
+    window="$(window_id_by_title "LabCanvas Android MIX 2S ($serial)")"
+  fi
+  if [[ -n "$window" ]]; then
+    DISPLAY="$DISPLAY_ID" xdotool windowsize "$window" 540 1080
+    DISPLAY="$DISPLAY_ID" xdotool windowmove "$window" 450 660
+  fi
+  echo "dual displays: off"
+}
+
 status() {
-  local serial=""
+  local layout serial=""
   local power_state=""
+  layout="$(stored_layout)"
   echo "tmux session: $SESSION"
   if tmux has-session -t "$SESSION" 2>/dev/null; then
     echo "status: running"
-    tmux list-panes -t "$SESSION" -F '#{pane_index}: #{pane_current_command} #{pane_pid}'
+    tmux list-panes -s -t "$SESSION" -F '#{window_name}:#{pane_index} #{pane_current_command} #{pane_pid}'
   else
     echo "status: stopped"
+  fi
+  echo "layout: $layout"
+  if [[ "$layout" == "dual" ]] && tmux has-session -t "$SESSION" 2>/dev/null && tmux_window_exists "$DUAL_WINDOW_NAME"; then
+    echo "dual displays: online (WeChat physical, WeCom virtual)"
+  elif [[ "$layout" == "dual" ]]; then
+    echo "dual displays: waiting for restore"
+  else
+    echo "dual displays: off"
   fi
   serial="$(known_serial 2>/dev/null || true)"
   if [[ -n "$serial" ]] && pgrep -u "$USER_NAME" -f "^([^[:space:]]*/)?scrcpy --serial $(regex_escape "$serial")([[:space:]]|$)" >/dev/null 2>&1; then
@@ -292,8 +410,31 @@ start_session() {
 }
 
 case "$ACTION" in
-  on|start) start_session ;;
+  on|start)
+    start_session
+    if [[ "$(stored_layout)" == "dual" ]]; then
+      ensure_dual_layout
+    fi
+    ;;
   off|stop) stop_session ;;
-  restart) stop_session; start_session ;;
+  restart)
+    stop_session
+    start_session
+    if [[ "$(stored_layout)" == "dual" ]]; then
+      ensure_dual_layout
+    fi
+    ;;
   status) status ;;
+  dual)
+    save_layout dual
+    start_session
+    ensure_dual_layout
+    status
+    ;;
+  single)
+    save_layout single
+    start_session
+    ensure_single_layout
+    status
+    ;;
 esac
