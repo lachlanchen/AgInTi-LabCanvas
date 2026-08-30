@@ -35,6 +35,9 @@ def schedule_state_reader(
     echomind_pending_daily_pdf: bool = False,
     echomind_pending_daily_pdf_generated_at: str = "",
     echomind_last_daily_pdf_attempt_at: str = "",
+    echomind_last_daily_pdf_attempt_date: str = "",
+    echomind_last_daily_pdf_date: str = "",
+    echomind_last_daily_pdf_error: str = "",
     echomind_pending_lesson: bool = False,
     echomind_pending_lesson_generated_at: str = "",
     echomind_phase: str = "waiting",
@@ -62,6 +65,18 @@ def schedule_state_reader(
                     state["last_daily_pdf_attempt_at"] = (
                         echomind_last_daily_pdf_attempt_at
                     )
+            if echomind_last_daily_pdf_attempt_date:
+                state["last_daily_pdf_attempt_date"] = (
+                    echomind_last_daily_pdf_attempt_date
+                )
+            if echomind_last_daily_pdf_attempt_at:
+                state["last_daily_pdf_attempt_at"] = (
+                    echomind_last_daily_pdf_attempt_at
+                )
+            if echomind_last_daily_pdf_date:
+                state["last_daily_pdf_date"] = echomind_last_daily_pdf_date
+            if echomind_last_daily_pdf_error:
+                state["last_daily_pdf_error"] = echomind_last_daily_pdf_error
             if echomind_pending_lesson:
                 state["pending_lesson"] = {"message": "private lesson"}
                 if echomind_pending_lesson_generated_at:
@@ -111,6 +126,14 @@ class WeChatTransportStallGuardTests(unittest.TestCase):
         self.assertEqual(status["effective_backend"], "codex")
         self.assertTrue(status["override_active"])
         self.assertTrue(status["aginti_disabled"])
+        self.assertEqual(
+            status["transports"]["wechat"]["effective_backend"],
+            "codex",
+        )
+        self.assertEqual(
+            status["transports"]["wecom"]["effective_backend"],
+            "codex",
+        )
 
     def test_health_alert_can_target_private_personal_wechat_device_inbox(self) -> None:
         completed = subprocess.CompletedProcess(
@@ -849,6 +872,45 @@ class WeChatTransportStallGuardTests(unittest.TestCase):
             "2026-07-22T12:30:00+00:00",
         )
         self.assertTrue(result["ok"])
+
+    def test_schedule_health_exposes_quality_repair_retry_without_pending_pdf(self) -> None:
+        now = datetime(2026, 7, 22, 12, 20, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            heartbeat = Path(tmp) / "daily.health.json"
+            heartbeat.write_text(
+                json.dumps({"checked_at": "2026-07-22T12:19:30+00:00", "status": "ok"}),
+                encoding="utf-8",
+            )
+            with (
+                mock.patch.object(guard, "tmux_session_live", return_value=True),
+                mock.patch.object(
+                    guard,
+                    "read_json",
+                    side_effect=schedule_state_reader(
+                        echo_last_loop_at="2026-07-22T12:19:30+00:00",
+                        echomind_last_daily_pdf_attempt_date="2026-07-21",
+                        echomind_last_daily_pdf_attempt_at=(
+                            "2026-07-22T12:00:00+00:00"
+                        ),
+                        echomind_last_daily_pdf_error="content quality rejected",
+                    ),
+                ),
+            ):
+                result = guard.schedule_health(
+                    labagent_heartbeat=heartbeat,
+                    now=now,
+                )
+
+        self.assertTrue(result["echomind"]["ok"])
+        self.assertFalse(result["echomind"]["pending_daily_pdf"])
+        self.assertTrue(
+            result["echomind"]["daily_pdf_generation_retry_active"]
+        )
+        self.assertTrue(result["echomind"]["pending_daily_pdf_retry_pending"])
+        self.assertEqual(
+            result["echomind"]["pending_daily_pdf_next_attempt_at"],
+            "2026-07-22T12:30:00+00:00",
+        )
 
     def test_schedule_health_graces_fresh_pending_echomind_lesson(self) -> None:
         now = datetime(2026, 7, 22, 12, 0, tzinfo=timezone.utc)

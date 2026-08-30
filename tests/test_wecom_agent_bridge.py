@@ -1426,6 +1426,65 @@ class WeComAgentBridgeTests(unittest.TestCase):
 
         self.assertEqual([item["content"] for item in context], ["new human direction"])
 
+    def test_daily_context_excludes_stale_and_outbound_scheduler_messages(self) -> None:
+        daily = load_daily()
+        timezone = ZoneInfo("Asia/Hong_Kong")
+        now = datetime(2026, 7, 29, 12, 0, tzinfo=timezone)
+        chat = "wecom:default:group:labagent"
+        with tempfile.TemporaryDirectory() as tmp:
+            history = Path(tmp) / "history.sqlite"
+            with sqlite3.connect(history) as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE messages (
+                        id INTEGER PRIMARY KEY,
+                        chat TEXT,
+                        direction TEXT,
+                        body TEXT,
+                        create_time INTEGER,
+                        created_at TEXT
+                    )
+                    """
+                )
+                conn.executemany(
+                    "INSERT INTO messages(chat, direction, body, create_time, created_at) VALUES (?, ?, ?, ?, ?)",
+                    [
+                        (
+                            chat,
+                            "inbound",
+                            "stale human request",
+                            int(datetime(2026, 7, 25, 8, 0, tzinfo=timezone).timestamp()),
+                            "2026-07-25T08:00:00+08:00",
+                        ),
+                        (
+                            chat,
+                            "inbound",
+                            "current human research direction",
+                            int(datetime(2026, 7, 29, 10, 0, tzinfo=timezone).timestamp()),
+                            "2026-07-29T10:00:00+08:00",
+                        ),
+                        (
+                            chat,
+                            "outbound",
+                            "old scheduler report must not be recycled",
+                            int(datetime(2026, 7, 29, 11, 0, tzinfo=timezone).timestamp()),
+                            "2026-07-29T11:00:00+08:00",
+                        ),
+                    ],
+                )
+
+            context = daily.recent_group_daily_context(
+                history,
+                chat,
+                now=now,
+                max_age_seconds=48 * 3600,
+            )
+
+        self.assertEqual(
+            [item["content"] for item in context],
+            ["current human research direction"],
+        )
+
     def test_group_inspiration_defers_while_exact_chat_has_active_work(self) -> None:
         daily = load_daily()
         with tempfile.TemporaryDirectory() as tmp:
@@ -1885,6 +1944,20 @@ class WeComAgentBridgeTests(unittest.TestCase):
         )
         self.assertEqual(len({task["source"]["member_key"] for task in captured}), 2)
         self.assertEqual(len({task["id"] for task in captured}), 2)
+        self.assertEqual(len({task["session_scope"] for task in captured}), 2)
+        self.assertTrue(
+            all(
+                task["session_scope"].startswith(f"{chat}::daily:")
+                for task in captured
+            )
+        )
+        self.assertTrue(
+            all(
+                task["execution_contract"]["session"]["chat"]
+                == task["session_scope"]
+                for task in captured
+            )
+        )
 
     def test_daily_scheduler_default_report_time_is_six_am(self) -> None:
         daily = load_daily()

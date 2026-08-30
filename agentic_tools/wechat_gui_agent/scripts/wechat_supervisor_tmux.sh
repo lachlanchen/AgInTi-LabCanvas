@@ -250,7 +250,7 @@ worker_command() {
 direct_monitor_command() {
   local direct_config="$1"
   local direct_name="$2"
-  printf "cd %q && if [[ -f %q ]]; then set -a; source %q; set +a; fi; agentic_tools/wechat_gui_agent/scripts/wechat_restart_loop.sh %q %q -u agentic_tools/wechat_gui_agent/scripts/wechat_direct_chatops.py --config %q --worker-queue %q --loop --send --no-decrypt --poll-seconds %q --catchup-poll-seconds %q >> %q 2>&1" \
+  printf "cd %q && if [[ -f %q ]]; then set -a; source %q; set +a; fi; agentic_tools/wechat_gui_agent/scripts/wechat_restart_loop.sh %q %q -u agentic_tools/wechat_gui_agent/scripts/wechat_direct_chatops.py --config %q --worker-queue %q --loop --send --no-decrypt --quiet-idle --poll-seconds %q --catchup-poll-seconds %q >> %q 2>&1" \
     "$ROOT" "$PRIVATE_ENV" "$PRIVATE_ENV" "direct-chatops-$direct_name" "$PY" "$direct_config" "$QUEUE" "$DIRECT_POLL_SECONDS" "$DIRECT_CATCHUP_POLL_SECONDS" "$LOG_DIR/supervisor-direct-chatops-$direct_name.log"
 }
 

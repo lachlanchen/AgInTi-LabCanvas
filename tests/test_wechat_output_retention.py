@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+from datetime import datetime, timedelta
 import os
 from pathlib import Path
 import sys
@@ -92,6 +93,19 @@ class WeChatOutputRetentionTests(unittest.TestCase):
         self.assertEqual(result["removed_files"], 0)
         self.assertEqual(result["trimmed_logs"], 1)
         self.assertTrue(active_log.read_bytes().endswith(b"recent-line\n"))
+
+    def test_removes_log_in_old_dated_folder_even_when_mtime_is_recent(self) -> None:
+        old_date = (
+            datetime.fromtimestamp(self.now).date() - timedelta(days=30)
+        ).isoformat()
+        old_log = self.root / old_date / "supervisor-direct-chatops.log"
+        old_log.parent.mkdir()
+        old_log.write_bytes(b"recently-trimmed-tail\n")
+
+        result = self.run_retention()
+
+        self.assertEqual(result["removed_files"], 1)
+        self.assertFalse(old_log.exists())
 
     def test_does_not_delete_unrelated_numbered_project_image(self) -> None:
         unrelated = self.root / "01-mechanism-figure.png"

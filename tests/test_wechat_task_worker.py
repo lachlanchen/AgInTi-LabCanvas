@@ -5487,6 +5487,61 @@ stderr: noisy internal trace
         self.assertNotIn("lazyedit_options", payload)
         self.assertNotIn("publish_platforms", payload)
 
+    def test_daily_runtime_contract_isolates_legacy_lane_and_drops_outbound_context(self) -> None:
+        worker = load_worker()
+        task = {
+            "chat": "wecom:default:group:labagent",
+            "request": (
+                "Prepare the daily report.\n\n"
+                "Recent same-group discussion:\n"
+                "- outbound: old scheduled report\n\n"
+                "Model-budgeted lifetime memory:\n"
+                "old bot-authored history\n\n"
+                "Requirements:\n"
+                "- Use primary sources.\n"
+                "- Return the verified PDF."
+            ),
+            "context": [
+                {"direction": "inbound", "content": "current human question"},
+                {"direction": "outbound", "content": "old scheduled report"},
+            ],
+            "daily_research": {
+                "job_key": "member-job",
+                "member_key": "member",
+                "topics": ["organoid imaging"],
+            },
+            "execution_contract": {
+                "session": {
+                    "chat": "wecom:default:group:labagent",
+                    "role": "worker",
+                    "reuse": True,
+                }
+            },
+        }
+
+        changed = worker.ensure_daily_research_runtime_contract(task)
+
+        expected_scope = "wecom:default:group:labagent::daily:member-job"
+        self.assertTrue(changed)
+        self.assertEqual(task["session_scope"], expected_scope)
+        self.assertEqual(
+            task["execution_contract"]["session"]["chat"],
+            expected_scope,
+        )
+        self.assertEqual(
+            [item["content"] for item in task["context"]],
+            ["current human question"],
+        )
+        self.assertEqual(
+            task["daily_research"]["active_context_policy"],
+            "recent_inbound_human_messages_only",
+        )
+        self.assertNotIn("old scheduled report", task["request"])
+        self.assertNotIn("old bot-authored history", task["request"])
+        self.assertIn("current human question", task["request"])
+        self.assertIn("- Use primary sources.", task["request"])
+        self.assertTrue(task["daily_research"]["legacy_request_compacted"])
+
     def test_reprocess_task_clears_stale_result_and_preserves_source_context(self) -> None:
         worker = load_worker()
         with tempfile.TemporaryDirectory() as tmp:
@@ -14199,6 +14254,38 @@ stderr: noisy internal trace
                 issues = worker.reader_facing_pdf_quality_issues(task, report)
 
         self.assertEqual(issues, [])
+
+    def test_research_evidence_accepts_per_source_result_claim_heading(self) -> None:
+        worker = load_worker()
+        report = """
+        一、读者证据速览
+        DOI: 10.1000/source-a DOI: 10.1000/source-b DOI: 10.1000/source-c
+
+        三、论文一
+        方法（来源层面）
+        比较实验组、对照组和纵向成像数据集。
+        结果 / 主张（作者报告）
+        作者报告成熟度提升，并给出定量读出。
+        局限（来源层面）
+        样本规模和跨批次泛化仍不确定。
+
+        六、跨来源综合分析
+        三项研究的一致之处与分歧构成可检验张力。
+        七、证据边界与局限
+        直接证据、推断和不确定性分开陈述。
+        八、可执行下一步
+        优先实验是独立队列复现，并预注册决策阈值。
+        九、完整参考文献
+        1. Source A. doi:10.1000/source-a
+        2. Source B. doi:10.1000/source-b
+        3. Source C. doi:10.1000/source-c
+        """
+
+        evidence = worker.research_report_evidence_summary(report)
+
+        self.assertTrue(evidence["has_methods_detail"])
+        self.assertTrue(evidence["has_results_detail"])
+        self.assertTrue(evidence["has_uncertainty"])
 
     def test_standards_report_accepts_methods_mechanism_facts_and_qualified_references(self) -> None:
         worker = load_worker()

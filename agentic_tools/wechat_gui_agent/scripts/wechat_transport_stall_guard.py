@@ -22,6 +22,7 @@ import sys
 import time
 from typing import Any
 from urllib import error, request
+from zoneinfo import ZoneInfo
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -74,6 +75,7 @@ ECHOMIND_INTERVAL_SECONDS = 6 * 60 * 60
 ECHOMIND_HEARTBEAT_STALE_SECONDS = 12 * 60
 ECHOMIND_PENDING_DELIVERY_GRACE_SECONDS = 10 * 60
 ECHOMIND_DAILY_PDF_RETRY_SECONDS = 30 * 60
+HONG_KONG_TZ = ZoneInfo("Asia/Hong_Kong")
 CAREER_HEARTBEAT_STALE_SECONDS = 30 * 60
 TERMINAL_FAILURE_STATUSES = {"failed", "worker_failed"}
 QUOTA_FAILURE_MARKERS = (
@@ -627,13 +629,28 @@ def schedule_health(
     pending_daily_attempt_at = parse_timestamp(
         echo_state.get("last_daily_pdf_attempt_at")
     )
+    daily_pdf_target_date = (
+        current.astimezone(HONG_KONG_TZ) - timedelta(days=1)
+    ).date().isoformat()
+    daily_pdf_generation_retry_active = bool(
+        echo_state.get("last_daily_pdf_error")
+        and str(echo_state.get("last_daily_pdf_attempt_date") or "")
+        == daily_pdf_target_date
+        and str(echo_state.get("last_daily_pdf_date") or "")
+        != daily_pdf_target_date
+    )
     pending_daily_retry_at = (
         pending_daily_attempt_at
         + timedelta(seconds=ECHOMIND_DAILY_PDF_RETRY_SECONDS)
         if pending_daily_attempt_at
-        and isinstance(pending_daily_pdf, dict)
-        and str(echo_state.get("last_daily_pdf_attempt_date") or "")
-        == str(pending_daily_pdf.get("date") or "")
+        and (
+            (
+                isinstance(pending_daily_pdf, dict)
+                and str(echo_state.get("last_daily_pdf_attempt_date") or "")
+                == str(pending_daily_pdf.get("date") or "")
+            )
+            or daily_pdf_generation_retry_active
+        )
         else None
     )
     pending_daily_retry_pending = bool(
@@ -736,6 +753,10 @@ def schedule_health(
             "pending_daily_pdf": echomind_pending_daily_pdf,
             "pending_daily_pdf_actionable": pending_daily_pdf_actionable,
             "pending_daily_pdf_retry_pending": pending_daily_retry_pending,
+            "daily_pdf_generation_retry_active": (
+                daily_pdf_generation_retry_active
+            ),
+            "daily_pdf_target_date": daily_pdf_target_date,
             "pending_daily_pdf_next_attempt_at": (
                 pending_daily_retry_at.isoformat()
                 if pending_daily_retry_at is not None
@@ -1225,6 +1246,22 @@ def agent_backend_runtime_status() -> dict[str, Any]:
     aginti_disabled = str(
         os.environ.get("WECHAT_AGENT_FORCE_DISABLE_AGINTI") or ""
     ).strip().casefold() in {"1", "true", "yes", "on"}
+    transports = {}
+    for name, configured in (
+        ("wechat", configured_wechat),
+        ("wecom", configured_wecom),
+    ):
+        transport_requested = configured or primary
+        transport_effective = select_agent_backend(
+            {"agent_backend": transport_requested}
+        )
+        transports[name] = {
+            "configured_backend": configured,
+            "requested_backend": transport_requested,
+            "effective_backend": transport_effective,
+            "uses_policy_default": not bool(configured),
+            "policy_aligned": transport_effective == primary or bool(forced),
+        }
     return {
         "ok": not (effective == "aginti" and aginti_disabled),
         "primary_backend": primary,
@@ -1233,6 +1270,7 @@ def agent_backend_runtime_status() -> dict[str, Any]:
         "override_active": bool(forced),
         "forced_backend": forced,
         "aginti_disabled": aginti_disabled,
+        "transports": transports,
     }
 
 

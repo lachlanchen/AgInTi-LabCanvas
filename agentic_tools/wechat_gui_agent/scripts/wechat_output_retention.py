@@ -20,6 +20,7 @@ PRIVATE = ROOT / "agentic_tools" / "wechat_gui_agent" / ".private"
 ATTEMPT_SCREENSHOT = re.compile(
     r"^\d{2}-.+-\d{6}-\d{6}-(?P<stage>.+)\.png$"
 )
+DATED_OUTPUT_DIRECTORY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 def main() -> int:
@@ -117,7 +118,8 @@ def maintain_output(
             for path in log_paths
             if (stat := safe_stat(path)) is not None
             and log_retention_seconds
-            and max(0.0, current_time - stat.st_mtime) > log_retention_seconds
+            and generated_log_age_seconds(path, stat, current_time)
+            > log_retention_seconds
         }
         open_files = open_file_identities(log_identities)
         for path in log_paths:
@@ -155,7 +157,7 @@ def maintain_log(
 ) -> None:
     try:
         stat = path.stat()
-        age = max(0.0, now - stat.st_mtime)
+        age = generated_log_age_seconds(path, stat, now)
         if retention_seconds and age > retention_seconds:
             if file_identity(stat) in open_files:
                 if stat.st_size > keep_bytes:
@@ -168,6 +170,22 @@ def maintain_log(
         trim_and_record_log(path, stat.st_size, keep_bytes, result)
     except OSError as exc:
         result["errors"].append({"path": str(path), "error": str(exc)[:300]})
+
+
+def generated_log_age_seconds(path: Path, stat: os.stat_result, now: float) -> float:
+    """Use a dated output directory even after trimming refreshes file mtime."""
+
+    ages = [max(0.0, now - stat.st_mtime)]
+    for parent in path.parents:
+        if not DATED_OUTPUT_DIRECTORY.fullmatch(parent.name):
+            continue
+        try:
+            dated = datetime.strptime(parent.name, "%Y-%m-%d").timestamp()
+        except ValueError:
+            continue
+        ages.append(max(0.0, now - dated))
+        break
+    return max(ages)
 
 
 def trim_log_tail_in_place(path: Path, keep_bytes: int) -> None:
