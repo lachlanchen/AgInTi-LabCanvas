@@ -117,6 +117,12 @@ class WeComAgentBridgeTests(unittest.TestCase):
                         "  mFocusedApp=com.tencent.wework/.launch.WwMainActivity\n"
                         "Display: mDisplayId=0\n"
                     )
+                if args[:3] == ("dumpsys", "activity", "activities"):
+                    return (
+                        "Display #7 (activities from top to bottom):\n"
+                        "  mResumedActivity: ActivityRecord{x u0 "
+                        "com.tencent.wework/.launch.WwMainActivity t1}\n"
+                    )
                 return ""
 
             with mock.patch.object(bridge, "adb_shell", side_effect=adb_shell) as shell:
@@ -3078,7 +3084,8 @@ class WeComAgentBridgeTests(unittest.TestCase):
         )
         self.assertIn("--new-display=1080x2160/440", android_source)
         self.assertIn('help_output="$("$1" --help 2>&1)"', android_source)
-        self.assertIn("--start-app=com.tencent.wework", android_source)
+        self.assertIn("--start-app=+com.tencent.wework", android_source)
+        self.assertIn("--render-driver=software", android_source)
         self.assertIn("LabCanvas WeCom Virtual", android_source)
         self.assertIn("Keep WeChat physical and WeCom virtual side by side", android_source)
         self.assertIn("mix2s_dual_setup", android_source)

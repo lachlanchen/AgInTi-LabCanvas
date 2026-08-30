@@ -318,7 +318,8 @@ wait "$child_pid"'
       env DISPLAY="$DISPLAY_ID" "$scrcpy_bin" \
       --serial "$serial" \
       --new-display=1080x2160/440 \
-      --start-app=com.tencent.wework \
+      --start-app=+com.tencent.wework \
+      --render-driver=software \
       --no-audio \
       --keyboard=sdk \
       --mouse=sdk \

@@ -44,6 +44,7 @@ from wechat_chat_profiles import profile_aliases, profile_for_chat
 from wechat_mirror import DEFAULT_DB, record_event
 from wechat_message_shards import (
     list_message_db_paths,
+    message_db_has_table,
     message_db_index as message_db_sort_key,
     normalize_message_db_name as normalized_message_db_name,
 )
@@ -64,6 +65,8 @@ DECRYPTED = PRIVATE / "wechat_decrypt" / "decrypted"
 VENV_PYTHON = PRIVATE / "wechat_decrypt" / ".venv" / "bin" / "python"
 BACKEND_SCRIPT = ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wechat_direct_backend.py"
 DEFAULT_QUEUE = PRIVATE / "wechat_task_queue.jsonl"
+ANDROID_INGRESS_DB_NAME = "message_999999.db"
+DEFAULT_ANDROID_INGRESS_DB = PRIVATE / "wechat_android_ingress" / ANDROID_INGRESS_DB_NAME
 DEFAULT_POLL_SECONDS = 0.8
 DEFAULT_CATCHUP_POLL_SECONDS = 0.1
 DEFAULT_WORKER_PENDING_TTL_SECONDS = 15 * 60
@@ -1349,12 +1352,18 @@ def elapsed_ms(started: float) -> float:
 
 def message_db_path(value: Any) -> Path:
     name = normalized_message_db_name(value)
+    if name == ANDROID_INGRESS_DB_NAME:
+        return DEFAULT_ANDROID_INGRESS_DB
     return DECRYPTED / "message" / (name or "message_0.db")
 
 
 def available_message_db_paths(config: dict[str, Any]) -> list[Path]:
     table = str(config.get("message_table") or "")
-    return list_message_db_paths(DECRYPTED / "message", table=table)
+    paths = list_message_db_paths(DECRYPTED / "message", table=table)
+    android_db = Path(config.get("android_ingress_db") or DEFAULT_ANDROID_INGRESS_DB)
+    if android_db.is_file() and message_db_has_table(android_db, table):
+        paths.append(android_db)
+    return paths
 
 
 def message_db_cursors(state: dict[str, Any]) -> dict[str, int]:
@@ -1458,14 +1467,22 @@ def read_new_messages(config: dict[str, Any], state: dict[str, Any]) -> list[dic
     contact_map = load_contact_map(DECRYPTED / "contact" / "contact.db")
     cursors = message_db_cursors(state)
     prior_active = normalized_message_db_name(state.get("active_message_db"))
-    latest_name = paths[-1].name
+    primary_paths = [path for path in paths if path.name != ANDROID_INGRESS_DB_NAME]
+    latest_name = (primary_paths[-1] if primary_paths else paths[-1]).name
+    if prior_active == ANDROID_INGRESS_DB_NAME and primary_paths:
+        prior_active = ""
     state["active_message_db"] = latest_name
     rows: list[dict[str, Any]] = []
     for db_path in paths:
         name = db_path.name
         newly_discovered = name not in cursors
         cursor = cursors.get(name, 0)
-        if newly_discovered and prior_active and message_db_sort_key(name) < message_db_sort_key(prior_active):
+        if (
+            name != ANDROID_INGRESS_DB_NAME
+            and newly_discovered
+            and prior_active
+            and message_db_sort_key(name) < message_db_sort_key(prior_active)
+        ):
             # An older cache shard appeared after startup. Seed it at its tail
             # instead of replaying historical traffic.
             try:

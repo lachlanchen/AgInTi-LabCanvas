@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="art.lazying.labcanvas.wechatbridge">
+
+    <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="29" />
+
+    <application
+        android:allowBackup="false"
+        android:debuggable="true"
+        android:label="LabCanvas WeChat Bridge"
+        android:supportsRtl="true">
+        <receiver
+            android:name=".BootstrapReceiver"
+            android:exported="true" />
+        <service
+            android:name=".WechatNotificationListener"
+            android:exported="true"
+            android:label="LabCanvas WeChat Bridge"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+    </application>
+</manifest>
