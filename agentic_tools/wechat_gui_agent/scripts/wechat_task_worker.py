@@ -7324,7 +7324,12 @@ def run_task_orchestrator(task: dict[str, Any], policy: dict[str, Any]) -> str:
 def enforce_current_task_route_safety(task: dict[str, Any]) -> bool:
     """Repair stale/model routes when an exact Finder source is not a publish command."""
     current_request = task_focus_text(task)
-    if "weixin.qq.com/sph/" not in current_request.casefold() or has_public_publish_intent(current_request):
+    profile = extract_shipinhao_media_profile(source_recovery_task_text(task))
+    exact_finder_source = bool(
+        "weixin.qq.com/sph/" in current_request.casefold()
+        or (profile.get("detected") and profile.get("object_id"))
+    )
+    if not exact_finder_source or has_public_publish_intent(current_request):
         return False
     route = dict(task_route_decision(task))
     changed = str(route.get("route_kind") or "") != "file_download_or_save" or bool(
@@ -7341,7 +7346,7 @@ def enforce_current_task_route_safety(task: dict[str, Any]) -> bool:
             "public_publish_allowed": False,
             "external_action_allowed": True,
             "source_policy": "current_plus_explicit_refs",
-            "reason": "exact Shipinhao share link resolved as source material; publication requires an explicit current action verb",
+            "reason": "exact Shipinhao source resolved from the current native card or share link; publication requires an explicit current action verb",
         }
     )
     task["route_decision"] = route
@@ -9333,7 +9338,20 @@ def worker_backend_config(task: dict[str, Any], backend: str) -> dict[str, Any]:
         config = dict(raw) if isinstance(raw, dict) else {}
     if backend != "aginti":
         return config
-    if os.environ.get("WECHAT_AGINTI_HOST_WORKSPACE", "1") != "0":
+    retry_context = (
+        task.get("worker_retry_context")
+        if isinstance(task.get("worker_retry_context"), dict)
+        else {}
+    )
+    if retry_context.get("kind") == "recoverable_aginti_permission_pause":
+        # AgInTi's normal host policy intentionally pauses broad shell work.
+        # Continue the bounded retry in its contained writable workspace rather
+        # than granting destructive host access or repeating the same pause.
+        config["permission_mode"] = "normal"
+        config["sandbox_mode"] = "docker-workspace"
+        config["package_install_policy"] = "allow"
+        config["allow_host_workspace"] = False
+    elif os.environ.get("WECHAT_AGINTI_HOST_WORKSPACE", "1") != "0":
         config.setdefault("permission_mode", "normal")
         config.setdefault("sandbox_mode", "host")
         config.setdefault("allow_host_workspace", True)
@@ -10185,6 +10203,7 @@ Return JSON only: {{"message":"...","files":[],"confirmation":""}}.
             "files": delivery_files,
             "no_reply": False,
             "data": {
+                "require_file_delivery": True,
                 "shipinhao_delivery": {
                     "status": "ready",
                     "source_identity_verified": True,
@@ -10216,20 +10235,21 @@ def recover_verified_shipinhao_delivery_result(
         or bool(guarded.get("private_failure"))
         or not str(guarded.get("message") or guarded.get("confirmation") or "").strip()
     )
+    data = guarded.get("data") if isinstance(guarded.get("data"), dict) else {}
+    guarded["data"] = {
+        **data,
+        "require_file_delivery": True,
+        "shipinhao_delivery": {
+            "status": "ready_after_backend_failure" if unusable_message else "ready",
+            "source_identity_verified": True,
+            "public_actions": False,
+        },
+    }
     if unusable_message:
         guarded["message"] = fallback_shipinhao_delivery_message(finder, delivery_files)
         guarded["confirmation"] = ""
         guarded["no_reply"] = False
         guarded.pop("private_failure", None)
-        data = guarded.get("data") if isinstance(guarded.get("data"), dict) else {}
-        guarded["data"] = {
-            **data,
-            "shipinhao_delivery": {
-                "status": "ready_after_backend_failure",
-                "source_identity_verified": True,
-                "public_actions": False,
-            },
-        }
         task["worker_result_exhausted"] = False
         task["shipinhao_delivery_recovered_at"] = datetime.now().isoformat(timespec="seconds")
     return guarded

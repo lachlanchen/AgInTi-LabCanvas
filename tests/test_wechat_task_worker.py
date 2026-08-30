@@ -2646,6 +2646,8 @@ stderr: noisy internal trace
         self.assertIn("阿拉斯加", payload["message"])
         self.assertIn("没有公开发布", payload["message"])
         self.assertEqual(set(payload["files"]), {str(media), str(transcript)})
+        self.assertTrue(payload["data"]["require_file_delivery"])
+        self.assertTrue(worker.result_requires_file_delivery(task, payload))
         self.assertFalse(payload["no_reply"])
         self.assertFalse(task["worker_result_exhausted"])
         self.assertEqual([call["backend"] for call in calls], ["aginti"])
@@ -2769,6 +2771,7 @@ stderr: noisy internal trace
         self.assertNotIn("private_failure", recovered)
         self.assertEqual(recovered["files"], [str(media)])
         self.assertIn("没有公开发布", recovered["message"])
+        self.assertTrue(recovered["data"]["require_file_delivery"])
         self.assertFalse(task["worker_result_exhausted"])
 
     def test_shipinhao_short_link_runs_resolver_pipeline_with_whisper_environment(self) -> None:
@@ -2842,6 +2845,35 @@ stderr: noisy internal trace
         self.assertNotIn("routine", task)
         self.assertFalse(worker.has_public_publish_intent("https://weixin.qq.com/sph/Ae2UMH6gqr"))
         self.assertTrue(worker.has_public_publish_intent("Publish this video to Shipinhao"))
+
+    def test_worker_repairs_native_shipinhao_card_to_download_delivery(self) -> None:
+        worker = load_worker()
+        exact_card = (
+            "<finderFeed><objectId><![CDATA[exact-object-123]]></objectId>"
+            "<nickname><![CDATA[Exact Creator]]></nickname>"
+            "<desc><![CDATA[Exact subject]]></desc>"
+            "<mediaList><media><url><![CDATA[http://wxapp.tc.qq.com/video?id=fresh]]>"
+            "</url></media></mediaList></finderFeed>"
+        )
+        task = {
+            "id": "native-finder-route",
+            "request": f"Current coalesced request:\n{exact_card}",
+            "source": {"local_id": 77, "kind": "file/link"},
+            "route_decision": {
+                "route_kind": "research_or_summary",
+                "public_publish_intent": False,
+                "public_publish_allowed": False,
+            },
+            "routine": {"id": "research_summary"},
+        }
+
+        changed = worker.enforce_current_task_route_safety(task)
+
+        self.assertTrue(changed)
+        self.assertEqual(task["route_decision"]["route_kind"], "file_download_or_save")
+        self.assertEqual(task["route_decision"]["delivery_mode"], "chat_attachment")
+        self.assertFalse(task["route_decision"]["public_publish_allowed"])
+        self.assertNotIn("routine", task)
 
     def test_shipinhao_media_preflight_automatically_captures_after_signed_url_failure(self) -> None:
         worker = load_worker()
@@ -3367,11 +3399,14 @@ stderr: noisy internal trace
         calls: list[dict[str, object]] = []
 
         def fake_run_worker_codex_once(task: dict[str, object], policy: dict[str, object]) -> str:
+            backend_config = worker.worker_backend_config(task, "aginti")
             calls.append(
                 {
                     "permission_retry": bool(policy.get("permission_recovery_retry")),
                     "reuse_session": bool(policy.get("reuse_session", True)),
                     "retry_context": dict(task.get("worker_retry_context") or {}),
+                    "sandbox_mode": backend_config.get("sandbox_mode"),
+                    "allow_host_workspace": backend_config.get("allow_host_workspace"),
                 }
             )
             if len(calls) == 1:
@@ -3400,6 +3435,9 @@ stderr: noisy internal trace
             "recoverable_aginti_permission_pause",
         )
         self.assertIn("grants no new permission", calls[1]["retry_context"]["instruction"])
+        self.assertEqual(calls[0]["sandbox_mode"], "host")
+        self.assertEqual(calls[1]["sandbox_mode"], "docker-workspace")
+        self.assertFalse(calls[1]["allow_host_workspace"])
         self.assertNotIn("worker_retry_context", task)
 
     def test_worker_bounds_repeated_aginti_permission_pause(self) -> None:
@@ -3482,6 +3520,28 @@ stderr: noisy internal trace
             )
         self.assertNotIn("sandbox_mode", config)
         self.assertNotIn("allow_host_workspace", config)
+
+    def test_worker_backend_config_contains_permission_recovery_in_docker(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "scope-test",
+            "request": "Compile the report from existing task evidence.",
+            "agent_backend_config": {
+                "permission_mode": "normal",
+                "sandbox_mode": "host",
+                "allow_host_workspace": True,
+            },
+            "worker_retry_context": {
+                "kind": "recoverable_aginti_permission_pause",
+            },
+        }
+
+        config = worker.worker_backend_config(task, "aginti")
+
+        self.assertEqual(config["permission_mode"], "normal")
+        self.assertEqual(config["sandbox_mode"], "docker-workspace")
+        self.assertEqual(config["package_install_policy"], "allow")
+        self.assertFalse(config["allow_host_workspace"])
 
     def test_worker_backend_config_preserves_explicit_evidence_scope(self) -> None:
         worker = load_worker()
