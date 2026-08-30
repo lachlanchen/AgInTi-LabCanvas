@@ -74,6 +74,48 @@ class WeChatOpsHealthTests(unittest.TestCase):
         self.assertEqual(payload["status"], "locked")
         self.assertEqual(payload["watchdog"]["desktop"]["status"], "locked")
 
+    def test_desktop_status_uses_terminal_watchdog_observation(self) -> None:
+        completed = subprocess.CompletedProcess([], 0, "123\n", "")
+        with (
+            mock.patch.object(wechat_ops, "run_command", return_value=completed),
+            mock.patch.object(wechat_ops, "port_listening", return_value=True),
+            mock.patch.object(
+                wechat_ops,
+                "fresh_unlock_watchdog_state",
+                return_value={
+                    "desktop": {"status": "locked"},
+                    "after": {"status": "unlocked"},
+                    "age_seconds": 2,
+                },
+            ),
+        ):
+            payload = wechat_ops.desktop_status()
+
+        self.assertEqual(payload["status"], "ready")
+        self.assertTrue(payload["client"]["available"])
+
+    def test_watchdog_retry_window_keeps_login_requirement_fresh(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            state_path = Path(tmp) / "watchdog.json"
+            state_path.write_text(
+                json.dumps(
+                    {
+                        "desktop": {"status": "entry_required"},
+                        "retry_after_seconds": 300,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            old_mtime = datetime.now().timestamp() - 180
+            os.utime(state_path, (old_mtime, old_mtime))
+            payload = wechat_ops.fresh_unlock_watchdog_state(
+                state_path,
+                max_age_seconds=90,
+            )
+
+        self.assertEqual(payload["desktop"]["status"], "entry_required")
+        self.assertEqual(payload["valid_for_seconds"], 330.0)
+
     def test_direct_monitor_health_reports_stale_heartbeat_not_ready(self) -> None:
         original_discover = wechat_ops.discover_direct_monitor_configs
         original_config_health = wechat_ops.direct_config_health
@@ -81,7 +123,7 @@ class WeChatOpsHealthTests(unittest.TestCase):
         original_separation = wechat_ops.direct_config_separation_summary
         try:
             wechat_ops.discover_direct_monitor_configs = lambda: [Path("echo.local.json")]  # type: ignore[assignment]
-            wechat_ops.direct_config_health = lambda _path: {  # type: ignore[assignment]
+            wechat_ops.direct_config_health = lambda _path, **_kwargs: {  # type: ignore[assignment]
                 "ok": False,
                 "chat_name": "EchoMind",
                 "caught_up": True,
@@ -153,6 +195,60 @@ class WeChatOpsHealthTests(unittest.TestCase):
         self.assertTrue(payload["last_message_old"])
         self.assertFalse(payload["monitor_stale"])
         self.assertFalse(payload["source_stale"])
+
+    def test_fresh_monitor_is_not_ready_when_client_requires_login(self) -> None:
+        original_latest = wechat_ops.latest_direct_db_local_id
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            state_path = tmp_path / "state.json"
+            state_path.write_text(
+                json.dumps(
+                    {
+                        "last_local_id": 25,
+                        "last_loop_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                    }
+                ),
+                encoding="utf-8",
+            )
+            config_path = tmp_path / "login-required.local.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "chat_name": "LoginRequired",
+                        "message_table": "Msg_test",
+                        "state_path": str(state_path),
+                        "poll_seconds": 0.8,
+                        "ignore_self_messages": True,
+                        "respond_to_self": False,
+                        "send_target": {"expected_title": "LoginRequired"},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            try:
+                wechat_ops.latest_direct_db_local_id = lambda _table: {  # type: ignore[assignment]
+                    "ok": True,
+                    "status": "ok",
+                    "latest_local_id": 25,
+                    "latest_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                    "age_seconds": 1,
+                }
+                payload = wechat_ops.direct_config_health(
+                    config_path,
+                    client={
+                        "available": False,
+                        "status": "entry_required",
+                    },
+                )
+            finally:
+                wechat_ops.latest_direct_db_local_id = original_latest  # type: ignore[assignment]
+
+        self.assertTrue(payload["caught_up"])
+        self.assertFalse(payload["ready"])
+        self.assertFalse(payload["ok"])
+        self.assertTrue(payload["client_blocked"])
+        self.assertTrue(payload["source_stale"])
+        self.assertEqual(payload["client_status"], "entry_required")
 
     def test_caught_up_chat_with_stale_monitor_heartbeat_is_not_ready(self) -> None:
         original_latest = wechat_ops.latest_direct_db_local_id
@@ -230,6 +326,38 @@ class WeChatOpsHealthTests(unittest.TestCase):
         self.assertTrue(payload["ok"])
         self.assertFalse(payload["diagnostic_ok"])
         self.assertTrue(payload["transport_health"]["ok"])
+
+    def test_cli_health_does_not_override_authoritative_login_requirement(self) -> None:
+        with (
+            mock.patch.object(
+                wechat_ops,
+                "direct_monitor_health",
+                return_value={
+                    "ok": False,
+                    "ready_groups": 0,
+                    "group_count": 1,
+                    "stale_source_groups": 1,
+                    "client": {"available": False, "status": "entry_required"},
+                    "queue": {"attention": {"needs_attention": False}},
+                },
+            ),
+            mock.patch.object(
+                wechat_ops,
+                "persistent_transport_health",
+                return_value={
+                    "ok": True,
+                    "severity": "ok",
+                    "direct_monitors": {"healthy": 1, "configured": 1},
+                },
+            ),
+            redirect_stdout(io.StringIO()) as stdout,
+        ):
+            rc = wechat_ops.cmd_health(argparse.Namespace(json=True))
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(rc, 1)
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["client"]["status"], "entry_required")
 
     def test_cli_health_keeps_recent_queue_failure_visible(self) -> None:
         original_direct = wechat_ops.direct_monitor_health

@@ -604,6 +604,62 @@ class WeChatTransportStallGuardTests(unittest.TestCase):
         self.assertEqual(result["healthy"], 1)
         self.assertEqual(result["stale_configs"], ["stale-direct-chatops.local.json"])
 
+    def test_client_health_uses_terminal_state_and_retry_window(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            state_path = Path(tmp) / "watchdog.json"
+            state_path.write_text(
+                json.dumps(
+                    {
+                        "desktop": {"status": "locked"},
+                        "after": {"status": "entry_required"},
+                        "retry_after_seconds": 300,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            modified = datetime.fromtimestamp(state_path.stat().st_mtime, tz=timezone.utc)
+            result = guard.wechat_client_health(
+                state_path,
+                now=modified + timedelta(seconds=180),
+                max_age_seconds=90,
+            )
+
+        self.assertFalse(result["ok"])
+        self.assertFalse(result["available"])
+        self.assertEqual(result["status"], "entry_required")
+        self.assertEqual(result["reason"], "login_required")
+        self.assertEqual(result["state_valid_for_seconds"], 330)
+
+    def test_fresh_monitor_heartbeat_is_blocked_by_logged_out_client(self) -> None:
+        now = datetime(2026, 7, 22, 12, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            private = Path(tmp)
+            state = private / "healthy.state.json"
+            state.write_text(
+                '{"last_loop_at":"2026-07-22T11:59:50+00:00"}',
+                encoding="utf-8",
+            )
+            (private / "healthy-direct-chatops.local.json").write_text(
+                json.dumps({"state_path": str(state), "poll_seconds": 0.8}),
+                encoding="utf-8",
+            )
+
+            result = guard.direct_monitor_health(
+                private_dir=private,
+                now=now,
+                client={"available": False, "status": "entry_required"},
+            )
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["healthy"], 0)
+        self.assertEqual(result["heartbeat_healthy"], 1)
+        self.assertEqual(result["stale_configs"], [])
+        self.assertEqual(
+            result["client_blocked_configs"],
+            ["healthy-direct-chatops.local.json"],
+        )
+        self.assertEqual(result["monitors"][0]["state"], "client_unavailable")
+
     def test_direct_monitor_health_does_not_kill_bounded_inflight_agent_turn(self) -> None:
         now = datetime(2026, 7, 22, 12, 0, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:

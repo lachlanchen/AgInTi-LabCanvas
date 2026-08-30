@@ -30,6 +30,19 @@ DEFAULT_NOVNC_PORT = 6107
 TRANSPORT_HEALTH_GUARD = SCRIPTS / "wechat_transport_stall_guard.py"
 TRANSPORT_HEALTH_SNAPSHOT = PACKAGE_ROOT / "output" / "transport-health" / "latest.json"
 UNLOCK_WATCHDOG_STATE = PRIVATE / "wechat_desktop_unlock_watchdog.state.json"
+WECHAT_CLIENT_KNOWN_STATES = {
+    "detect_failed",
+    "entry_required",
+    "locked",
+    "no_window",
+    "unlocked",
+}
+WECHAT_CLIENT_UNAVAILABLE_STATES = {
+    "detect_failed",
+    "entry_required",
+    "locked",
+    "no_window",
+}
 CODEX_SESSION_KEY_RE = re.compile(r"^v2:[0-9a-z_.-]+-[0-9a-f]{12}:[0-9a-z_.-]+$")
 QUEUE_ACTIVE_STATUSES = {
     "pending",
@@ -759,8 +772,14 @@ def cmd_health(args: argparse.Namespace) -> int:
             if isinstance(payload.get("queue"), dict)
             else {}
         )
-        payload["ok"] = bool(transport.get("ok")) and not bool(
-            isinstance(queue_attention, dict) and queue_attention.get("needs_attention")
+        client = payload.get("client") if isinstance(payload.get("client"), dict) else {}
+        client_available = client.get("available") is not False
+        payload["ok"] = (
+            bool(transport.get("ok"))
+            and client_available
+            and not bool(
+                isinstance(queue_attention, dict) and queue_attention.get("needs_attention")
+            )
         )
         monitor_status = transport.get("direct_monitors") or {}
         summary = (
@@ -772,6 +791,9 @@ def cmd_health(args: argparse.Namespace) -> int:
         summary = f"wechat health: {payload['ready_groups']}/{payload['group_count']} ready"
     if payload.get("stale_source_groups"):
         summary += f", {payload['stale_source_groups']} stale source"
+    client = payload.get("client") if isinstance(payload.get("client"), dict) else {}
+    if client.get("available") is False:
+        summary += f", client {client.get('status') or 'unavailable'}"
     queue_attention = (payload.get("queue") or {}).get("attention") if isinstance(payload.get("queue"), dict) else None
     if isinstance(queue_attention, dict) and queue_attention.get("needs_attention"):
         counts = queue_attention.get("counts") or {}
@@ -2866,7 +2888,8 @@ def mirror_summary(path: Path, *, limit: int = 8) -> dict[str, Any]:
 
 def direct_monitor_health() -> dict[str, Any]:
     configs = discover_direct_monitor_configs()
-    groups = [direct_config_health(path) for path in configs]
+    client = wechat_client_availability()
+    groups = [direct_config_health(path, client=client) for path in configs]
     separation = direct_config_separation_summary(configs)
     backend = external_backend_summary()
     queue = queue_summary(configured_runtime_paths()["queue"], limit=5)
@@ -2881,6 +2904,7 @@ def direct_monitor_health() -> dict[str, Any]:
         "caught_up_groups": caught_up,
         "ready_groups": ready,
         "stale_source_groups": stale,
+        "client": client,
         "separation": separation,
         "external_backend": backend,
         "queue": queue,
@@ -2888,7 +2912,7 @@ def direct_monitor_health() -> dict[str, Any]:
         "notes": [
             "private chatroom ids, wxids, message-table names, and DB paths are intentionally omitted",
             "set WECHAT_DIRECT_CONFIGS in .private/wechat_supervisor.local.env to control monitored groups",
-            "caught_up means state reached the latest decrypted row; ready also requires a fresh monitor heartbeat",
+            "caught_up means state reached the latest decrypted row; ready also requires a fresh monitor heartbeat and an available logged-in client",
             "chat_quiet and last_message_old are informational and do not make a healthy idle monitor stale",
         ],
     }
@@ -3088,7 +3112,11 @@ def discover_direct_monitor_configs() -> list[Path]:
     return resolved
 
 
-def direct_config_health(path: Path) -> dict[str, Any]:
+def direct_config_health(
+    path: Path,
+    *,
+    client: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     base = {
         "config_name": path.name,
         "config_exists": path.exists(),
@@ -3141,12 +3169,14 @@ def direct_config_health(path: Path) -> dict[str, Any]:
         or heartbeat_age_seconds > monitor_stale_seconds
     )
     caught_up = latest.get("ok") and state_last >= int(latest.get("latest_local_id") or 0)
-    ready = bool(caught_up and not monitor_stale)
+    client_blocked = bool(client is not None and client.get("available") is False)
+    ready = bool(caught_up and not monitor_stale and not client_blocked)
     ok = bool(
         state_exists
         and latest.get("ok")
         and caught_up
         and not monitor_stale
+        and not client_blocked
         and bool(config.get("ignore_self_messages", True))
         and not bool(config.get("respond_to_self", False))
         and has_guarded_target
@@ -3167,8 +3197,10 @@ def direct_config_health(path: Path) -> dict[str, Any]:
         "monitor_stale_seconds": monitor_stale_seconds,
         "monitor_stale": monitor_stale,
         # Compatibility fields now describe monitor freshness, not chat activity.
-        "db_stale": monitor_stale,
-        "source_stale": monitor_stale,
+        "db_stale": bool(monitor_stale or client_blocked),
+        "source_stale": bool(monitor_stale or client_blocked),
+        "client_blocked": client_blocked,
+        "client_status": str((client or {}).get("status") or "not_checked"),
         "ready": ready,
         "caught_up": bool(caught_up),
         "respond_to_all": bool(config.get("respond_to_all", False)),
@@ -3461,7 +3493,8 @@ def desktop_status() -> dict[str, Any]:
     wechat_window = run_command(["xdotool", "search", "--onlyvisible", "--class", "wechat"], capture=True, env=display_env(DEFAULT_DISPLAY))
     ports = {str(port): port_listening(port) for port in (DEFAULT_VNC_PORT, DEFAULT_NOVNC_PORT)}
     watchdog = fresh_unlock_watchdog_state()
-    live_state = str((watchdog.get("desktop") or {}).get("status") or "")
+    client = wechat_client_availability(watchdog)
+    live_state = str(client.get("status") or "")
     base_ready = bool(
         display_ok
         and wechat_window.returncode == 0
@@ -3471,7 +3504,7 @@ def desktop_status() -> dict[str, Any]:
         status = "offline"
     elif not base_ready:
         status = "partial"
-    elif live_state in {"locked", "entry_required"}:
+    elif client.get("available") is False:
         status = live_state
     else:
         status = "ready"
@@ -3481,6 +3514,7 @@ def desktop_status() -> dict[str, Any]:
         "display_ok": display_ok,
         "wechat_window": wechat_window.stdout.split(),
         "ports": ports,
+        "client": client,
         "watchdog": watchdog,
         "novnc_url": f"http://127.0.0.1:{DEFAULT_NOVNC_PORT}/vnc_lite.html?host=127.0.0.1&port={DEFAULT_NOVNC_PORT}&autoconnect=1&resize=remote",
     }
@@ -3496,9 +3530,60 @@ def fresh_unlock_watchdog_state(
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {}
-    if age_seconds > max_age_seconds or not isinstance(payload, dict):
+    if not isinstance(payload, dict):
         return {}
-    return {**payload, "age_seconds": round(age_seconds, 3)}
+    try:
+        retry_after_seconds = max(0.0, float(payload.get("retry_after_seconds") or 0.0))
+    except (TypeError, ValueError):
+        retry_after_seconds = 0.0
+    valid_for_seconds = max(float(max_age_seconds), retry_after_seconds + 30.0)
+    if age_seconds > valid_for_seconds:
+        return {}
+    return {
+        **payload,
+        "age_seconds": round(age_seconds, 3),
+        "valid_for_seconds": round(valid_for_seconds, 3),
+    }
+
+
+def effective_watchdog_desktop_state(watchdog: dict[str, Any]) -> dict[str, Any]:
+    """Return the terminal desktop observation from one watchdog cycle."""
+
+    after = watchdog.get("after")
+    if isinstance(after, dict) and str(after.get("status") or ""):
+        return after
+    desktop = watchdog.get("desktop")
+    return desktop if isinstance(desktop, dict) else {}
+
+
+def wechat_client_availability(
+    watchdog: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Classify whether the official client can currently ingest and send."""
+
+    observed = fresh_unlock_watchdog_state() if watchdog is None else watchdog
+    state = effective_watchdog_desktop_state(observed)
+    status = str(state.get("status") or "watchdog_unavailable")
+    known = status in WECHAT_CLIENT_KNOWN_STATES
+    available = bool(known and status == "unlocked")
+    reasons = {
+        "detect_failed": "desktop_state_detection_failed",
+        "entry_required": "login_required",
+        "locked": "desktop_locked",
+        "no_window": "client_window_missing",
+        "unlocked": "ready",
+        "watchdog_unavailable": "watchdog_stale_or_missing",
+    }
+    return {
+        "ok": available,
+        "available": available,
+        "known": known,
+        "status": status,
+        "reason": reasons.get(status, "desktop_state_unknown"),
+        "human_action_required": status == "entry_required",
+        "watchdog_age_seconds": observed.get("age_seconds"),
+        "watchdog_valid_for_seconds": observed.get("valid_for_seconds"),
+    }
 
 
 def tmux_status(session: str) -> dict[str, Any]:

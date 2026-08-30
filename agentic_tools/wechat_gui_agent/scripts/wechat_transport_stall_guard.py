@@ -36,6 +36,7 @@ WECOM_PRIVATE = ROOT / "agentic_tools" / "wecom_agent" / ".private"
 SEND_LOCK = WECHAT_PRIVATE / "wechat_gui_send.lock"
 WECHAT_QUEUE = WECHAT_PRIVATE / "wechat_task_queue.jsonl"
 WECOM_QUEUE = WECOM_PRIVATE / "wecom_task_queue.jsonl"
+WECHAT_UNLOCK_STATE = WECHAT_PRIVATE / "wechat_desktop_unlock_watchdog.state.json"
 MODEL_POLICY_PATH = ROOT / "configs" / "model-policy.json"
 WECHAT_ORGANIZER_DELIVERY = (
     WECHAT_PRIVATE / "output" / "career_daily" / "organizer-delivery.json"
@@ -101,6 +102,7 @@ ALERTABLE_DEGRADED_CODES = {
     "schedule_echomind_stalled",
     "schedule_labagent_stalled",
     "wechat_direct_monitor_stalled",
+    "wechat_login_required",
 }
 
 ACTIVE_STATUSES = {
@@ -279,6 +281,69 @@ def read_json(path: Path) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+def effective_watchdog_desktop_state(payload: dict[str, Any]) -> dict[str, Any]:
+    after = payload.get("after")
+    if isinstance(after, dict) and str(after.get("status") or ""):
+        return after
+    desktop = payload.get("desktop")
+    return desktop if isinstance(desktop, dict) else {}
+
+
+def wechat_client_health(
+    path: Path = WECHAT_UNLOCK_STATE,
+    *,
+    now: datetime | None = None,
+    max_age_seconds: float = 90.0,
+) -> dict[str, Any]:
+    """Read the authoritative GUI state without treating a live loop as login."""
+
+    current = now or utc_now()
+    payload = read_json(path)
+    try:
+        modified_at = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
+        age_seconds = max(0.0, (current - modified_at).total_seconds())
+    except OSError:
+        age_seconds = None
+    try:
+        retry_after_seconds = max(0.0, float(payload.get("retry_after_seconds") or 0.0))
+    except (TypeError, ValueError):
+        retry_after_seconds = 0.0
+    valid_for_seconds = max(float(max_age_seconds), retry_after_seconds + 30.0)
+    fresh = bool(
+        payload
+        and age_seconds is not None
+        and age_seconds <= valid_for_seconds
+    )
+    state = effective_watchdog_desktop_state(payload) if fresh else {}
+    status = str(state.get("status") or "watchdog_unavailable")
+    known = status in {
+        "detect_failed",
+        "entry_required",
+        "locked",
+        "no_window",
+        "unlocked",
+    }
+    available = bool(known and status == "unlocked")
+    reasons = {
+        "detect_failed": "desktop_state_detection_failed",
+        "entry_required": "login_required",
+        "locked": "desktop_locked",
+        "no_window": "client_window_missing",
+        "unlocked": "ready",
+        "watchdog_unavailable": "watchdog_stale_or_missing",
+    }
+    return {
+        "ok": available,
+        "available": available,
+        "known": known,
+        "status": status,
+        "reason": reasons.get(status, "desktop_state_unknown"),
+        "human_action_required": status == "entry_required",
+        "state_age_seconds": int(age_seconds) if age_seconds is not None else None,
+        "state_valid_for_seconds": int(valid_for_seconds),
+    }
+
+
 def cli_transport_health(
     config_path: Path = CLI_CONFIG,
     state_path: Path = CLI_TRANSPORT_STATE,
@@ -395,6 +460,7 @@ def direct_monitor_health(
     minimum_stale_seconds: float = 30.0,
     poll_multiplier: float = 30.0,
     processing_stale_seconds: float = 900.0,
+    client: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Check process heartbeats without treating an inactive chat as stale."""
 
@@ -430,16 +496,24 @@ def direct_monitor_health(
             and processing_age is not None
             and processing_age <= processing_stale_seconds
         )
-        healthy = (
+        heartbeat_healthy = (
             heartbeat is not None
             and age is not None
             and (age <= threshold or within_processing_deadline)
         )
+        client_available = client is None or client.get("available") is not False
+        healthy = bool(heartbeat_healthy and client_available)
         monitors.append(
             {
                 "config": config_path.name,
                 "ok": healthy,
-                "state": "processing" if within_processing_deadline else "polling",
+                "state": (
+                    "client_unavailable"
+                    if not client_available
+                    else ("processing" if within_processing_deadline else "polling")
+                ),
+                "heartbeat_ok": heartbeat_healthy,
+                "client_available": client_available,
                 "heartbeat_age_seconds": int(age) if age is not None else None,
                 "stale_after_seconds": int(threshold),
                 "inflight_count": len(inflight),
@@ -447,12 +521,16 @@ def direct_monitor_health(
                 "processing_stale_after_seconds": int(processing_stale_seconds),
             }
         )
-    stale = [item["config"] for item in monitors if not item["ok"]]
+    stale = [item["config"] for item in monitors if not item["heartbeat_ok"]]
+    blocked = [item["config"] for item in monitors if not item["client_available"]]
     return {
-        "ok": bool(monitors) and not stale,
+        "ok": bool(monitors) and not stale and not blocked,
         "configured": len(monitors),
         "healthy": sum(1 for item in monitors if item["ok"]),
+        "heartbeat_healthy": sum(1 for item in monitors if item["heartbeat_ok"]),
         "stale_configs": stale,
+        "client_blocked_configs": blocked,
+        "client": client or {"available": True, "status": "not_checked"},
         "monitors": monitors,
     }
 
@@ -1170,8 +1248,16 @@ def build_snapshot(*, max_sender_seconds: float = 180.0) -> dict[str, Any]:
         else {"ok": True, "enabled": False}
     )
     sender = sender_lock_health(max_holder_seconds=max_sender_seconds)
-    gui_delivery = recent_wechat_gui_timeout_health()
-    direct_monitors = direct_monitor_health()
+    client = wechat_client_health()
+    gui_timeout_health = recent_wechat_gui_timeout_health()
+    gui_delivery = {
+        **gui_timeout_health,
+        "timeout_ok": bool(gui_timeout_health.get("ok")),
+        "client_available": bool(client.get("available")),
+        "client_status": str(client.get("status") or "unknown"),
+        "ok": bool(gui_timeout_health.get("ok")) and bool(client.get("available")),
+    }
+    direct_monitors = direct_monitor_health(client=client)
     schedules = schedule_health()
     cli_transport = cli_transport_health()
     agent_failures = recent_terminal_agent_failures()
@@ -1189,7 +1275,14 @@ def build_snapshot(*, max_sender_seconds: float = 180.0) -> dict[str, Any]:
         issue("wechat_session_missing", "critical", "WeChat tmux session is absent")
     elif wechat_missing:
         issue("wechat_windows_missing", "degraded", ",".join(wechat_missing))
-    if not direct_monitors.get("ok"):
+    if not client.get("ok"):
+        client_status = str(client.get("status") or "unavailable")
+        issue(
+            "wechat_login_required" if client_status == "entry_required" else "wechat_client_unavailable",
+            "degraded" if client_status in {"entry_required", "locked"} else "critical",
+            f"official WeChat client state is {client_status}",
+        )
+    elif not direct_monitors.get("ok"):
         issue(
             "wechat_direct_monitor_stalled",
             "critical",
@@ -1213,7 +1306,7 @@ def build_snapshot(*, max_sender_seconds: float = 180.0) -> dict[str, Any]:
         )
     if not sender.get("ok"):
         issue("sender_lock_stuck", "degraded", str(sender.get("state") or "unknown"))
-    if not gui_delivery.get("ok"):
+    if not gui_timeout_health.get("ok"):
         issue(
             "wechat_gui_delivery_stalled",
             "degraded",
@@ -1316,6 +1409,7 @@ def build_snapshot(*, max_sender_seconds: float = 180.0) -> dict[str, Any]:
         "agent_failures": agent_failures,
         "agent_backend": agent_backend,
         "sender_lock": sender,
+        "wechat_client": client,
         "wechat_gui_delivery": gui_delivery,
         "queues": queues,
         "processes": process_counts(wechat, wecom),
