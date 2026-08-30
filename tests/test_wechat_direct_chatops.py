@@ -50,6 +50,20 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
             direct_chatops.direct_reply_requires_worker_delivery(config, "简短回答。")
         )
 
+    def test_idle_monitor_result_is_quiet_but_real_work_is_logged(self) -> None:
+        idle = {
+            "new_rows": 0,
+            "responses_sent": 0,
+            "tasks_enqueued": 0,
+            "response_sent": None,
+            "task_enqueued": None,
+            "processed_local_id": None,
+        }
+
+        self.assertTrue(direct_chatops.direct_result_is_idle(idle))
+        self.assertFalse(direct_chatops.direct_result_is_idle({**idle, "new_rows": 1}))
+        self.assertFalse(direct_chatops.direct_result_is_idle({**idle, "task_enqueued": "task-1"}))
+
     def backend_chat_config(self, chat_name: str, purpose: str = "research") -> dict[str, object]:
         return {
             "chat_name": chat_name,

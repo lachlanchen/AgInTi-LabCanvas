@@ -15,6 +15,8 @@ import fcntl
 import json
 import os
 from pathlib import Path
+import re
+import shutil
 import shlex
 import subprocess
 import sys
@@ -75,6 +77,12 @@ def main() -> int:
     parser.add_argument("--only", action="append", default=[], help="Only sync a chat name. Repeatable.")
     parser.add_argument("--output-dir", type=Path, default=ROOT / "output" / "wechat_gui_agent" / datetime.now().strftime("%F"))
     parser.add_argument(
+        "--quiet-success",
+        action=argparse.BooleanOptionalAction,
+        default=os.environ.get("WECHAT_CHAT_SYNC_QUIET_SUCCESS", "1") != "0",
+        help="In loop mode, log failures while keeping successful dry-open polls quiet.",
+    )
+    parser.add_argument(
         "--queue",
         type=Path,
         default=Path(os.environ.get("WECHAT_WORKER_QUEUE", str(DEFAULT_QUEUE))),
@@ -91,7 +99,8 @@ def main() -> int:
     failure_backoff_until: dict[str, float] = {}
     while True:
         results = sync_once(args, failure_backoff_until=failure_backoff_until)
-        print(json.dumps({"checked_at": datetime.now().isoformat(timespec="seconds"), "results": results}, ensure_ascii=False), flush=True)
+        if not (args.loop and args.quiet_success and not any(chat_sync_result_is_notable(item) for item in results)):
+            print(json.dumps({"checked_at": datetime.now().isoformat(timespec="seconds"), "results": results}, ensure_ascii=False), flush=True)
         if args.once or not args.loop:
             return 0 if all(item.get("ok") for item in results) else 1
         time.sleep(max(args.interval, 5.0))
@@ -100,13 +109,13 @@ def main() -> int:
 def sync_once(args: argparse.Namespace, failure_backoff_until: dict[str, float] | None = None) -> list[dict[str, Any]]:
     if gui_send_lock_busy():
         result = gui_send_lock_reserved_result()
-        emit_target_event(result)
+        maybe_emit_target_event(args, result)
         return [result]
     if getattr(args, "yield_to_queue", True):
         send_lane = queue_send_lane_busy(Path(args.queue))
         if send_lane["busy"]:
             result = send_lane_reserved_result(args, send_lane)
-            emit_target_event(result)
+            maybe_emit_target_event(args, result)
             return [result]
 
     configs = rotate_limited_configs(prioritize_configs(discover_configs(args.configs), args.priority), args)
@@ -118,42 +127,42 @@ def sync_once(args: argparse.Namespace, failure_backoff_until: dict[str, float] 
         try:
             if gui_send_lock_busy():
                 results.append(gui_send_lock_reserved_result())
-                emit_target_event(results[-1])
+                maybe_emit_target_event(args, results[-1])
                 break
             if getattr(args, "yield_to_queue", True):
                 send_lane = queue_send_lane_busy(Path(args.queue))
                 if send_lane["busy"]:
                     results.append(send_lane_reserved_result(args, send_lane))
-                    emit_target_event(results[-1])
+                    maybe_emit_target_event(args, results[-1])
                     break
             config = json.loads(config_path.read_text(encoding="utf-8"))
             if config.get("desktop_sync_watch") is False:
                 results.append({"config": str(config_path), "ok": True, "skipped": "desktop_sync_watch_false"})
-                emit_target_event(results[-1])
+                maybe_emit_target_event(args, results[-1])
                 continue
             target = target_from_config(config)
             chat_name = str(config.get("chat_name") or target.get("name") or config_path.stem)
             if only and chat_name not in only and str(target.get("name") or "") not in only:
                 results.append({"config": str(config_path), "chat": chat_name, "ok": True, "skipped": "not_selected"})
-                emit_target_event(results[-1])
+                maybe_emit_target_event(args, results[-1])
                 continue
             if max_targets and opened_or_attempted >= max_targets:
                 results.append({"config": str(config_path), "chat": chat_name, "ok": True, "skipped": "max_targets_per_cycle"})
-                emit_target_event(results[-1])
+                maybe_emit_target_event(args, results[-1])
                 continue
             backoff_result = chat_sync_backoff_result(chat_name, failure_backoff_until)
             if backoff_result:
                 results.append(backoff_result)
-                emit_target_event(results[-1])
+                maybe_emit_target_event(args, results[-1])
                 continue
             opened_or_attempted += 1
             result = open_chat_dry_run(args, chat_name, target)
             apply_chat_sync_backoff(args, chat_name, result, failure_backoff_until)
             results.append(result)
-            emit_target_event(results[-1])
+            maybe_emit_target_event(args, results[-1])
         except Exception as exc:
             results.append({"config": str(config_path), "ok": False, "error": str(exc)[:500]})
-            emit_target_event(results[-1])
+            maybe_emit_target_event(args, results[-1])
     advance_chat_sync_rotation(args, len(configs), max_targets, bool(only))
     return results
 
@@ -221,6 +230,7 @@ def chat_sync_failure_retryable(result: dict[str, Any]) -> bool:
         "opened chat title guard failed",
         "title guard failed",
         "ocr=",
+        "wechat_entry_required",
         "wechat_locked",
     )
     return any(marker in text for marker in retryable_markers)
@@ -403,6 +413,17 @@ def emit_target_event(result: dict[str, Any]) -> None:
     )
 
 
+def chat_sync_result_is_notable(result: dict[str, Any]) -> bool:
+    """Successful polling is state, not a transcript; failures remain visible."""
+    return not bool(result.get("ok"))
+
+
+def maybe_emit_target_event(args: argparse.Namespace, result: dict[str, Any]) -> None:
+    if getattr(args, "quiet_success", False) and not chat_sync_result_is_notable(result):
+        return
+    emit_target_event(result)
+
+
 def parse_env_file(path: Path) -> dict[str, str]:
     values: dict[str, str] = {}
     if not path.exists():
@@ -433,11 +454,13 @@ def target_from_config(config: dict[str, Any]) -> dict[str, Any]:
 
 
 def open_chat_dry_run(args: argparse.Namespace, chat_name: str, target: dict[str, Any]) -> dict[str, Any]:
-    args.output_dir.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile("w", suffix=".json", prefix="wechat-chat-sync-", encoding="utf-8", delete=False) as fh:
-        json.dump({"targets": [target], "message": ""}, fh, ensure_ascii=False)
-        targets_file = Path(fh.name)
-    try:
+    with tempfile.TemporaryDirectory(prefix="wechat-chat-sync-") as temp_dir:
+        evidence_dir = Path(temp_dir)
+        targets_file = evidence_dir / "target.json"
+        targets_file.write_text(
+            json.dumps({"targets": [target], "message": ""}, ensure_ascii=False),
+            encoding="utf-8",
+        )
         env = chat_sync_gui_send_env(args)
         proc = subprocess.run(
             [
@@ -452,7 +475,7 @@ def open_chat_dry_run(args: argparse.Namespace, chat_name: str, target: dict[str
                 "--pause",
                 str(args.pause),
                 "--output-dir",
-                str(args.output_dir),
+                str(evidence_dir),
             ],
             cwd=ROOT,
             env=env,
@@ -461,14 +484,44 @@ def open_chat_dry_run(args: argparse.Namespace, chat_name: str, target: dict[str
             timeout=chat_sync_subprocess_timeout(args),
             check=False,
         )
-    finally:
-        targets_file.unlink(missing_ok=True)
-    result: dict[str, Any] = {"chat": chat_name, "ok": proc.returncode == 0, "returncode": proc.returncode}
-    if proc.stdout.strip():
-        result["stdout_tail"] = proc.stdout.strip()[-1000:]
-    if proc.stderr.strip():
-        result["stderr_tail"] = proc.stderr.strip()[-1000:]
-    return result
+        result: dict[str, Any] = {"chat": chat_name, "ok": proc.returncode == 0, "returncode": proc.returncode}
+        if proc.stdout.strip():
+            result["stdout_tail"] = proc.stdout.strip()[-1000:]
+        if proc.stderr.strip():
+            result["stderr_tail"] = proc.stderr.strip()[-1000:]
+        if result["ok"]:
+            clear_chat_sync_failure_evidence(args.output_dir, chat_name)
+        else:
+            failure_screenshot = preserve_chat_sync_failure_evidence(args.output_dir, chat_name, evidence_dir)
+            if failure_screenshot:
+                result["failure_screenshot"] = str(failure_screenshot)
+        return result
+
+
+def chat_sync_evidence_slug(chat_name: str) -> str:
+    slug = re.sub(r"[^\w.-]+", "-", chat_name, flags=re.UNICODE).strip("-.")
+    return slug[:80] or "chat"
+
+
+def chat_sync_failure_evidence_path(output_dir: Path, chat_name: str) -> Path:
+    return output_dir / f"chat-sync-latest-failure-{chat_sync_evidence_slug(chat_name)}.png"
+
+
+def preserve_chat_sync_failure_evidence(output_dir: Path, chat_name: str, evidence_dir: Path) -> Path | None:
+    candidates = sorted(
+        evidence_dir.glob("*.png"),
+        key=lambda path: path.stat().st_mtime_ns,
+    )
+    if not candidates:
+        return None
+    output_dir.mkdir(parents=True, exist_ok=True)
+    destination = chat_sync_failure_evidence_path(output_dir, chat_name)
+    shutil.copy2(candidates[-1], destination)
+    return destination
+
+
+def clear_chat_sync_failure_evidence(output_dir: Path, chat_name: str) -> None:
+    chat_sync_failure_evidence_path(output_dir, chat_name).unlink(missing_ok=True)
 
 
 def chat_sync_gui_send_env(args: argparse.Namespace) -> dict[str, str]:

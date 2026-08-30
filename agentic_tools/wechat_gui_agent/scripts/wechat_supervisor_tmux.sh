@@ -29,6 +29,8 @@ CHAT_SYNC_TIMEOUT="${WECHAT_CHAT_SYNC_TIMEOUT:-60}"
 CHAT_SYNC_PRIORITY="${WECHAT_CHAT_SYNC_PRIORITY:-}"
 CHAT_SYNC_MAX_TARGETS_PER_CYCLE="${WECHAT_CHAT_SYNC_MAX_TARGETS_PER_CYCLE:-0}"
 WORKER_COUNT="${WECHAT_WORKER_COUNT:-2}"
+LOG_MAINTENANCE="${WECHAT_LOG_MAINTENANCE:-1}"
+LOG_MAINTENANCE_INTERVAL="${WECHAT_LOG_MAINTENANCE_INTERVAL:-300}"
 export WECHAT_DECRYPT_REFRESH_INTERVAL="${WECHAT_DECRYPT_REFRESH_INTERVAL:-1}"
 export WECHAT_RESTART_DELAY="${WECHAT_RESTART_DELAY:-2}"
 export WECHAT_WORKER_EXPIRE_LEGACY_QUEUE="${WECHAT_WORKER_EXPIRE_LEGACY_QUEUE:-1}"
@@ -114,6 +116,8 @@ Environment:
   WECHAT_CHAT_SYNC_PRIORITY   optional comma-separated chat names to dry-open first
   WECHAT_CHAT_SYNC_MAX_TARGETS_PER_CYCLE  max chats to dry-open per pass, 0 for all
   WECHAT_WORKER_COUNT         parallel queue workers, default 2
+  WECHAT_LOG_MAINTENANCE      1 to cap generated logs/evidence, default 1
+  WECHAT_LOG_MAINTENANCE_INTERVAL  retention pass interval, default 300 seconds
   WECHAT_WORKER_PENDING_TASK_TTL_SECONDS  expire ordinary task backlog, default 900
   WECHAT_WORKER_DEFERRED_SEND_TTL_SECONDS expire outbound backlog, default 600
   WECHAT_WORKER_DEFERRED_SEND_GLOBAL_COOLDOWN_SECONDS deferred-send spacing, default 30
@@ -221,6 +225,11 @@ chat_sync_command() {
     "$ROOT" "$CONFIGS" "$WECHAT_DISPLAY" "$CHAT_SYNC_INTERVAL" "$CHAT_SYNC_PAUSE" "$CHAT_SYNC_TIMEOUT" "$CHAT_SYNC_PRIORITY" "$CHAT_SYNC_MAX_TARGETS_PER_CYCLE" "$LOG_DIR/supervisor-chat-sync.log"
 }
 
+log_maintenance_command() {
+  printf "cd %q && python3 -u agentic_tools/wechat_gui_agent/scripts/wechat_output_retention.py --root %q --interval %q --loop" \
+    "$ROOT" "$ROOT/output/wechat_gui_agent" "$LOG_MAINTENANCE_INTERVAL"
+}
+
 worker_window_name() {
   local index="$1"
   if [[ "$index" == "1" ]]; then
@@ -277,6 +286,9 @@ ensure_runtime_windows() {
   if [[ "$CHAT_SYNC_WATCHDOG" != "0" ]]; then
     start_missing_window chat-sync "$(chat_sync_command)"
   fi
+  if [[ "$LOG_MAINTENANCE" != "0" ]]; then
+    start_missing_window log-maintenance "$(log_maintenance_command)"
+  fi
   tmux select-layout -t "$SESSION:desktop" tiled >/dev/null 2>&1 || true
   tmux select-window -t "$SESSION:desktop" >/dev/null 2>&1 || true
   echo "Session running and missing windows repaired: $SESSION"
@@ -327,6 +339,9 @@ reload_worker_windows() {
   if [[ "$CHAT_SYNC_WATCHDOG" != "0" ]]; then
     respawn_or_new_window "chat-sync" "$(chat_sync_command)"
   fi
+  if [[ "$LOG_MAINTENANCE" != "0" ]]; then
+    start_missing_window log-maintenance "$(log_maintenance_command)"
+  fi
   tmux select-window -t "$SESSION:desktop" >/dev/null 2>&1 || true
   echo "Reloaded worker/monitor windows without restarting the WeChat desktop."
   echo "Logs: $LOG_DIR"
@@ -346,6 +361,9 @@ reload_monitor_windows() {
   done
   if [[ "$CHAT_SYNC_WATCHDOG" != "0" ]]; then
     respawn_or_new_window "chat-sync" "$(chat_sync_command)"
+  fi
+  if [[ "$LOG_MAINTENANCE" != "0" ]]; then
+    start_missing_window log-maintenance "$(log_maintenance_command)"
   fi
   echo "Reloaded direct monitors and chat sync without touching workers or WeChat desktop."
 }
@@ -393,6 +411,9 @@ case "$action" in
     fi
     if [[ "$CHAT_SYNC_WATCHDOG" != "0" ]]; then
       tmux new-window -t "$SESSION" -n chat-sync "$(chat_sync_command)"
+    fi
+    if [[ "$LOG_MAINTENANCE" != "0" ]]; then
+      tmux new-window -t "$SESSION" -n log-maintenance "$(log_maintenance_command)"
     fi
     tmux select-layout -t "$SESSION:desktop" tiled >/dev/null
     tmux select-window -t "$SESSION:desktop" >/dev/null

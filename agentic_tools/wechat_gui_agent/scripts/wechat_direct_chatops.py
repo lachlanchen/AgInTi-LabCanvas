@@ -129,6 +129,12 @@ def main() -> int:
     parser.add_argument("--loop", action="store_true")
     parser.add_argument("--poll-seconds", type=float, default=None)
     parser.add_argument("--catchup-poll-seconds", type=float, default=None)
+    parser.add_argument(
+        "--quiet-idle",
+        action=argparse.BooleanOptionalAction,
+        default=os.environ.get("WECHAT_DIRECT_QUIET_IDLE", "1") != "0",
+        help="In loop mode, keep idle heartbeats in the state file without writing one JSON block per poll.",
+    )
     replay_group = parser.add_mutually_exclusive_group()
     replay_group.add_argument(
         "--force-latest-user-burst",
@@ -167,10 +173,25 @@ def main() -> int:
             state = prepare_force_local_id(config, state, args.force_local_id)
         result = run_once(config, state, send=args.send, no_decrypt=args.no_decrypt)
         save_state(state_path, result["state"])
-        print(json.dumps({k: v for k, v in result.items() if k != "state"}, ensure_ascii=False, indent=2), flush=True)
+        if not (args.loop and args.quiet_idle and direct_result_is_idle(result)):
+            print(json.dumps({k: v for k, v in result.items() if k != "state"}, ensure_ascii=False, indent=2), flush=True)
         if not args.loop:
             return 0
         time.sleep(catchup_poll_seconds if result["new_rows"] else poll_seconds)
+
+
+def direct_result_is_idle(result: dict[str, Any]) -> bool:
+    """Return true when a monitor pass only refreshed its durable heartbeat."""
+    return not any(
+        (
+            int(result.get("new_rows") or 0),
+            int(result.get("responses_sent") or 0),
+            int(result.get("tasks_enqueued") or 0),
+            result.get("response_sent"),
+            result.get("task_enqueued"),
+            result.get("processed_local_id"),
+        )
+    )
 
 
 def load_config(path: Path) -> dict[str, Any]:

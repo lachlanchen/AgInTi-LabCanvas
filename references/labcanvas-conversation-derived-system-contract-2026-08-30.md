@@ -513,6 +513,21 @@ Health is evidence, not process presence.
   silently log out/restart a healthy client, change accounts, send chat content,
   duplicate external actions, or disturb another project's runtime.
 
+### Runtime Evidence Retention
+
+- A heartbeat belongs in a compact state record, not in a full JSON transcript
+  written every subsecond poll.
+- Routine successful monitor and chat-materialization passes remain quiet.
+  Failures retain enough structured context to diagnose the owning layer.
+- Background dry-open checks may use screenshots transiently for title and lock
+  guards, but must discard them after the check. At most one overwriteable
+  latest-failure screenshot per chat is retained.
+- Supervisor logs are capped and retain their recent complete tail. Old logs and
+  transient screenshots expire automatically; verified sent-message evidence
+  receives a longer bounded retention period.
+- Reports, PDFs, source documents, task artifacts, durable ledgers, databases,
+  and explicitly named evidence are not deleted by generic runtime cleanup.
+
 ## Current Gap Analysis (2026-08-30)
 
 The following table separates implemented mechanisms from verified behavior.
@@ -523,12 +538,14 @@ The following table separates implemented mechanisms from verified behavior.
 | P0 | Source freshness is conflated with monitor freshness | `caught_up` only means cursor reached stale cache | Track source generation/epoch independently and expose source-stalled versus quiet-chat states | A quiet logged-in fixture stays healthy; a logged-out or frozen-source fixture fails health |
 | P0 | End-to-end current-message behavior is unverified | Loops are alive but recent user messages never reached the decrypted DB | Restore login, reconcile only recent exact rows, and run one real inbound-to-delivery smoke test | Exact new message ID appears in source ledger, task/disposition, outbound ledger, and chat exactly once |
 | P0 | Schedules can appear alive while transport cannot deliver | Scheduler heartbeat can remain fresh during client logout | Separate generation health from delivery health and persist one deferred exact output | Due report is generated once, deferred while logged out, and delivered once after login without regeneration |
+| P0 | WeCom scheduled research can fail before useful work or artifact promotion | Today's exact tasks include safe research ending as `permission_required`, inspiration ending as `model_did_not_execute`, and completed exact-task PDFs left undelivered | Attribute provider versus AgInTi versus LabCanvas completion-gate failure; recover existing exact artifacts without rerunning; fix the owning reusable layer | One bounded daily and one inspiration task execute through AgInTi, promote verified artifacts, and deliver exactly once without false permission gates |
 | P1 | Consecutive-message coverage has historically been inconsistent | Repeated reports of only the last message being handled | Enforce immutable per-row ledger and post-response coverage audit across all backends | Burst tests show 100% row representation with one coherent response where appropriate |
 | P1 | Duplicate/repeated replies and files have occurred | Repeated acknowledgements, reports, and schedule artifacts were observed | Use one idempotency identity across route, worker, sender, mirror, and restart recovery | Duplicate rate is zero under retry, crash, restart, and outbound-mirror tests |
 | P1 | Login-required sends can become generic failures | GUI sender can return entry-required while upstream marks work failed | Persist deferred delivery with exact artifact/message identity and human-gate state | Login recovery sends the existing result once; model/tool task is not rerun |
 | P1 | Shipinhao recovery works as a tool but is not consistently selected by LabCanvas | A pasted-link recovery succeeded, while agent turns still requested links or claimed no audio | Route exact Finder cards to the established recovery/transcription routine and pass verified context to the agent | Native card and pasted-link tests both produce exact identity, media/transcript or evidence-limited result without false claims |
 | P1 | Video publication quality depends on rescue intervention | Successful runs exist, but context, source identity, platforms, or poststage were sometimes mishandled | Preserve exact-video/current-intent contract and let the agent supervise LazyEdit's existing routine | A live test uses chat context for subtitles/metadata, creates one publish job, and verifies requested platforms |
 | P1 | Artifact delivery can stop after local generation | Reports/files have existed locally without arriving in the requested group | Make verified delivery or durable deferred state part of task completion | Completed artifact task cannot become `done` until exact-chat send evidence exists |
+| P1 | Runtime evidence grew without bounds | Idle monitors emitted JSON every 0.8 seconds and dry-open checks retained multiple screenshots per chat, producing 1.5 million PNGs and about 174 GiB of output | Keep heartbeats in state, make successful polls quiet, use transient dry-open evidence, and enforce retention/caps | Live idle logs stop growing, only bounded failure/send evidence remains, and automated retention preserves reports and ledgers |
 | P2 | Backend fallback quality is uneven | AgInTi fallback improved but still fails some normal tasks | Run raw-provider-versus-AgInTi attribution suites and fix the correct layer | Representative chat, research, file, CAD, publish, and schedule tasks pass with DeepSeek and LocalLLM within declared limits |
 | P2 | Long-term context can become mechanical or irrelevant | Some scheduled outputs overfit recent fragments or excavate unrelated history | Use provenance-aware full-memory compaction plus current-interest selection | Schedule review shows source relevance, no cross-chat leakage, and no unexplained history topic |
 | P2 | Natural response quality is not consistently enforced | Some replies contain logs, fixed labels, raw paths, or shallow filler | Add response-quality and private-data gates after agent output, not hardcoded prose generation | Adversarial outputs are repaired or rejected; final messages remain natural and useful |
@@ -654,17 +671,22 @@ These are local operational targets, not external availability guarantees:
 ## Active Remediation Order
 
 1. Fix truthful personal-WeChat login/source health.
-2. Restore login through the visible human QR gate and prove one exact live
+2. Keep runtime monitoring evidence bounded without weakening state or failure
+   diagnostics.
+3. Diagnose today's exact WeCom `permission_required`,
+   `model_did_not_execute`, and existing-artifact promotion failures; repair the
+   owning AgInTi or LabCanvas layer and recover exact artifacts without reruns.
+4. Restore login through the visible human QR gate and prove one exact live
    round trip.
-3. Audit recent source rows only and recover missing safe work without draining
+5. Audit recent source rows only and recover missing safe work without draining
    old history.
-4. Prove per-row completion and interruption coverage under bursts.
-5. Prove durable deferred delivery across logout and restart.
-6. Run schedule catch-up and duplicate-prevention tests.
-7. Exercise Shipinhao, Gongzhonghao, image, audio, video, document, and publish
+6. Prove per-row completion and interruption coverage under bursts.
+7. Prove durable deferred delivery across logout and restart.
+8. Run schedule catch-up and duplicate-prevention tests.
+9. Exercise Shipinhao, Gongzhonghao, image, audio, video, document, and publish
    paths through LabCanvas rather than direct operator intervention.
-8. Run AgInTi provider-attribution tests and fix reusable AgInTi gaps.
-9. Keep manuals, tests, runtime evidence, commits, and releases synchronized.
+10. Run AgInTi provider-attribution tests and fix reusable AgInTi gaps.
+11. Keep manuals, tests, runtime evidence, commits, and releases synchronized.
 
 ## Verification Snapshot (2026-08-30)
 
@@ -681,9 +703,19 @@ The first P0 correction is implemented and locally verified:
 - A watchdog retry delay of 300 seconds keeps its authoritative state valid for
   330 seconds, preventing the previous 90-second false-ready gap.
 - The focused health/transport suite passed 73 tests.
-- The full repository suite passed 1,603 tests.
+- The full repository suite passed 1,611 tests after the health and retention
+  changes.
 - `labcanvas wechat selftest --suite all --json` passed its full routine,
   message-ledger, recovery, media, document, Shipinhao, and publishing contract.
+- The output-retention audit found 1,508,695 PNGs and 15.5 GB of logs. The first
+  bounded cleanup removed 1,508,180 transient files and 182,491,370,072 bytes,
+  reducing `output/wechat_gui_agent` from about 174 GiB to 492 MiB while keeping
+  reports and verified sent-message screenshots.
+- Direct monitor heartbeats remain fresh in their state files, while all six
+  idle transcript logs remained byte-for-byte stable during a live poll window.
+  Chat-sync now uses temporary screenshots and retains only one overwriteable
+  failure image per chat.
+- The focused monitor, chat-sync, and retention suite passed 189 tests.
 
 This does not yet prove live end-to-end operation. The remaining human gate is
 one QR login, followed by bounded reconciliation of recent exact rows and one

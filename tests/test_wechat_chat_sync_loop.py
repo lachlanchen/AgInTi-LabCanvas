@@ -3,6 +3,7 @@ import fcntl
 import importlib.util
 import json
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import time
@@ -77,6 +78,79 @@ class WeChatChatSyncLoopTests(unittest.TestCase):
             fcntl.flock(lock, fcntl.LOCK_UN)
 
         self.assertFalse(module.gui_send_lock_busy())
+
+    def test_quiet_success_suppresses_routine_target_event(self):
+        module = load_wechat_chat_sync_loop()
+        emitted = []
+        original_emit = module.emit_target_event
+        try:
+            module.emit_target_event = emitted.append
+            args = argparse.Namespace(quiet_success=True)
+            module.maybe_emit_target_event(args, {"chat": "EchoMind", "ok": True})
+            module.maybe_emit_target_event(args, {"chat": "EchoMind", "ok": False, "error": "failed"})
+        finally:
+            module.emit_target_event = original_emit
+
+        self.assertEqual(emitted, [{"chat": "EchoMind", "ok": False, "error": "failed"}])
+
+    def test_chat_sync_uses_ephemeral_success_evidence(self):
+        module = load_wechat_chat_sync_loop()
+        temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(temp_dir.cleanup)
+        output_dir = Path(temp_dir.name) / "persistent"
+        evidence_dirs = []
+        original_run = module.subprocess.run
+        try:
+            def fake_run(command, **_kwargs):
+                evidence_dir = Path(command[command.index("--output-dir") + 1])
+                evidence_dirs.append(evidence_dir)
+                (evidence_dir / "01-EchoMind-before.png").write_bytes(b"temporary")
+                return subprocess.CompletedProcess(command, 0, stdout='{"results": []}', stderr="")
+
+            module.subprocess.run = fake_run
+            args = argparse.Namespace(display=":97", pause=0.1, timeout=60, output_dir=output_dir)
+            result = module.open_chat_dry_run(args, "EchoMind", {"name": "EchoMind"})
+        finally:
+            module.subprocess.run = original_run
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(len(evidence_dirs), 1)
+        self.assertFalse(evidence_dirs[0].exists())
+        self.assertFalse(output_dir.exists())
+
+    def test_chat_sync_keeps_only_one_failure_screenshot_and_clears_it_on_success(self):
+        module = load_wechat_chat_sync_loop()
+        temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(temp_dir.cleanup)
+        output_dir = Path(temp_dir.name) / "persistent"
+        original_run = module.subprocess.run
+        calls = 0
+        try:
+            def fake_run(command, **_kwargs):
+                nonlocal calls
+                calls += 1
+                evidence_dir = Path(command[command.index("--output-dir") + 1])
+                (evidence_dir / "01-EchoMind-opened.png").write_bytes(b"failure")
+                return subprocess.CompletedProcess(
+                    command,
+                    1 if calls == 1 else 0,
+                    stdout="",
+                    stderr="title guard failed" if calls == 1 else "",
+                )
+
+            module.subprocess.run = fake_run
+            args = argparse.Namespace(display=":97", pause=0.1, timeout=60, output_dir=output_dir)
+            failed = module.open_chat_dry_run(args, "EchoMind", {"name": "EchoMind"})
+            failure_path = Path(failed["failure_screenshot"])
+            self.assertTrue(failure_path.exists())
+            self.assertEqual(failure_path.read_bytes(), b"failure")
+
+            succeeded = module.open_chat_dry_run(args, "EchoMind", {"name": "EchoMind"})
+        finally:
+            module.subprocess.run = original_run
+
+        self.assertTrue(succeeded["ok"])
+        self.assertFalse(failure_path.exists())
 
     def test_sync_once_yields_to_actual_gui_lock_before_opening_chats(self):
         module = load_wechat_chat_sync_loop()
@@ -480,6 +554,11 @@ class WeChatChatSyncLoopTests(unittest.TestCase):
         self.assertTrue(
             module.chat_sync_failure_retryable(
                 {"returncode": 1, "stderr_tail": "RuntimeError: Opened chat title guard failed: OCR='3 - oO\\n|'."}
+            )
+        )
+        self.assertTrue(
+            module.chat_sync_failure_retryable(
+                {"returncode": 1, "stderr_tail": "WECHAT_ENTRY_REQUIRED: approve login on phone"}
             )
         )
         self.assertFalse(module.chat_sync_failure_retryable({"returncode": 1, "stderr_tail": "missing config"}))
