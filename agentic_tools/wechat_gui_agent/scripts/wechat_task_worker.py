@@ -8667,6 +8667,7 @@ def build_aginti_worker_prompt(task: dict[str, Any]) -> str:
 
     packet_view = aginti_worker_task_view(task)
     packet = json.dumps(packet_view, ensure_ascii=False, indent=2)
+    matched_routine_note = build_matched_workspace_routine_context(task)
     evidence_scope_payload = {
         "mode": "task",
         "request": aginti_worker_evidence_scope_request(task, packet_view),
@@ -8682,6 +8683,8 @@ def build_aginti_worker_prompt(task: dict[str, Any]) -> str:
 AGINTI_EVIDENCE_SCOPE_JSON: {evidence_scope}
 
 LabCanvas already owns message intake, exact-chat isolation, scheduling, deterministic preflight, routine selection, queue state, and delivery. Do not redesign those systems. Work inside the current AgenticApp repository, follow AGENTS.md, and read the selected routine contract files in the packet before acting. Use established scripts and CLI entrypoints from that contract. The agent supplies judgment; deterministic routines supply repeatable mechanics.
+
+{matched_routine_note}
 
 Treat the current request and later same-chat interruptions as authoritative. Keep every source and artifact scoped to this task and chat. Do not use nearby media or another group's context. Do not repeat completed stages. Never retry a payment, public publication, external send, destructive change, or other irreversible action without the packet's explicit gate and current authorization. Persist long work through the existing routine instead of holding a model call.
 
@@ -8833,6 +8836,9 @@ def compact_worker_preflight_for_agent(value: Any) -> dict[str, Any]:
         for key in (
             "status",
             "ok",
+            "routine_id",
+            "read_only",
+            "returncode",
             "failure_stage",
             "reason",
             "error",
@@ -8846,6 +8852,11 @@ def compact_worker_preflight_for_agent(value: Any) -> dict[str, Any]:
         ):
             if payload.get(key) not in (None, "", [], {}):
                 summary[key] = compact_worker_agent_value(payload.get(key), key=key)
+        if name == "established_routine_snapshot" and isinstance(payload.get("snapshot"), dict):
+            summary["snapshot"] = compact_worker_agent_value(
+                payload["snapshot"],
+                key="snapshot",
+            )
         for key in (
             "agent_context_path",
             "manifest_json",
@@ -10376,6 +10387,9 @@ def prepare_worker_preflight(task: dict[str, Any], artifact_dir: Path) -> dict[s
     preflight: dict[str, Any] = dict(supplied)
     native_wechat_transport = task_transport_kind(task) != "wecom"
     task["preflight"] = preflight
+    routine_snapshot = prepare_matched_workspace_routine_preflight(task)
+    if routine_snapshot:
+        preflight["established_routine_snapshot"] = routine_snapshot
     wecom_media = merge_interruption_wecom_media(task, preflight)
     wecom_copies = [
         item
@@ -10478,6 +10492,101 @@ def prepare_worker_preflight(task: dict[str, Any], artifact_dir: Path) -> dict[s
     context_path.write_text(build_lazyedit_correction_context(task, preflight=preflight), encoding="utf-8")
     metadata_path.write_text(build_lazyedit_metadata_brief(task, preflight=preflight), encoding="utf-8")
     return preflight
+
+
+def prepare_matched_workspace_routine_preflight(task: dict[str, Any]) -> dict[str, Any]:
+    """Run one source-declared, read-only host snapshot without model discovery."""
+
+    request = sanitize_worker_agent_text(task_focus_text(task), max_len=5000)
+    if not request:
+        return {}
+    source_root = ROOT / "src"
+    if str(source_root) not in sys.path:
+        sys.path.insert(0, str(source_root))
+    try:
+        from agenticapp.workspace_agent import selected_routine_contracts
+    except ImportError:
+        return {}
+    selected = selected_routine_contracts(request, ROOT)
+    contract = next(
+        (
+            item
+            for item in selected
+            if isinstance(item.get("automatic_preflight"), dict)
+            and item["automatic_preflight"].get("kind") == "host_read_only_json"
+        ),
+        None,
+    )
+    if not contract:
+        return {}
+    preflight = dict(contract["automatic_preflight"])
+    request_terms = [
+        str(term).casefold()
+        for term in preflight.get("request_terms") or []
+        if str(term).strip()
+    ]
+    lowered_request = request.casefold()
+    if request_terms and not any(term in lowered_request for term in request_terms):
+        return {}
+    command_text = str(preflight.get("command") or "").strip()
+    if not command_text:
+        return {}
+    parts = shlex.split(command_text)
+    env = dict(os.environ)
+    while parts and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", parts[0]):
+        key, value = parts.pop(0).split("=", 1)
+        env[key] = value
+    if not parts:
+        return {}
+    try:
+        timeout = max(1, min(60, int(preflight.get("timeout_seconds") or 30)))
+    except (TypeError, ValueError):
+        timeout = 30
+    try:
+        proc = subprocess.run(
+            parts,
+            cwd=ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {
+            "status": "error",
+            "ok": False,
+            "routine_id": str(contract.get("id") or ""),
+            "reason": collapse_context_text(exc, max_len=240),
+            "read_only": True,
+        }
+    try:
+        snapshot = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        snapshot = {}
+    snapshot_fields = [
+        str(field)
+        for field in preflight.get("snapshot_fields") or []
+        if str(field).strip()
+    ]
+    if isinstance(snapshot, dict) and snapshot_fields:
+        snapshot = {
+            field: snapshot[field]
+            for field in snapshot_fields
+            if field in snapshot
+        }
+    return {
+        "status": "ok" if isinstance(snapshot, dict) and snapshot else "invalid",
+        "ok": isinstance(snapshot, dict) and bool(snapshot),
+        "routine_id": str(contract.get("id") or ""),
+        "read_only": True,
+        "snapshot": snapshot if isinstance(snapshot, dict) else {},
+        "returncode": proc.returncode,
+        "agent_next_action": (
+            "Use this host snapshot as authoritative. Do not rerun the command in Docker, "
+            "probe alternate wrappers, or inspect private ledgers."
+        ),
+    }
 
 
 def prepare_wechat_source_recovery_preflight(task: dict[str, Any], artifact_dir: Path) -> dict[str, Any]:
@@ -19183,6 +19292,7 @@ def build_worker_tool_context(task: dict[str, Any]) -> str:
     artifact_dir = str(task.get("artifact_dir") or worker_artifact_dir(task))
     prompt_text = sanitize_worker_agent_text(task_focus_text(task), max_len=3000)
     quoted_prompt = json.dumps(prompt_text or "prepare CAD/PCB/Blender artifacts", ensure_ascii=False)
+    matched_routine_note = build_matched_workspace_routine_context(task)
     generated_video_note = build_generated_video_tool_context(task)
     media_resolution_note = build_media_resolution_tool_context(task)
     existing_video_publish_note = build_existing_video_publish_tool_context(task)
@@ -19190,6 +19300,7 @@ def build_worker_tool_context(task: dict[str, Any]) -> str:
 - Use `{artifact_dir}` as the preferred working/output folder for new artifacts.
 - Match every input file/media path to this task's exact `chat`, `source.local_id`, `source.server_id`, explicit source/reference rows in `request`, or source-scoped context text. Do not borrow files from another group/direct chat or from unrelated previous worker tasks.
 - If the exact requested media is missing, stop with a source-limited message asking the user to resend/provide it instead of using a nearby file.
+{matched_routine_note}
 {media_resolution_note}
 - For editable paper-figure grids plus AgInTi image-generation payloads/live images, run:
   `PYTHONPATH=src python -m agenticapp studio figure-grid {quoted_prompt} --storage-dir output/webapp --json`
@@ -19343,6 +19454,58 @@ Artifact return contract:
 """
 
 
+def build_matched_workspace_routine_context(task: dict[str, Any]) -> str:
+    """Expose established LabCanvas entrypoints before generic tool guidance."""
+
+    request = sanitize_worker_agent_text(task_focus_text(task), max_len=5000)
+    if not request:
+        return ""
+    source_root = ROOT / "src"
+    if str(source_root) not in sys.path:
+        sys.path.insert(0, str(source_root))
+    try:
+        from agenticapp.workspace_agent import selected_routine_contracts
+    except ImportError:
+        return ""
+    contracts = selected_routine_contracts(request, ROOT)[:4]
+    if not contracts:
+        return ""
+    task_preflight = task.get("preflight") if isinstance(task.get("preflight"), dict) else {}
+    routine_snapshot = (
+        task_preflight.get("established_routine_snapshot")
+        if isinstance(task_preflight.get("established_routine_snapshot"), dict)
+        else {}
+    )
+    lines = [
+        "Matched established LabCanvas routines (authoritative for this request):",
+    ]
+    if routine_snapshot.get("ok") and isinstance(routine_snapshot.get("snapshot"), dict):
+        lines.extend(
+            [
+                "- LabCanvas already ran the matched read-only command on the host and included its authoritative snapshot in `preflight.established_routine_snapshot`.",
+                "- Do not rerun that command inside Docker or probe alternate wrappers, source code, processes, or private ledgers. Summarize the snapshot and stop when it answers the request.",
+            ]
+        )
+    else:
+        lines.extend(
+            [
+                "- Run the first relevant declared command directly before probing help, alternate wrappers, source code, processes, or private ledgers.",
+                "- If that command answers the request, stop discovery and return the concise verified result.",
+            ]
+        )
+    for contract in contracts:
+        routine_id = str(contract.get("id") or "")
+        title = str(contract.get("title") or routine_id)
+        readiness = "ready" if contract.get("ready") else "not-ready"
+        lines.append(f"- `{routine_id}` ({readiness}): {title}")
+        for command in list(contract.get("commands") or [])[:5]:
+            lines.append(f"  - `{command}`")
+        guidance = collapse_context_text(contract.get("guidance"), max_len=900)
+        if guidance:
+            lines.append(f"  - Guidance: {guidance}")
+    return "\n".join(lines)
+
+
 def build_existing_video_publish_tool_context(task: dict[str, Any]) -> str:
     if task_routine_id(task) != "video_publish_existing":
         return ""
@@ -19486,7 +19649,6 @@ def choose_worker_policy(task: dict[str, Any]) -> dict[str, Any]:
         "push",
         "order",
         "full task",
-        "agent",
         "webapp",
         "script",
         "cli",

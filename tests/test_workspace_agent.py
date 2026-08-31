@@ -308,6 +308,18 @@ class WorkspaceAgentTests(unittest.TestCase):
             contracts[0]["commands"][0],
             "PYTHONPATH=src python -m agenticapp wechat health --compact --json",
         )
+        self.assertEqual(
+            contracts[0]["automatic_preflight"]["kind"],
+            "host_read_only_json",
+        )
+        self.assertIn(
+            "phone_ingress",
+            contracts[0]["automatic_preflight"]["snapshot_fields"],
+        )
+        self.assertIn(
+            "no reply",
+            contracts[0]["automatic_preflight"]["request_terms"],
+        )
         self.assertIn("Do not inspect raw chat text", contracts[0]["guidance"])
 
     def test_phone_holder_does_not_select_wechat_transport(self):

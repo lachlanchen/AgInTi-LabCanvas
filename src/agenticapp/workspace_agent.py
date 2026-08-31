@@ -502,6 +502,48 @@ def capability_catalog(root: str | Path) -> list[dict[str, Any]]:
                 "artifact directories, and do not send or mutate anything, unless the current "
                 "request explicitly needs it."
             ),
+            "automatic_preflight": {
+                "kind": "host_read_only_json",
+                "command": "PYTHONPATH=src python -m agenticapp wechat health --compact --json",
+                "timeout_seconds": 30,
+                "request_terms": [
+                    "health",
+                    "status",
+                    "queue",
+                    "schedule",
+                    "monitor",
+                    "no reply",
+                    "not reply",
+                    "respond",
+                    "reach the agent",
+                    "reaches the agent",
+                    "stalled",
+                    "stuck",
+                    "working",
+                    "健康",
+                    "状态",
+                    "队列",
+                    "定时",
+                    "监控",
+                    "没回复",
+                    "不回复",
+                    "卡住",
+                    "能否到达",
+                ],
+                "snapshot_fields": [
+                    "checked_at",
+                    "ok",
+                    "operational",
+                    "degraded",
+                    "issues",
+                    "agent_failures_last_hour",
+                    "desktop_wechat",
+                    "direct_monitor_heartbeats",
+                    "phone_ingress",
+                    "queues",
+                    "schedules",
+                ],
+            },
         },
         {
             "id": "labview-control",
@@ -612,6 +654,7 @@ def selected_routine_contracts(message: str, root: str | Path, *, limit: int = 6
                     "paths": list(item.get("paths") or []),
                     "outputs": list(item.get("outputs") or []),
                     "guidance": str(item.get("guidance") or ""),
+                    "automatic_preflight": dict(item.get("automatic_preflight") or {}),
                 }
             )
     return selected[: max(1, limit)]

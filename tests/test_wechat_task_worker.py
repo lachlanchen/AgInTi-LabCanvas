@@ -1812,6 +1812,20 @@ stderr: noisy internal trace
         self.assertEqual(policy["sandbox"], "danger-full-access")
         self.assertEqual(policy["timeout_seconds"], 600)
 
+    def test_worker_policy_does_not_escalate_bare_agent_health_question(self) -> None:
+        worker = load_worker()
+        policy = worker.choose_worker_policy(
+            {
+                "request": (
+                    "why wechat no reply today? check current health and queues; "
+                    "tell me briefly whether MIX 2S still reaches the agent"
+                )
+            }
+        )
+
+        self.assertEqual(policy["reasoning_effort"], "medium")
+        self.assertEqual(policy["timeout_seconds"], 300)
+
     def test_worker_policy_uses_xhigh_for_full_autonomous_tasks(self) -> None:
         worker = load_worker()
         policy = worker.choose_worker_policy({"request": "fully implement this WeChat automation, commit and push"})
@@ -1850,6 +1864,136 @@ stderr: noisy internal trace
         self.assertIn("external/ProteinStructure", context)
         self.assertIn("python -m agenticapp protein start", context)
         self.assertIn("Do not recreate its browser or analysis pipeline", context)
+
+    def test_worker_tool_context_puts_matched_health_entrypoint_first(self) -> None:
+        worker = load_worker()
+
+        context = worker.build_worker_tool_context(
+            {
+                "id": "health-task",
+                "chat": "My devices",
+                "request": "why WeChat no reply; check queues and whether MIX 2S reaches the agent",
+            }
+        )
+
+        command = "PYTHONPATH=src python -m agenticapp wechat health --compact --json"
+        self.assertIn("Matched established LabCanvas routines", context)
+        self.assertIn(command, context)
+        self.assertIn("before probing help", context)
+        self.assertLess(context.index(command), context.index("For editable paper-figure grids"))
+
+    def test_aginti_worker_prompt_includes_matched_health_entrypoint(self) -> None:
+        worker = load_worker()
+
+        prompt = worker.build_aginti_worker_prompt(
+            {
+                "id": "health-task",
+                "chat": "My devices",
+                "request": "why WeChat no reply; check queues and whether MIX 2S reaches the agent",
+            }
+        )
+
+        self.assertIn("Matched established LabCanvas routines", prompt)
+        self.assertIn(
+            "PYTHONPATH=src python -m agenticapp wechat health --compact --json",
+            prompt,
+        )
+        self.assertIn("If that command answers the request, stop discovery", prompt)
+
+    def test_matched_workspace_preflight_runs_host_health_without_shell(self) -> None:
+        worker = load_worker()
+        completed = subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "ok": True,
+                    "operational": True,
+                    "phone_ingress": {"other_people": {"reaches_agent": True}},
+                    "private_extra": "must not cross the declared field boundary",
+                }
+            ),
+            stderr="",
+        )
+
+        with mock.patch.object(worker.subprocess, "run", return_value=completed) as run:
+            result = worker.prepare_matched_workspace_routine_preflight(
+                {
+                    "request": (
+                        "why WeChat no reply; check queues and whether MIX 2S "
+                        "reaches the agent"
+                    )
+                }
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["routine_id"], "wechat-chatops")
+        self.assertTrue(result["snapshot"]["phone_ingress"]["other_people"]["reaches_agent"])
+        self.assertNotIn("private_extra", result["snapshot"])
+        command = run.call_args.args[0]
+        self.assertEqual(command[:4], ["python", "-m", "agenticapp", "wechat"])
+        self.assertEqual(run.call_args.kwargs["env"]["PYTHONPATH"], "src")
+        self.assertNotIn("shell", run.call_args.kwargs)
+
+    def test_compact_worker_preflight_preserves_safe_host_health_snapshot(self) -> None:
+        worker = load_worker()
+        compact = worker.compact_worker_preflight_for_agent(
+            {
+                "established_routine_snapshot": {
+                    "status": "ok",
+                    "ok": True,
+                    "routine_id": "wechat-chatops",
+                    "read_only": True,
+                    "returncode": 0,
+                    "snapshot": {
+                        "operational": True,
+                        "phone_ingress": {
+                            "other_people": {"reaches_agent": True},
+                            "self_authored": {"reaches_agent": True},
+                        },
+                        "queues": {"wechat": {"pending": 0}},
+                        "schedules": {"memo_daily": {"status": "waiting"}},
+                    },
+                    "agent_next_action": "Use this host snapshot as authoritative.",
+                }
+            }
+        )
+
+        snapshot = compact["established_routine_snapshot"]["snapshot"]
+        self.assertTrue(snapshot["operational"])
+        self.assertTrue(snapshot["phone_ingress"]["self_authored"]["reaches_agent"])
+        self.assertEqual(snapshot["queues"]["wechat"]["pending"], 0)
+        self.assertEqual(snapshot["schedules"]["memo_daily"]["status"], "waiting")
+
+    def test_aginti_worker_prompt_uses_host_snapshot_without_docker_rerun(self) -> None:
+        worker = load_worker()
+        prompt = worker.build_aginti_worker_prompt(
+            {
+                "id": "health-task",
+                "chat": "My devices",
+                "request": "check whether MIX 2S messages reach the agent",
+                "preflight": {
+                    "established_routine_snapshot": {
+                        "status": "ok",
+                        "ok": True,
+                        "routine_id": "wechat-chatops",
+                        "read_only": True,
+                        "snapshot": {
+                            "operational": True,
+                            "phone_ingress": {
+                                "other_people": {"reaches_agent": True},
+                                "self_authored": {"reaches_agent": True},
+                            },
+                        },
+                    }
+                },
+            }
+        )
+
+        self.assertIn("already ran the matched read-only command on the host", prompt)
+        self.assertIn("Do not rerun that command inside Docker", prompt)
+        self.assertIn('"operational": true', prompt)
+        self.assertIn('"reaches_agent": true', prompt)
 
     def test_worker_tool_context_reuses_musia_and_separates_mv_publication(self) -> None:
         worker = load_worker()
