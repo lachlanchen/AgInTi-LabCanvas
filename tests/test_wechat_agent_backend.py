@@ -161,10 +161,10 @@ class WeChatAgentBackendTests(unittest.TestCase):
             backend.run_codex_session = original
         self.assertTrue(result["ok"])
         self.assertEqual(calls[1]["model"], "gpt-5.6-sol")
-    def test_select_backend_defaults_to_aginti_and_accepts_aliases(self) -> None:
+    def test_select_backend_defaults_to_codex_and_accepts_aliases(self) -> None:
         backend = load_backend()
 
-        self.assertEqual(backend.select_agent_backend({}), "aginti")
+        self.assertEqual(backend.select_agent_backend({}), "codex")
         self.assertEqual(backend.select_agent_backend({"agent_backend": "claude-code"}), "claude")
         self.assertEqual(backend.select_agent_backend({"agent_backend": "agintiflow"}), "aginti")
         self.assertEqual(backend.select_agent_backend({"agent_backend": "unknown"}), "aginti")

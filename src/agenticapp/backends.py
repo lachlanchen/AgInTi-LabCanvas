@@ -12,7 +12,7 @@ from typing import Any
 BIORENDER_MCP_URL = "https://mcp.services.biorender.com/mcp"
 MODEL_POLICY_PATH = Path(__file__).resolve().parents[2] / "configs" / "model-policy.json"
 DEFAULT_MODEL_POLICY: dict[str, Any] = {
-    "primary_backend": "aginti",
+    "primary_backend": "codex",
     "aginti": {
         "primary_provider": "deepseek",
         "provider_chain": ["deepseek", "localllm"],
@@ -30,8 +30,8 @@ DEFAULT_MODEL_POLICY: dict[str, Any] = {
         },
         "session_policy": "resume one durable session per conversation and role",
     },
-    "chat": {"model": "auto-code-review", "reasoning_effort": "low"},
-    "task": {"model": "auto-code-review", "reasoning_effort": "medium"},
+    "chat": {"model": "gpt-5.6-sol", "reasoning_effort": "low"},
+    "task": {"model": "gpt-5.6-sol", "reasoning_effort": "medium"},
     "high": {"model": "gpt-5.6-sol", "reasoning_effort": "high"},
     "xhigh": {"model": "gpt-5.6-sol", "reasoning_effort": "xhigh"},
     "fallback": {
@@ -45,8 +45,8 @@ DEFAULT_MODEL_POLICY: dict[str, Any] = {
 DEFAULT_BACKEND_SETTINGS: dict[str, Any] = {
     "agent": {
         "enabled": True,
-        "backend": "aginti",
-        "model": "provider-default",
+        "backend": "codex",
+        "model": "gpt-5.6-sol",
         "reasoning_effort": "auto",
         "mode": "execute",
         "dynamic_routing": True,

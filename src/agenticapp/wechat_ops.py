@@ -505,7 +505,12 @@ def configured_agent_backends() -> list[str]:
         if backend and backend not in configured:
             configured.append(backend)
     if not configured:
-        configured.append("aginti")
+        from .backends import load_model_policy
+
+        shared_backend = normalize_agent_backend(
+            str(load_model_policy().get("primary_backend") or "")
+        )
+        configured.append(shared_backend or "codex")
     return configured
 
 

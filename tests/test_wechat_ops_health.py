@@ -97,6 +97,17 @@ class WeChatOpsHealthTests(unittest.TestCase):
             "quality_retry_pending",
         )
 
+    def test_configured_agent_backends_uses_shared_model_policy_by_default(self) -> None:
+        with (
+            mock.patch.object(wechat_ops, "discover_direct_monitor_configs", return_value=[]),
+            mock.patch.dict(os.environ, {}, clear=True),
+            mock.patch(
+                "agenticapp.backends.load_model_policy",
+                return_value={"primary_backend": "codex"},
+            ),
+        ):
+            self.assertEqual(wechat_ops.configured_agent_backends(), ["codex"])
+
     def test_compact_health_rejects_stale_phone_lane(self) -> None:
         stale = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat(timespec="seconds")
         payload = wechat_ops.compact_health_payload(

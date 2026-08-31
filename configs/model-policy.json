@@ -1,5 +1,5 @@
 {
-  "primary_backend": "aginti",
+  "primary_backend": "codex",
   "aginti": {
     "primary_provider": "deepseek",
     "provider_chain": [
@@ -21,11 +21,11 @@
     "session_policy": "resume one durable session per conversation and role"
   },
   "chat": {
-    "model": "auto-code-review",
+    "model": "gpt-5.6-sol",
     "reasoning_effort": "low"
   },
   "task": {
-    "model": "auto-code-review",
+    "model": "gpt-5.6-sol",
     "reasoning_effort": "medium"
   },
   "high": {
@@ -79,5 +79,5 @@
       "reasoning_effort": "xhigh"
     }
   },
-  "notes": "AgInTi is primary. It resumes one session per conversation, uses DeepSeek first, and continues the same session with LocalLLM when needed. The Codex model map remains available only when Codex is selected explicitly."
+  "notes": "Codex is primary while the normal quota is available. Chat and task turns use GPT-5.6 SOL through the model map. AgInTi remains an enabled fallback and resumes one session per conversation, using DeepSeek first and LocalLLM only when permitted."
 }

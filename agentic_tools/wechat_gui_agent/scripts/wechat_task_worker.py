@@ -10332,10 +10332,10 @@ def default_worker_execution_contract(task: dict[str, Any], instruction: dict[st
         "worker_entrypoint": "wechat_task_worker.run_task_orchestrator",
         "agent_backend": select_agent_backend(task),
         "agent_entrypoint": "wechat_agent_backend.run_agent_session",
-        "agent_backend_fallback": "AgInTi same-session provider handoff: DeepSeek -> LocalLLM; explicit Codex/Claude remains opt-in",
+        "agent_backend_fallback": "Codex follows the shared primary policy; AgInTi remains the per-chat fallback with a DeepSeek -> LocalLLM provider handoff",
         "aginti_exec_mode": "resume_per_chat_worker_session_with_durable_goal_and_evidence",
-        "codex_entrypoint": "wechat_codex_sessions.run_codex_session (opt-in compatibility)",
-        "codex_exec_mode": "resume_per_chat_worker_session_when_explicitly_selected",
+        "codex_entrypoint": "wechat_codex_sessions.run_codex_session",
+        "codex_exec_mode": "resume_per_chat_worker_session_when_selected",
         "claude_exec_mode": "stable_per_chat_role_session_id",
         "response_policy": worker_response_policy(task),
         "codex_session": {

@@ -3073,7 +3073,7 @@ stderr: noisy internal trace
         self.assertTrue(worker.result_requires_file_delivery(task, payload))
         self.assertFalse(payload["no_reply"])
         self.assertFalse(task["worker_result_exhausted"])
-        self.assertEqual([call["backend"] for call in calls], ["aginti"])
+        self.assertEqual([call["backend"] for call in calls], ["codex", "aginti"])
 
     def test_verified_shipinhao_delivery_falls_back_from_codex_to_aginti(self) -> None:
         worker = load_worker()
@@ -8280,7 +8280,7 @@ stderr: noisy internal trace
         policy = worker.choose_worker_policy(task)
         next_policy = worker.escalated_policy(policy, "已提交 Xiaoyunque 生成，正在生成中。", task=task)
 
-        self.assertEqual(policy["model"], "auto-code-review")
+        self.assertEqual(policy["model"], "gpt-5.6-sol")
         self.assertEqual(policy["reasoning_effort"], "medium")
         self.assertIsNone(next_policy)
 

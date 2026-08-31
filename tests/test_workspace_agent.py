@@ -129,26 +129,26 @@ class WorkspaceAgentTests(unittest.TestCase):
         self.assertTrue(parsed["stopped"])
         self.assertEqual(parsed["reason"], "tool_contract_violation")
 
-    def test_shared_model_policy_uses_low_chat_medium_task_and_sol_fallback(self):
+    def test_shared_model_policy_uses_sol_for_primary_and_fallback(self):
         policy = load_model_policy(ROOT / "configs" / "model-policy.json")
-        self.assertEqual(policy["primary_backend"], "aginti")
+        self.assertEqual(policy["primary_backend"], "codex")
         self.assertEqual(policy["aginti"]["provider_chain"], ["deepseek", "localllm"])
         self.assertEqual(
             policy["aginti"]["provider_models_by_effort"]["localllm"]["medium"],
             "localllm-deep",
         )
-        self.assertEqual(policy["chat"], {"model": "auto-code-review", "reasoning_effort": "low"})
-        self.assertEqual(policy["task"], {"model": "auto-code-review", "reasoning_effort": "medium"})
+        self.assertEqual(policy["chat"], {"model": "gpt-5.6-sol", "reasoning_effort": "low"})
+        self.assertEqual(policy["task"], {"model": "gpt-5.6-sol", "reasoning_effort": "medium"})
         self.assertEqual(policy["fallback"]["chat"]["model"], "gpt-5.6-sol")
         self.assertEqual(policy["fallback"]["task"]["model"], "gpt-5.6-sol")
         self.assertEqual(policy["high"], {"model": "gpt-5.6-sol", "reasoning_effort": "high"})
         self.assertEqual(policy["xhigh"], {"model": "gpt-5.6-sol", "reasoning_effort": "xhigh"})
 
-    def test_dynamic_policy_uses_auto_review_and_medium_for_tool_work(self):
+    def test_dynamic_policy_uses_sol_medium_for_tool_work(self):
         policy = select_agent_policy("Design and render a clean KiCad PCB and CAD holder")
 
-        self.assertEqual(policy["backend"], "aginti")
-        self.assertEqual(policy["model"], "provider-default")
+        self.assertEqual(policy["backend"], "codex")
+        self.assertEqual(policy["model"], "gpt-5.6-sol")
         self.assertEqual(policy["reasoning_effort"], "medium")
         self.assertEqual(policy["sandbox"], "danger-full-access")
 
@@ -183,11 +183,11 @@ class WorkspaceAgentTests(unittest.TestCase):
         self.assertIn("Do not create `agent-result.json`", prompt)
         self.assertNotIn("At the end, write", prompt)
 
-    def test_protein_structure_work_uses_auto_review_medium(self):
+    def test_protein_structure_work_uses_sol_medium(self):
         policy = select_agent_policy("Use AlphaFold to predict COL1A1 and assess inhibitor evidence")
 
-        self.assertEqual(policy["backend"], "aginti")
-        self.assertEqual(policy["model"], "provider-default")
+        self.assertEqual(policy["backend"], "codex")
+        self.assertEqual(policy["model"], "gpt-5.6-sol")
         self.assertEqual(policy["reasoning_effort"], "medium")
         self.assertEqual(policy["effort_label"], "medium")
 
@@ -218,7 +218,7 @@ class WorkspaceAgentTests(unittest.TestCase):
         ):
             policy = select_agent_policy("Create a polished PowerPoint presentation with editable slides")
 
-        self.assertEqual(policy["model"], "provider-default")
+        self.assertEqual(policy["model"], "gpt-5.6-sol")
         self.assertEqual(policy["reasoning_effort"], "xhigh")
         self.assertEqual(policy["timeout_seconds"], 10800)
         knowledge = selected_packaged_knowledge("Create an editable PPTX presentation")

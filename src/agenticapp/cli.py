@@ -163,7 +163,12 @@ def build_parser() -> argparse.ArgumentParser:
     agent_chat = agent_subparsers.add_parser("chat", parents=[agent_common], help="Send one turn to a persistent LabCanvas agent session.")
     agent_chat.add_argument("prompt", nargs="+", help="Natural-language task or follow-up message.")
     agent_chat.add_argument("--conversation", default="cli-default", help="Stable conversation id used to resume one isolated backend session.")
-    agent_chat.add_argument("--backend", choices=["auto", "codex", "aginti"], default="auto", help="Agent backend. Auto follows model-policy.json (AgInTi by default).")
+    agent_chat.add_argument(
+        "--backend",
+        choices=["auto", "codex", "aginti"],
+        default="auto",
+        help="Agent backend. Auto follows configs/model-policy.json.",
+    )
     agent_chat.add_argument("--model", default="auto", help="Backend-specific model id, provider-default, or auto. 'sol' aliases gpt-5.6-sol for Codex.")
     agent_chat.add_argument("--effort", choices=["auto", "low", "medium", "high", "ultra", "xhigh"], default="auto", help="Reasoning effort. Ultra aliases xhigh.")
     agent_chat.add_argument("--mode", choices=["execute", "plan"], default="execute", help="Execute tools or inspect and plan only.")

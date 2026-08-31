@@ -9,9 +9,9 @@ class BackendSettingsTests(unittest.TestCase):
     def test_default_toolchain_exposes_studio_tools(self):
         settings = default_backend_settings()
 
-        self.assertEqual(settings["agent"]["backend"], "aginti")
-        self.assertEqual(settings["agent"]["model"], "provider-default")
-        self.assertEqual(settings["model_policy"]["primary_backend"], "aginti")
+        self.assertEqual(settings["agent"]["backend"], "codex")
+        self.assertEqual(settings["agent"]["model"], "gpt-5.6-sol")
+        self.assertEqual(settings["model_policy"]["primary_backend"], "codex")
         self.assertEqual(settings["model_policy"]["aginti"]["provider_chain"], ["deepseek", "localllm"])
         self.assertTrue(settings["agent"]["dynamic_routing"])
         self.assertTrue(settings["toolchain"]["cad"])

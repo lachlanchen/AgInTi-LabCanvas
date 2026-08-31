@@ -228,7 +228,7 @@ def load_config(path: Path) -> dict[str, Any]:
             "enabled": True,
             "quota_fallback_model": "gpt-5.6-sol",
             "quota_fallback_reasoning_effort": "low",
-            "fallback_to_aginti": False,
+            "fallback_to_aginti": True,
             "fallback_on_timeout": False,
         },
         "codex": {"model": "gpt-5.6-sol", "reasoning_effort": "low", "sandbox": "read-only", "timeout_seconds": 25},
