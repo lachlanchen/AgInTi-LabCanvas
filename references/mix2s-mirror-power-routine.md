@@ -112,9 +112,10 @@ not restart scrcpy, Xvfb, WeChat, WeCom, or the phone.
 In dual mode, a low-frequency guard also checks the actual Android activities,
 not only whether two scrcpy windows exist. If an interrupted WeCom action moves
 WeCom to the physical display and leaves the virtual display on Android Home,
-the guard publishes a cooperative fairness request, waits for the current exact
-chat action, restores WeChat on the left, and recreates only the virtual WeCom
-mirror. Passive pollers yield to this request; explicit sends still win. Run
-`scripts/mix2s dual-heal` for the same bounded repair on demand. A brief blank
-right pane is expected while UIAutomator temporarily uses WeCom on display 0;
-remaining blank after the action and guard cycle is not expected.
+the guard repairs it immediately when the shared lane is free. It asks passive
+pollers to yield only after the wrong layout persists beyond the stale grace
+period; normal polling is not interrupted, and explicit sends still win. It
+then restores WeChat on the left and recreates only the virtual WeCom mirror.
+Run `scripts/mix2s dual-heal` for the same bounded repair on demand. A brief
+blank right pane is expected while UIAutomator temporarily uses WeCom on display
+0; remaining blank after the action and guard cycle is not expected.

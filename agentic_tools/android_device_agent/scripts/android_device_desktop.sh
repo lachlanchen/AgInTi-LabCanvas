@@ -25,6 +25,8 @@ DUAL_WINDOW_NAME="${ANDROID_DEVICE_DUAL_WINDOW_NAME:-wecom-virtual}"
 DUAL_GUARD_WINDOW_NAME="${ANDROID_DEVICE_DUAL_GUARD_WINDOW_NAME:-layout-guard}"
 DUAL_GUARD_SECONDS="${ANDROID_DEVICE_DUAL_GUARD_SECONDS:-10}"
 DUAL_GUARD_LEASE_TIMEOUT_SECONDS="${ANDROID_DEVICE_DUAL_GUARD_LEASE_TIMEOUT_SECONDS:-8}"
+DUAL_GUARD_STALE_SECONDS="${ANDROID_DEVICE_DUAL_GUARD_STALE_SECONDS:-45}"
+DUAL_GUARD_BAD_SINCE_FILE="$STATE_DIR/${NAME}.dual_bad_since"
 DUAL_WINDOW_WIDTH="${ANDROID_DEVICE_DUAL_WINDOW_WIDTH:-680}"
 DUAL_WINDOW_HEIGHT="${ANDROID_DEVICE_DUAL_WINDOW_HEIGHT:-1360}"
 DUAL_WINDOW_Y="${ANDROID_DEVICE_DUAL_WINDOW_Y:-500}"
@@ -351,8 +353,9 @@ wait "$child_pid"'
 }
 
 heal_dual_layout_once() {
-  local dual_state physical_package virtual_id virtual_package serial
+  local bad_since dual_state now physical_package virtual_id virtual_package serial
   need adb
+  need flock
   need tmux
   [[ "$(stored_layout)" == "dual" ]] || return 0
   tmux has-session -t "$SESSION" 2>/dev/null || return 0
@@ -360,23 +363,48 @@ heal_dual_layout_once() {
   serial="$(known_serial 2>/dev/null || true)"
   [[ -n "$serial" ]] || return 0
 
-  if [[ "${ANDROID_DEVICE_LAYOUT_GUARD_LEASE_HELD:-0}" != "1" ]]; then
-    need python3
-    python3 "$CONTROL_LEASE" run-cooperative \
-      --lock-path "$CONTROL_LOCK" \
-      --priority-path "$CONTROL_PRIORITY" \
-      --purpose mix2s_layout_guard \
-      --timeout-seconds "$DUAL_GUARD_LEASE_TIMEOUT_SECONDS" \
-      -- env ANDROID_DEVICE_LAYOUT_GUARD_LEASE_HELD=1 \
-      "$ROOT/scripts/mix2s" dual-heal --no-wake
-    return $?
-  fi
-
   dual_state="$(dual_activity_state "$serial" 2>/dev/null || true)"
   IFS='|' read -r physical_package virtual_id virtual_package <<<"$dual_state"
   if [[ "$physical_package" == "com.tencent.mm" &&
         "$virtual_id" =~ ^[1-9][0-9]*$ &&
         "$virtual_package" == "com.tencent.wework" ]]; then
+    rm -f "$DUAL_GUARD_BAD_SINCE_FILE"
+    return 0
+  fi
+
+  mkdir -p "$STATE_DIR" "$(dirname "$CONTROL_LOCK")"
+  now="$(date +%s)"
+  if [[ ! -s "$DUAL_GUARD_BAD_SINCE_FILE" ]]; then
+    (umask 077; printf '%s\n' "$now" >"$DUAL_GUARD_BAD_SINCE_FILE")
+  fi
+
+  if [[ "${ANDROID_DEVICE_LAYOUT_GUARD_LEASE_HELD:-0}" != "1" ]]; then
+    exec 9>>"$CONTROL_LOCK"
+    if ! flock -n 9; then
+      bad_since="$(cat "$DUAL_GUARD_BAD_SINCE_FILE" 2>/dev/null || true)"
+      if [[ "${ANDROID_DEVICE_LAYOUT_GUARD_BACKGROUND:-0}" == "1" &&
+            ( ! "$bad_since" =~ ^[0-9]+$ ||
+              $((now - bad_since)) -lt "$DUAL_GUARD_STALE_SECONDS" ) ]]; then
+        return 0
+      fi
+      need python3
+      python3 "$CONTROL_LEASE" run-cooperative \
+        --lock-path "$CONTROL_LOCK" \
+        --priority-path "$CONTROL_PRIORITY" \
+        --purpose mix2s_layout_guard \
+        --timeout-seconds "$DUAL_GUARD_LEASE_TIMEOUT_SECONDS" \
+        -- env ANDROID_DEVICE_LAYOUT_GUARD_LEASE_HELD=1 \
+        "$ROOT/scripts/mix2s" dual-heal --no-wake
+      return $?
+    fi
+  fi
+
+  # Re-read after acquiring the lane; the active transport may have restored
+  # both panes while this guard was waiting.
+  dual_state="$(dual_activity_state "$serial" 2>/dev/null || true)"
+  IFS='|' read -r physical_package virtual_id virtual_package <<<"$dual_state"
+  if [[ "$dual_state" =~ ^com\.tencent\.mm\|[1-9][0-9]*\|com\.tencent\.wework$ ]]; then
+    rm -f "$DUAL_GUARD_BAD_SINCE_FILE"
     return 0
   fi
 
@@ -394,6 +422,7 @@ heal_dual_layout_once() {
     dual_state="$(dual_activity_state "$serial" 2>/dev/null || true)"
     if [[ "$dual_state" =~ ^com\.tencent\.mm\|[1-9][0-9]*\|com\.tencent\.wework$ ]]; then
       tile_dual_windows "$serial" >/dev/null 2>&1 || true
+      rm -f "$DUAL_GUARD_BAD_SINCE_FILE"
       echo "dual displays: restored (WeChat physical, WeCom virtual)"
       return 0
     fi
@@ -408,7 +437,7 @@ ensure_dual_guard() {
   if tmux_window_exists "$DUAL_GUARD_WINDOW_NAME"; then
     return 0
   fi
-  guard_command="while [[ \"\$(cat '$LAYOUT_FILE' 2>/dev/null || true)\" == dual ]]; do sleep '$DUAL_GUARD_SECONDS'; '$ROOT/scripts/mix2s' dual-heal --no-wake >/dev/null 2>&1 || true; done"
+  guard_command="while [[ \"\$(cat '$LAYOUT_FILE' 2>/dev/null || true)\" == dual ]]; do sleep '$DUAL_GUARD_SECONDS'; ANDROID_DEVICE_LAYOUT_GUARD_BACKGROUND=1 '$ROOT/scripts/mix2s' dual-heal --no-wake >/dev/null 2>&1 || true; done"
   tmux new-window -d -t "$SESSION" -n "$DUAL_GUARD_WINDOW_NAME" \
     "cd '$ROOT' && $guard_command"
 }

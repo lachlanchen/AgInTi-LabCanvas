@@ -49,12 +49,14 @@ run `scripts/mix2s transport-restart`. It replaces only websockify and keeps
 Xvfb, scrcpy, phone state, WeChat, and WeCom intact. A viewer opened with the
 URL above reconnects automatically.
 
-Dual mode includes a lock-aware activity guard. It publishes a cooperative
-fairness request so recurring passive pollers cannot reacquire the phone lane
-forever, but explicit message and artifact sends still take priority. After the
-current action, if WeCom was left on the physical display or the virtual display
-fell back to Android Home, it restores WeChat-left and recreates only the
-virtual WeCom mirror. The same repair is available as `scripts/mix2s dual-heal`.
+Dual mode includes a lock-aware activity guard. It repairs immediately when the
+shared phone lane is free. It publishes a cooperative fairness request only
+after the layout has remained wrong continuously beyond the stale grace period,
+so normal WeCom polling is not interrupted and explicit message/artifact sends
+still take priority. If WeCom was left on the physical display or the virtual
+display fell back to Android Home, it restores WeChat-left and recreates only
+the virtual WeCom mirror. The same repair is available as
+`scripts/mix2s dual-heal`.
 The virtual pane may be briefly blank while WeCom is deliberately using display
 0 for UIAutomator; a persistent blank pane after the action is a fault.
 
