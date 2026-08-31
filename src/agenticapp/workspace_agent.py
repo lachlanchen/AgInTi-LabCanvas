@@ -1191,7 +1191,19 @@ def run_codex_turn(
 
 def model_unavailable_result(result: dict[str, Any]) -> bool:
     text = " ".join(str(result.get(key) or "") for key in ("message", "stderr_tail", "stdout_tail", "error")).casefold()
-    return any(marker in text for marker in ("unknown model", "model not found", "invalid model", "unsupported model"))
+    return any(
+        marker in text
+        for marker in (
+            "unknown model",
+            "model not found",
+            "invalid model",
+            "unsupported model",
+            "model is not supported",
+            "model does not support",
+            "does not have access to model",
+            "do not have access to model",
+        )
+    )
 
 
 def _run_codex_process(
@@ -2201,6 +2213,8 @@ def safe_backend_result(result: dict[str, Any]) -> dict[str, Any]:
 
 def backend_should_fallback(result: dict[str, Any]) -> bool:
     if int(result.get("returncode") or 0) in {124, 127}:
+        return True
+    if model_unavailable_result(result):
         return True
     text = " ".join(str(result.get(key) or "") for key in ("message", "stderr_tail", "stdout_tail")).casefold()
     return any(marker in text for marker in QUOTA_MARKERS)

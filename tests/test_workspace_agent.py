@@ -12,8 +12,11 @@ from agenticapp.workspace_agent import (
     cancel_agent_task,
     capability_catalog,
     create_agent_task,
+    backend_should_fallback,
+    model_unavailable_result,
     run_aginti_turn,
     run_agent_task,
+    run_backend_turn,
     run_codex_turn,
     select_agent_policy,
     selected_routine_contracts,
@@ -28,6 +31,53 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class WorkspaceAgentTests(unittest.TestCase):
+    def test_codex_model_unavailable_classifier_matches_real_cli_errors(self):
+        unsupported = {
+            "stderr_tail": (
+                "The 'auto-code-review' model is not supported when using Codex "
+                "with a ChatGPT account."
+            )
+        }
+        unavailable = {
+            "stderr_tail": "Your project does not have access to model gpt-5.6-sol."
+        }
+
+        for result in (unsupported, unavailable):
+            with self.subTest(result=result):
+                self.assertTrue(model_unavailable_result(result))
+                self.assertTrue(backend_should_fallback(result))
+
+    def test_codex_access_error_falls_back_to_aginti(self):
+        codex_error = {
+            "ok": False,
+            "backend": "codex",
+            "returncode": 1,
+            "stderr_tail": "Your project does not have access to model gpt-5.6-sol.",
+        }
+        aginti_success = {
+            "ok": True,
+            "backend": "aginti",
+            "returncode": 0,
+            "message": "completed",
+        }
+
+        with (
+            patch("agenticapp.workspace_agent.run_codex_turn", return_value=codex_error),
+            patch("agenticapp.workspace_agent.run_aginti_turn", return_value=aginti_success),
+        ):
+            result = run_backend_turn(
+                "Complete the task",
+                policy={"backend": "codex", "fallback_to_aginti": True},
+                conversation_id="fallback-test",
+                task_dir=Path("/tmp/fallback-test"),
+                storage_dir=Path("/tmp/fallback-test-storage"),
+                root=ROOT,
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["backend"], "aginti")
+        self.assertEqual([item["backend"] for item in result["attempts"]], ["codex", "aginti"])
+
     def test_aginti_unresolved_dsml_tool_call_is_not_accepted_as_success(self):
         parsed = _parse_aginti_machine_result(
             {
