@@ -108,3 +108,10 @@ scripts/mix2s transport-restart
 
 Reload the URL above if the old tab did not include `reconnect=1`. This does
 not restart scrcpy, Xvfb, WeChat, WeCom, or the phone.
+
+In dual mode, a low-frequency guard also checks the actual Android activities,
+not only whether two scrcpy windows exist. If an interrupted WeCom action moves
+WeCom to the physical display and leaves the virtual display on Android Home,
+the guard waits for the shared device lock, restores WeChat on the left, and
+recreates only the virtual WeCom mirror. Run `scripts/mix2s dual-heal` for the
+same bounded repair on demand.

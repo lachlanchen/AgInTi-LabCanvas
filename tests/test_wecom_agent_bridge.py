@@ -3081,10 +3081,14 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertIn("while true; do $command || true", android_source)
         self.assertIn("mirror: waiting for scrcpy retry", android_source)
         self.assertIn(
-            "on|off|start|stop|restart|transport-restart|status|dual|single|wechat|wecom",
+            "on|off|start|stop|restart|transport-restart|dual-heal|status|dual|single|wechat|wecom",
             android_source,
         )
         self.assertIn("restart_novnc_transport", android_source)
+        self.assertIn("heal_dual_layout_once", android_source)
+        self.assertIn("ensure_dual_guard", android_source)
+        self.assertIn('flock -n 9 || return 0', android_source)
+        self.assertIn('tmux respawn-pane -k -t "$SESSION:$DUAL_WINDOW_NAME.0"', android_source)
         self.assertIn(
             "Preserve Xvfb, scrcpy,",
             android_source,

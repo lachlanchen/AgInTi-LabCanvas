@@ -49,6 +49,12 @@ run `scripts/mix2s transport-restart`. It replaces only websockify and keeps
 Xvfb, scrcpy, phone state, WeChat, and WeCom intact. A viewer opened with the
 URL above reconnects automatically.
 
+Dual mode includes a lock-aware activity guard. It does nothing while a WeChat
+or WeCom action owns the shared Android lane. After the action, if WeCom was
+left on the physical display or the virtual display fell back to Android Home,
+it restores WeChat-left and recreates only the virtual WeCom mirror. The same
+repair is available as `scripts/mix2s dual-heal`.
+
 - tmux session: `labcanvas-android-mix2s`
 
 The launcher runs:

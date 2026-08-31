@@ -22,6 +22,8 @@ KEEP_AWAKE_PID_FILE="$STATE_DIR/${NAME}_${DISPLAY_NUMBER}_keep_awake.pid"
 SERIAL_FILE="$STATE_DIR/${NAME}.serial"
 LAYOUT_FILE="$STATE_DIR/${NAME}.layout"
 DUAL_WINDOW_NAME="${ANDROID_DEVICE_DUAL_WINDOW_NAME:-wecom-virtual}"
+DUAL_GUARD_WINDOW_NAME="${ANDROID_DEVICE_DUAL_GUARD_WINDOW_NAME:-layout-guard}"
+DUAL_GUARD_SECONDS="${ANDROID_DEVICE_DUAL_GUARD_SECONDS:-10}"
 DUAL_WINDOW_WIDTH="${ANDROID_DEVICE_DUAL_WINDOW_WIDTH:-680}"
 DUAL_WINDOW_HEIGHT="${ANDROID_DEVICE_DUAL_WINDOW_HEIGHT:-1360}"
 DUAL_WINDOW_Y="${ANDROID_DEVICE_DUAL_WINDOW_Y:-500}"
@@ -36,7 +38,7 @@ CONTROL_PRIORITY="$ROOT/agentic_tools/android_device_agent/.private/android_cont
 usage() {
   cat <<'EOF'
 Usage:
-  android_device_desktop.sh [on|off|start|stop|restart|transport-restart|status|dual|single|wechat|wecom] [--serial SERIAL] [--open-wechat]
+  android_device_desktop.sh [on|off|start|stop|restart|transport-restart|dual-heal|status|dual|single|wechat|wecom] [--serial SERIAL] [--open-wechat]
 
 Starts a dedicated tmux-held noVNC desktop running scrcpy for an Android device.
 
@@ -46,6 +48,7 @@ Actions:
   restart           Perform a complete off/on cycle.
   transport-restart Restart only noVNC/websockify. Preserve Xvfb, scrcpy,
                     phone state, WeChat, and WeCom.
+  dual-heal         Restore WeChat-left and WeCom-right without touching login.
   status            Report mirror, transport, and phone power state.
   dual              Keep WeChat physical and WeCom virtual side by side.
   single, wecom      Return to the automation-safe physical WeCom mirror.
@@ -65,7 +68,7 @@ EOF
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    on|off|start|stop|restart|transport-restart|status|dual|single|wechat|wecom) ACTION="$1"; shift ;;
+    on|off|start|stop|restart|transport-restart|dual-heal|status|dual|single|wechat|wecom) ACTION="$1"; shift ;;
     --serial) SERIAL="$2"; shift 2 ;;
     --open-wechat) OPEN_WECHAT="1"; shift ;;
     --no-wake) WAKE_DEVICE="0"; shift ;;
@@ -342,7 +345,63 @@ wait "$child_pid"'
       "cd '$ROOT' && $dual_loop_command"
   fi
   tile_dual_windows "$serial"
+  ensure_dual_guard
   echo "dual displays: online (WeChat physical, WeCom virtual)"
+}
+
+heal_dual_layout_once() {
+  local dual_state physical_package virtual_id virtual_package serial
+  need adb
+  need flock
+  need tmux
+  [[ "$(stored_layout)" == "dual" ]] || return 0
+  tmux has-session -t "$SESSION" 2>/dev/null || return 0
+  tmux_window_exists "$DUAL_WINDOW_NAME" || return 0
+  serial="$(known_serial 2>/dev/null || true)"
+  [[ -n "$serial" ]] || return 0
+
+  mkdir -p "$(dirname "$CONTROL_LOCK")"
+  exec 9>>"$CONTROL_LOCK"
+  flock -n 9 || return 0
+  dual_state="$(dual_activity_state "$serial" 2>/dev/null || true)"
+  IFS='|' read -r physical_package virtual_id virtual_package <<<"$dual_state"
+  if [[ "$physical_package" == "com.tencent.mm" &&
+        "$virtual_id" =~ ^[1-9][0-9]*$ &&
+        "$virtual_package" == "com.tencent.wework" ]]; then
+    return 0
+  fi
+
+  if [[ "$physical_package" != "com.tencent.mm" ]]; then
+    adb -s "$serial" shell am start \
+      --display 0 -f 0x04000000 -n com.tencent.mm/.ui.LauncherUI \
+      >/dev/null 2>&1 || true
+  fi
+  if [[ ! "$virtual_id" =~ ^[1-9][0-9]*$ ||
+        "$virtual_package" != "com.tencent.wework" ]]; then
+    tmux respawn-pane -k -t "$SESSION:$DUAL_WINDOW_NAME.0"
+  fi
+
+  for _ in {1..40}; do
+    dual_state="$(dual_activity_state "$serial" 2>/dev/null || true)"
+    if [[ "$dual_state" =~ ^com\.tencent\.mm\|[1-9][0-9]*\|com\.tencent\.wework$ ]]; then
+      tile_dual_windows "$serial" >/dev/null 2>&1 || true
+      echo "dual displays: restored (WeChat physical, WeCom virtual)"
+      return 0
+    fi
+    sleep 0.25
+  done
+  echo "dual displays: restore pending (${dual_state:-unreadable})" >&2
+  return 1
+}
+
+ensure_dual_guard() {
+  local guard_command
+  if tmux_window_exists "$DUAL_GUARD_WINDOW_NAME"; then
+    return 0
+  fi
+  guard_command="while [[ \"\$(cat '$LAYOUT_FILE' 2>/dev/null || true)\" == dual ]]; do sleep '$DUAL_GUARD_SECONDS'; '$ROOT/scripts/mix2s' dual-heal --no-wake >/dev/null 2>&1 || true; done"
+  tmux new-window -d -t "$SESSION" -n "$DUAL_GUARD_WINDOW_NAME" \
+    "cd '$ROOT' && $guard_command"
 }
 
 ensure_single_layout() {
@@ -352,6 +411,9 @@ ensure_single_layout() {
   serial="$(known_serial 2>/dev/null || true)"
   if tmux has-session -t "$SESSION" 2>/dev/null && tmux_window_exists "$DUAL_WINDOW_NAME"; then
     tmux kill-window -t "$SESSION:$DUAL_WINDOW_NAME"
+  fi
+  if tmux has-session -t "$SESSION" 2>/dev/null && tmux_window_exists "$DUAL_GUARD_WINDOW_NAME"; then
+    tmux kill-window -t "$SESSION:$DUAL_GUARD_WINDOW_NAME"
   fi
   if [[ -n "$serial" ]]; then
     if [[ "$app_package" == "com.tencent.mm" ]]; then
@@ -581,6 +643,7 @@ case "$ACTION" in
     fi
     ;;
   transport-restart) restart_novnc_transport ;;
+  dual-heal) heal_dual_layout_once ;;
   status) status ;;
   dual)
     save_layout dual
