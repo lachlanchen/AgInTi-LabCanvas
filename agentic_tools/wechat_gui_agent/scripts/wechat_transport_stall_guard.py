@@ -54,6 +54,13 @@ WECHAT_VIRTUAL_DESKTOP = (
 WECHAT_GUI_SEND = (
     ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wechat_gui_send.py"
 )
+WECHAT_TASK_WORKER = (
+    ROOT
+    / "agentic_tools"
+    / "wechat_gui_agent"
+    / "scripts"
+    / "wechat_task_worker.py"
+)
 WECOM_SUPERVISOR = ROOT / "agentic_tools" / "wecom_agent" / "scripts" / "wecom_tmux.sh"
 ANDROID_CONFIG = WECOM_PRIVATE / "wecom_android_bridge.local.json"
 GUI_CONFIG = WECOM_PRIVATE / "wecom_gui_bridge.local.json"
@@ -1523,6 +1530,54 @@ def run_repair(label: str, command: list[str]) -> dict[str, Any]:
     }
 
 
+def personal_wechat_transport_ready(snapshot: dict[str, Any]) -> bool:
+    """Return true when either exact-chat personal WeChat sender is usable."""
+
+    client = snapshot.get("wechat_client")
+    if isinstance(client, dict) and bool(client.get("available")):
+        return True
+    android = snapshot.get("android")
+    return bool(
+        isinstance(android, dict)
+        and android.get("endpoint_reachable")
+        and android.get("device_authorized")
+    )
+
+
+def recover_personal_wechat_outbox_after_reconnect(
+    snapshot: dict[str, Any],
+    state: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Restore one recent exact result when a WeChat transport reconnects."""
+
+    ready = personal_wechat_transport_ready(snapshot)
+    previously_ready = state.get("personal_wechat_transport_ready") is True
+    if not ready:
+        state["personal_wechat_transport_ready"] = False
+        return None
+    if previously_ready:
+        return None
+    recovery = run_repair(
+        "wechat_outbox_reconnect",
+        [
+            sys.executable,
+            str(WECHAT_TASK_WORKER),
+            "--queue",
+            str(WECHAT_QUEUE),
+            "--recover-expired-transport",
+            "wechat",
+            "--recovery-max-age-seconds",
+            str(12 * 60 * 60),
+            "--recovery-limit",
+            "1",
+        ],
+    )
+    if recovery.get("ok"):
+        state["personal_wechat_transport_ready"] = True
+        state["last_personal_wechat_outbox_recovery_at"] = iso_now()
+    return recovery
+
+
 def android_poll_stall_requires_relay_restart(android: dict[str, Any]) -> bool:
     """Keep a live relay when only its bounded native-app recovery failed."""
     error_text = str(android.get("last_poll_error") or "").casefold()
@@ -2109,6 +2164,13 @@ def one_cycle(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
         verified = build_snapshot(max_sender_seconds=args.max_sender_age_seconds)
         verified["repairs"] = repairs
         snapshot = verified
+    if args.repair:
+        outbox_recovery = recover_personal_wechat_outbox_after_reconnect(
+            snapshot,
+            state,
+        )
+        if outbox_recovery is not None:
+            snapshot["outbox_recovery"] = outbox_recovery
     repair_agent_result: dict[str, Any] | None = None
     if args.repair_agent and not snapshot.get("ok"):
         due, agent_signature, agent_codes = repair_agent_due(

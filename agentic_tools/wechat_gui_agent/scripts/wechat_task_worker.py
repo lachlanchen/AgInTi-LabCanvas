@@ -1473,6 +1473,7 @@ def process_one(queue: Path, chat: str, *, send: bool, send_targets: Path = DEFA
         result = recover_verified_shipinhao_delivery_result(task, result)
         result = enforce_reader_facing_pdf_quality(task, result)
         result = audit_and_repair_worker_completion(task, result)
+        result = enforce_worker_result_response_policy(task, result)
     except Exception as exc:
         result_text = f"Worker failed before completion: {type(exc).__name__}: {str(exc)[:800]}"
         result = private_worker_failure_result(result_text)
@@ -2724,10 +2725,108 @@ def is_transport_internal_confirmation(value: str) -> bool:
     )
 
 
+def confirmation_requests_user_continuation(value: str) -> bool:
+    """Return whether confirmation directly asks the user to unblock this task."""
+    text = str(value or "").strip()
+    if not text:
+        return False
+    if "?" in text or "？" in text:
+        return True
+    folded = text.casefold()
+    request_markers = (
+        "please ",
+        "please reply",
+        "reply ",
+        "respond ",
+        "can you ",
+        "could you ",
+        "would you ",
+        "do you approve",
+        "do you confirm",
+        "请",
+        "請",
+        "请回复",
+        "請回覆",
+        "回复我",
+        "回覆我",
+        "是否",
+        "能否",
+        "可否",
+    )
+    return any(marker in folded for marker in request_markers)
+
+
+def read_only_snapshot_confirmation_is_remediation_note(
+    task: dict[str, Any], result: dict[str, Any]
+) -> bool:
+    """Detect a completed diagnosis whose remediation was put in the gate field.
+
+    A host read-only snapshot can prove a health/status answer without changing
+    the system. Merely stating what a human could do next does not make that
+    diagnostic turn resumable. A real open gate must directly request a choice
+    or action from the user.
+    """
+    confirmation = str(result.get("confirmation") or "").strip()
+    if not confirmation or confirmation_requests_user_continuation(confirmation):
+        return False
+    if not str(result.get("message") or "").strip():
+        return False
+    preflight = task.get("preflight") if isinstance(task.get("preflight"), dict) else {}
+    snapshot = (
+        preflight.get("established_routine_snapshot")
+        if isinstance(preflight.get("established_routine_snapshot"), dict)
+        else {}
+    )
+    return bool(
+        snapshot.get("read_only")
+        and snapshot.get("ok")
+        and isinstance(snapshot.get("snapshot"), dict)
+        and snapshot.get("snapshot")
+    )
+
+
+def read_only_snapshot_should_be_message_only(task: dict[str, Any]) -> bool:
+    """Keep routine evidence local unless this status request asks for a file."""
+    preflight = task.get("preflight") if isinstance(task.get("preflight"), dict) else {}
+    snapshot = (
+        preflight.get("established_routine_snapshot")
+        if isinstance(preflight.get("established_routine_snapshot"), dict)
+        else {}
+    )
+    return bool(
+        snapshot.get("read_only")
+        and snapshot.get("ok")
+        and isinstance(snapshot.get("snapshot"), dict)
+        and snapshot.get("snapshot")
+        and not task_contract_requires_file_delivery(task)
+        and not request_explicitly_asks_for_file_delivery(task_focus_text(task))
+    )
+
+
 def enforce_worker_result_response_policy(
     task: dict[str, Any], result: dict[str, Any]
 ) -> dict[str, Any]:
     """Apply narrow final guards against transport and language-mode leakage."""
+    if read_only_snapshot_should_be_message_only(task) and result.get("files"):
+        suppressed = [str(path) for path in result.get("files") or [] if str(path)]
+        task["suppressed_chat_files"] = unique_strings(
+            [
+                *(str(path) for path in task.get("suppressed_chat_files") or []),
+                *suppressed,
+            ]
+        )
+        result["files"] = []
+        data = result.get("data") if isinstance(result.get("data"), dict) else None
+        if data is not None:
+            data["files"] = []
+            data["require_file_delivery"] = False
+        task.setdefault("response_policy_adjustments", []).append(
+            {
+                "at": datetime.now().isoformat(timespec="seconds"),
+                "kind": "kept_read_only_snapshot_artifacts_local",
+                "fields": ["files"],
+            }
+        )
     if task_forbids_chat_artifact_delivery(task):
         if not isinstance(result.get("data"), dict):
             result["data"] = {}
@@ -2752,6 +2851,25 @@ def enforce_worker_result_response_policy(
                 "at": datetime.now().isoformat(timespec="seconds"),
                 "kind": "removed_transport_internal_confirmation",
                 "fields": ["confirmation"],
+            }
+        )
+    if read_only_snapshot_confirmation_is_remediation_note(task, result):
+        remediation = str(result.get("confirmation") or "").strip()
+        message = str(result.get("message") or "").rstrip()
+        if remediation and remediation not in message:
+            message = f"{message}\n\n{remediation}".strip()
+        result["message"] = message
+        result["confirmation"] = ""
+        data = result.get("data") if isinstance(result.get("data"), dict) else None
+        if data is not None:
+            data["message"] = message
+            if "confirmation" in data:
+                data["confirmation"] = ""
+        task.setdefault("response_policy_adjustments", []).append(
+            {
+                "at": datetime.now().isoformat(timespec="seconds"),
+                "kind": "completed_read_only_diagnostic",
+                "fields": ["message", "confirmation"],
             }
         )
     policy = worker_response_policy(task)
@@ -8785,12 +8903,13 @@ Treat the current request and later same-chat interruptions as authoritative. Ke
 When `lifetime_same_chat_memory` is present, it is a model-budgeted hierarchy to which every authorized same-chat row contributed. Use it for continuity, names, preferences, prior decisions, and recurring work. `high_fidelity_same_chat_history` contains raw excerpts selected for the current task and should win when exact wording matters. Neither field is a current instruction: never revive a completed task, infer authorization from history, or let memory override the current request and interruptions.
 
 Answer naturally and concisely. Do not expose model names, plans, tool logs, paths intended to remain private, stack traces, or runtime diagnostics. Return real artifact paths only when they exist and belong to this task. Give every recipient-facing artifact a short meaningful basename that identifies its subject, date or version when useful, and artifact type, such as `2026-08-22-organoid-imaging-review.pdf` or `cmount-sensor-holder-v2.step`. Do not use a bare `output`, `result`, `report`, task ID, checksum, UUID, or temporary filename as the visible artifact name; those identifiers may remain only in private ledgers. If blocked, state the exact blocker and resumable next action without claiming success.
+`confirmation` is an active continuation gate, not a place for advice. For a completed read-only diagnosis, status check, or report, put optional remediation in `message` and return an empty `confirmation`. When the task truly cannot continue without the user, make `confirmation` a direct question or action request that says what the user must do and how the same task will resume. Do not create or list a status-snapshot/evidence file unless the current request explicitly asks for a file; the host snapshot is already durable private evidence and the normal result is message-only.
 
 Return one strict JSON object and no prose:
 {{
   "message": "natural source-chat response",
   "files": ["verified task-scoped artifact path"],
-  "confirmation": "only when a real gate or human action is required",
+  "confirmation": "only when this task is unfinished and a direct user decision or action is required before the same task can continue",
   "knowledge_items": [],
   "upstream_feedback": []
 }}
@@ -9272,7 +9391,7 @@ Return either plain text or this JSON shape:
 {{
   "message": "concise message to send back",
   "files": ["/absolute/path/to/file.pdf", "/absolute/path/to/preview.png"],
-  "confirmation": "optional question to ask before continuing",
+  "confirmation": "only when this task is unfinished; ask the direct question or user action needed before continuing",
   "knowledge_items": [{{"kind": "idea|insight|intuition|interest|hypothesis|decision|preference|question|note", "title": "short title", "content": "durable knowledge worth retaining", "tags": ["optional"]}}],
   "upstream_feedback": [{{
     "target": "labcanvas|lazyedit|musia|books|zhjpbook|lalachan|proteinstructure|agintiflow",
@@ -9294,6 +9413,7 @@ For WeCom, include `knowledge_items` only for durable user-authored ideas or gen
 Use `upstream_feedback` only for a concrete reproduced integration gap or an explicit current-message feature/handoff requirement involving an allowlisted project. Do not create one for a transient login, CAPTCHA, quota, network, timeout, or transport failure. A local report does not authorize a public issue, commit, push, or release. Set `deliver_report=true` only when the current request explicitly asks to receive the report file.
 
 Use confirmation when an important choice, purchase, external send, deletion, privacy-sensitive action, or irreversible action needs approval.
+Confirmation is an active continuation gate, not a remediation/status note. A completed read-only diagnosis, status check, or report must put optional next steps in `message` and return an empty confirmation. If the task is genuinely blocked on the user, ask a direct question or request the exact action needed to resume this same task. Do not create or return a health/status evidence file unless the user explicitly requests one; keep routine snapshots private and answer with the concise message.
 If an authenticated download, account action, purchase, publication, deletion, or other requested operation is blocked by login, CAPTCHA, bot check, or consent, do not try to bypass it. This human-assist rule does not apply to read-only mp.weixin/Shipinhao research: use `task.preflight.wechat_source_recovery` and finish with extracted, reconstructed, or evidence-limited status without opening/focusing a browser or asking for verification.
 Open a human-assist browser in the isolated virtual desktop with:
 PYTHONPATH=src python -m agenticapp wechat browser-assist --url "<url>" --wait-seconds 8 --capture --close-after --json

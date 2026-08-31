@@ -1299,6 +1299,108 @@ This hypothesis still needs validation.
         self.assertEqual(result["confirmation"], "是否现在发布到 YouTube？")
         self.assertNotIn("response_policy_adjustments", task)
 
+    def test_response_guard_closes_completed_read_only_diagnostic(self) -> None:
+        worker = load_worker()
+        task = {
+            "chat": "campaign:mobile-health",
+            "request": "check current WeChat health and queues; do not restart or send",
+            "preflight": {
+                "established_routine_snapshot": {
+                    "status": "ok",
+                    "ok": True,
+                    "routine_id": "wechat-chatops",
+                    "read_only": True,
+                    "snapshot": {
+                        "operational": False,
+                        "issues": ["wechat_login_required"],
+                        "queues": {"wechat": {"pending": 0}},
+                    },
+                }
+            },
+            "response_policy": {"automatic_multilingual": False},
+        }
+        result = {
+            "message": "Agent 和队列正常；桌面微信需要登录。",
+            "confirmation": "需要人工重新登录桌面微信才能恢复消息入口。",
+            "files": ["/tmp/wechat-health-snapshot.json"],
+            "data": {
+                "message": "Agent 和队列正常；桌面微信需要登录。",
+                "confirmation": "需要人工重新登录桌面微信才能恢复消息入口。",
+                "files": ["/tmp/wechat-health-snapshot.json"],
+            },
+        }
+
+        worker.enforce_worker_result_response_policy(task, result)
+
+        self.assertEqual(result["confirmation"], "")
+        self.assertIn("需要人工重新登录", result["message"])
+        self.assertEqual(result["data"]["message"], result["message"])
+        self.assertEqual(result["data"]["confirmation"], "")
+        self.assertEqual(result["files"], [])
+        self.assertEqual(result["data"]["files"], [])
+        self.assertEqual(
+            task["response_policy_adjustments"][1]["kind"],
+            "completed_read_only_diagnostic",
+        )
+        self.assertEqual(
+            task["response_policy_adjustments"][0]["kind"],
+            "kept_read_only_snapshot_artifacts_local",
+        )
+
+    def test_response_guard_keeps_direct_read_only_recovery_request(self) -> None:
+        worker = load_worker()
+        task = {
+            "chat": "campaign:mobile-health",
+            "request": "check current WeChat health",
+            "preflight": {
+                "established_routine_snapshot": {
+                    "status": "ok",
+                    "ok": True,
+                    "routine_id": "wechat-chatops",
+                    "read_only": True,
+                    "snapshot": {"operational": False},
+                }
+            },
+            "response_policy": {"automatic_multilingual": False},
+        }
+        result = {
+            "message": "桌面微信需要登录。",
+            "confirmation": "请扫码登录后回复我继续检查。",
+            "files": [],
+        }
+
+        worker.enforce_worker_result_response_policy(task, result)
+
+        self.assertEqual(result["confirmation"], "请扫码登录后回复我继续检查。")
+        self.assertNotIn("response_policy_adjustments", task)
+
+    def test_response_guard_keeps_requested_read_only_snapshot_file(self) -> None:
+        worker = load_worker()
+        task = {
+            "chat": "campaign:mobile-health",
+            "request": "check current WeChat health and send me the JSON report",
+            "preflight": {
+                "established_routine_snapshot": {
+                    "status": "ok",
+                    "ok": True,
+                    "routine_id": "wechat-chatops",
+                    "read_only": True,
+                    "snapshot": {"operational": True},
+                }
+            },
+            "response_policy": {"automatic_multilingual": False},
+        }
+        result = {
+            "message": "健康检查正常。",
+            "confirmation": "",
+            "files": ["/tmp/wechat-health-snapshot.json"],
+        }
+
+        worker.enforce_worker_result_response_policy(task, result)
+
+        self.assertEqual(result["files"], ["/tmp/wechat-health-snapshot.json"])
+        self.assertNotIn("response_policy_adjustments", task)
+
     def test_research_timeout_recovers_exact_task_report_and_latex_pdf(self) -> None:
         worker = load_worker()
         with tempfile.TemporaryDirectory() as tmp:

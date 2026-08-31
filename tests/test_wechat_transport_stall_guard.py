@@ -157,6 +157,75 @@ class WeChatTransportStallGuardTests(unittest.TestCase):
         self.assertIn("--no-search", command)
         self.assertNotIn("LabAgent", command)
 
+    def test_personal_wechat_outbox_recovery_runs_once_on_ready_transition(self) -> None:
+        state: dict[str, object] = {"personal_wechat_transport_ready": False}
+        unavailable = {
+            "wechat_client": {"available": False},
+            "android": {"endpoint_reachable": False, "device_authorized": False},
+        }
+        ready = {
+            "wechat_client": {"available": False},
+            "android": {"endpoint_reachable": True, "device_authorized": True},
+        }
+
+        with mock.patch.object(guard, "run_repair") as repair:
+            self.assertIsNone(
+                guard.recover_personal_wechat_outbox_after_reconnect(
+                    unavailable,
+                    state,
+                )
+            )
+            repair.return_value = {"label": "wechat_outbox_reconnect", "ok": True}
+            recovered = guard.recover_personal_wechat_outbox_after_reconnect(
+                ready,
+                state,
+            )
+            repeated = guard.recover_personal_wechat_outbox_after_reconnect(
+                ready,
+                state,
+            )
+
+        self.assertEqual(recovered, {"label": "wechat_outbox_reconnect", "ok": True})
+        self.assertIsNone(repeated)
+        self.assertTrue(state["personal_wechat_transport_ready"])
+        self.assertIn("last_personal_wechat_outbox_recovery_at", state)
+        repair.assert_called_once()
+        command = repair.call_args.args[1]
+        self.assertIn("--recover-expired-transport", command)
+        self.assertEqual(
+            command[command.index("--recover-expired-transport") + 1],
+            "wechat",
+        )
+        self.assertEqual(command[command.index("--recovery-limit") + 1], "1")
+
+    def test_failed_personal_wechat_outbox_recovery_retries_next_cycle(self) -> None:
+        state: dict[str, object] = {"personal_wechat_transport_ready": False}
+        ready = {
+            "wechat_client": {"available": True},
+            "android": {"endpoint_reachable": False, "device_authorized": False},
+        }
+        failed = {"label": "wechat_outbox_reconnect", "ok": False}
+        succeeded = {"label": "wechat_outbox_reconnect", "ok": True}
+
+        with mock.patch.object(
+            guard,
+            "run_repair",
+            side_effect=[failed, succeeded],
+        ) as repair:
+            first = guard.recover_personal_wechat_outbox_after_reconnect(
+                ready,
+                state,
+            )
+            second = guard.recover_personal_wechat_outbox_after_reconnect(
+                ready,
+                state,
+            )
+
+        self.assertEqual(first, failed)
+        self.assertEqual(second, succeeded)
+        self.assertEqual(repair.call_count, 2)
+        self.assertTrue(state["personal_wechat_transport_ready"])
+
     def test_virtual_desktop_closes_lifecycle_lock_in_wechat_child(self) -> None:
         script = (
             ROOT
