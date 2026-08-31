@@ -23,6 +23,7 @@ SERIAL_FILE="$STATE_DIR/${NAME}.serial"
 LAYOUT_FILE="$STATE_DIR/${NAME}.layout"
 DUAL_WINDOW_NAME="${ANDROID_DEVICE_DUAL_WINDOW_NAME:-wecom-virtual}"
 DUAL_GUARD_WINDOW_NAME="${ANDROID_DEVICE_DUAL_GUARD_WINDOW_NAME:-layout-guard}"
+PRIMARY_WINDOW_NAME="${ANDROID_DEVICE_PRIMARY_WINDOW_NAME:-wechat-physical}"
 DUAL_GUARD_SECONDS="${ANDROID_DEVICE_DUAL_GUARD_SECONDS:-10}"
 DUAL_GUARD_LEASE_TIMEOUT_SECONDS="${ANDROID_DEVICE_DUAL_GUARD_LEASE_TIMEOUT_SECONDS:-8}"
 DUAL_GUARD_STALE_SECONDS="${ANDROID_DEVICE_DUAL_GUARD_STALE_SECONDS:-45}"
@@ -148,6 +149,13 @@ known_serial() {
   elif command -v adb >/dev/null 2>&1; then
     adb devices | awk 'NR > 1 && $2 == "device" {print $1; exit}'
   fi
+}
+
+adb_transport_state() {
+  local serial="$1"
+  [[ -n "$serial" ]] || return 1
+  adb devices 2>/dev/null |
+    awk -v expected="$serial" '$1 == expected {print $2; found=1; exit} END {exit !found}'
 }
 
 port_listening() {
@@ -292,7 +300,11 @@ ensure_dual_layout() {
   need adb
   need tmux
   need xdotool
-  serial="$(device_serial)"
+  serial="$(known_serial 2>/dev/null || true)"
+  if [[ -z "$serial" ]]; then
+    echo "Dual review is waiting for a configured Android device." >&2
+    return 1
+  fi
   scrcpy_bin="$(resolve_scrcpy_bin)"
   if ! scrcpy_supports_new_display "$scrcpy_bin"; then
     echo "Dual review requires scrcpy with --new-display support: $scrcpy_bin" >&2
@@ -343,9 +355,14 @@ wait "$child_pid"'
       --window-y "$DUAL_WINDOW_Y" \
       --window-width "$DUAL_WINDOW_WIDTH" \
       --window-height "$DUAL_WINDOW_HEIGHT")
-    dual_loop_command="while [[ \"\$(cat '$LAYOUT_FILE' 2>/dev/null || true)\" == dual ]]; do $setup_command >/dev/null 2>&1 || true; $review_command || true; sleep '$RETRY_SECONDS'; done"
+    dual_loop_command="while [[ \"\$(cat '$LAYOUT_FILE' 2>/dev/null || true)\" == dual ]]; do if adb -s $(printf '%q' "$serial") wait-for-device >/dev/null 2>&1; then $setup_command >/dev/null 2>&1 || true; $review_command || true; fi; sleep '$RETRY_SECONDS'; done"
     tmux new-window -d -t "$SESSION" -n "$DUAL_WINDOW_NAME" \
       "cd '$ROOT' && $dual_loop_command"
+  fi
+  if ! adb -s "$serial" get-state >/dev/null 2>&1; then
+    ensure_dual_guard
+    echo "dual displays: waiting for Android authorization ($serial)"
+    return 0
   fi
   tile_dual_windows "$serial"
   ensure_dual_guard
@@ -362,6 +379,7 @@ heal_dual_layout_once() {
   tmux_window_exists "$DUAL_WINDOW_NAME" || return 0
   serial="$(known_serial 2>/dev/null || true)"
   [[ -n "$serial" ]] || return 0
+  adb -s "$serial" get-state >/dev/null 2>&1 || return 0
 
   dual_state="$(dual_activity_state "$serial" 2>/dev/null || true)"
   IFS='|' read -r physical_package virtual_id virtual_package <<<"$dual_state"
@@ -468,7 +486,7 @@ ensure_single_layout() {
 }
 
 status() {
-  local dual_state="" layout serial=""
+  local dual_state="" layout serial="" transport_state=""
   local power_state=""
   layout="$(stored_layout)"
   echo "tmux session: $SESSION"
@@ -506,10 +524,15 @@ status() {
   else
     echo "transport: off"
   fi
-  if [[ -n "$serial" ]] && command -v adb >/dev/null 2>&1 && adb -s "$serial" get-state >/dev/null 2>&1; then
+  transport_state="$(adb_transport_state "$serial" 2>/dev/null || true)"
+  if [[ -n "$serial" ]] && [[ "$transport_state" == "device" ]] && adb -s "$serial" get-state >/dev/null 2>&1; then
     power_state="$(phone_power_state "$serial")"
     echo "phone: ${power_state:-unknown} ($serial)"
     echo "USB stay-awake: $(adb -s "$serial" shell settings get global stay_on_while_plugged_in 2>/dev/null | tr -d '\r')"
+  elif [[ -n "$serial" ]] && [[ "$transport_state" == "unauthorized" ]]; then
+    echo "phone: unauthorized ($serial); waiting for the existing computer key to be accepted"
+  elif [[ -n "$serial" ]] && [[ -n "$transport_state" ]]; then
+    echo "phone: $transport_state ($serial)"
   elif [[ -n "$serial" ]]; then
     echo "phone: disconnected ($serial)"
   else
@@ -586,7 +609,7 @@ stop_session() {
 }
 
 start_session() {
-  local attempt escaped_serial scrcpy_bin serial
+  local attempt authorized="0" command escaped_serial log_dir primary_loop_command scrcpy_bin serial
   need adb
   need tmux
   scrcpy_bin="$(resolve_scrcpy_bin)"
@@ -598,37 +621,24 @@ start_session() {
     echo "Missing virtual desktop launcher: $VIRTUAL_LAUNCHER" >&2
     exit 4
   fi
-  serial="$(device_serial)"
+  serial="$(known_serial 2>/dev/null || true)"
   if [[ -z "$serial" ]]; then
-    echo "No authorized Android device found. Check: adb devices -l" >&2
-    exit 5
+    serial="$(adb devices | awk 'NR > 1 && NF >= 2 {print $1; exit}')"
   fi
-  if ! adb -s "$serial" get-state >/dev/null 2>&1; then
-    echo "Android device is not reachable: $serial" >&2
-    exit 6
+  if [[ -z "$serial" ]]; then
+    echo "No configured or connected Android device found. Check: adb devices -l" >&2
+    exit 5
   fi
   mkdir -p "$STATE_DIR"
   printf '%s\n' "$serial" >"$SERIAL_FILE"
-  if [[ "$WAKE_DEVICE" == "1" ]]; then
+  chmod 600 "$SERIAL_FILE"
+  if adb -s "$serial" get-state >/dev/null 2>&1; then
+    authorized="1"
+  fi
+  if [[ "$authorized" == "1" && "$WAKE_DEVICE" == "1" ]]; then
     adb -s "$serial" shell input keyevent 224 >/dev/null 2>&1 || true
     adb -s "$serial" shell wm dismiss-keyguard >/dev/null 2>&1 || true
     adb -s "$serial" shell svc power stayon true >/dev/null 2>&1 || true
-  fi
-  if tmux has-session -t "$SESSION" 2>/dev/null; then
-    echo "$SESSION already running"
-    if [[ "$OPEN_WECHAT" == "1" ]]; then
-      adb -s "$serial" shell monkey -p com.tencent.mm -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1 || true
-    fi
-    escaped_serial="$(regex_escape "$serial")"
-    for attempt in {1..30}; do
-      if port_listening "$VNC_PORT" && port_listening "$NOVNC_PORT" &&
-        pgrep -u "$USER_NAME" -f "^([^[:space:]]*/)?scrcpy --serial $escaped_serial([[:space:]]|$)" >/dev/null 2>&1; then
-        break
-      fi
-      sleep 0.5
-    done
-    status
-    return
   fi
   log_dir="$ROOT/output/android_device_agent/$(date +%F)"
   mkdir -p "$log_dir"
@@ -649,17 +659,43 @@ start_session() {
     --window-title "LabCanvas Android MIX 2S ($serial)" \
     --window-width 540 \
     --window-height 1080)
-  tmux new-session -d -s "$SESSION" \
-    "cd '$ROOT' && while true; do $command || true; sleep '$RETRY_SECONDS'; done"
-  escaped_serial="$(regex_escape "$serial")"
-  for attempt in {1..30}; do
-    if port_listening "$VNC_PORT" && port_listening "$NOVNC_PORT" &&
-      pgrep -u "$USER_NAME" -f "^([^[:space:]]*/)?scrcpy --serial $escaped_serial([[:space:]]|$)" >/dev/null 2>&1; then
-      break
+  primary_loop_command="while true; do if adb -s $(printf '%q' "$serial") wait-for-device >/dev/null 2>&1; then $command || true; fi; sleep '$RETRY_SECONDS'; done"
+  if tmux has-session -t "$SESSION" 2>/dev/null; then
+    echo "$SESSION already running"
+    if ! tmux_window_exists "$PRIMARY_WINDOW_NAME"; then
+      tmux new-window -d -t "$SESSION" -n "$PRIMARY_WINDOW_NAME" \
+        "cd '$ROOT' && $primary_loop_command"
+      echo "Restored missing $PRIMARY_WINDOW_NAME supervisor"
     fi
-    sleep 0.5
-  done
-  if [[ "$OPEN_WECHAT" == "1" ]]; then
+    if [[ "$authorized" == "1" && "$OPEN_WECHAT" == "1" ]]; then
+      adb -s "$serial" shell monkey -p com.tencent.mm -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1 || true
+    fi
+    escaped_serial="$(regex_escape "$serial")"
+    if [[ "$authorized" == "1" ]]; then
+      for attempt in {1..30}; do
+        if port_listening "$VNC_PORT" && port_listening "$NOVNC_PORT" &&
+          pgrep -u "$USER_NAME" -f "^([^[:space:]]*/)?scrcpy --serial $escaped_serial([[:space:]]|$)" >/dev/null 2>&1; then
+          break
+        fi
+        sleep 0.5
+      done
+    fi
+    status
+    return
+  fi
+  tmux new-session -d -s "$SESSION" -n "$PRIMARY_WINDOW_NAME" \
+    "cd '$ROOT' && $primary_loop_command"
+  escaped_serial="$(regex_escape "$serial")"
+  if [[ "$authorized" == "1" ]]; then
+    for attempt in {1..30}; do
+      if port_listening "$VNC_PORT" && port_listening "$NOVNC_PORT" &&
+        pgrep -u "$USER_NAME" -f "^([^[:space:]]*/)?scrcpy --serial $escaped_serial([[:space:]]|$)" >/dev/null 2>&1; then
+        break
+      fi
+      sleep 0.5
+    done
+  fi
+  if [[ "$authorized" == "1" && "$OPEN_WECHAT" == "1" ]]; then
     adb -s "$serial" shell monkey -p com.tencent.mm -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1 || true
   fi
   status

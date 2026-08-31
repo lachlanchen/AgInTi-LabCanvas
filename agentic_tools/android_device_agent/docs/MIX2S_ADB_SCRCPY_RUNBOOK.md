@@ -79,6 +79,15 @@ device reconnects. Override the interval with `ANDROID_DEVICE_RETRY_SECONDS`.
 `android_device_desktop.sh status --serial <ADB_SERIAL>` distinguishes a live
 mirror from a transport-only desktop waiting for retry.
 
+The supervisor is also authorization-aware. While `adb devices` reports
+`unauthorized`, both physical-WeChat and virtual-WeCom panes block in
+`adb wait-for-device` instead of repeatedly launching scrcpy or app-control
+commands. Once the existing computer key is accepted on the phone, both panes
+resume automatically. If scrcpy previously removed the primary tmux window but
+the dual-layout windows kept the session alive, `scripts/mix2s on` recreates the
+missing `wechat-physical` supervisor without restarting the surviving display,
+VNC, noVNC, WeChat, or WeCom resources.
+
 ## Turn the Mirror and Phone Screen Off
 
 When mobile control is not needed, use the complete off routine rather than
@@ -155,4 +164,7 @@ mirror and click the same visible controls manually.
   the retry supervisor should relaunch it when the exact device returns.
 
 - If no device is found, reconnect USB and re-run `adb devices -l`.
+- If the exact device is listed as `unauthorized`, accept the existing computer
+  key on the phone once. Do not delete or regenerate `~/.android/adbkey`; the
+  waiting supervisors will resume with the same key after authorization.
 - If multiple devices are connected, always pass `--serial`.

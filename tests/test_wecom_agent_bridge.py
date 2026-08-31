@@ -3078,7 +3078,10 @@ class WeComAgentBridgeTests(unittest.TestCase):
             '--app-match "^([^[:space:]]*/)?scrcpy --serial $serial([[:space:]]|$)"',
             android_source,
         )
-        self.assertIn("while true; do $command || true", android_source)
+        self.assertIn("PRIMARY_WINDOW_NAME", android_source)
+        self.assertIn('adb -s $(printf \'%q\' "$serial") wait-for-device', android_source)
+        self.assertIn('Restored missing $PRIMARY_WINDOW_NAME supervisor', android_source)
+        self.assertIn("waiting for the existing computer key to be accepted", android_source)
         self.assertIn("mirror: waiting for scrcpy retry", android_source)
         self.assertIn(
             "on|off|start|stop|restart|transport-restart|dual-heal|status|dual|single|wechat|wecom",
