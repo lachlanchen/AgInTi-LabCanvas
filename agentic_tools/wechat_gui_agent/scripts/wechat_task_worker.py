@@ -2514,11 +2514,27 @@ def send_errors_indicate_gui_compose_verification(errors: list[str]) -> bool:
     )
 
 
+def send_errors_indicate_wechat_android_send_failed(errors: list[str]) -> bool:
+    """Recognize a verified pre-commit Android send failure.
+
+    The native sender owns task-scoped idempotency. A normal non-zero exit is
+    safe to retry after the phone or desktop transport recovers, while an
+    explicit post-commit uncertainty must remain blocked to avoid duplicates.
+    """
+
+    text = " ".join(str(error).casefold() for error in errors)
+    return (
+        "wechat_android_send_failed" in text
+        and "android_wechat_uncertain" not in text
+    )
+
+
 def send_errors_indicate_deferable(errors: list[str]) -> bool:
     return (
         send_errors_indicate_wechat_locked(errors)
         or send_errors_indicate_wecom_auth_required(errors)
         or send_errors_indicate_stale_android_worker(errors)
+        or send_errors_indicate_wechat_android_send_failed(errors)
         or send_errors_indicate_gui_busy(errors)
         or send_errors_indicate_gui_timeout(errors)
         or send_errors_indicate_wechat_entry_required(errors)
@@ -2548,6 +2564,8 @@ def send_deferred_reason_from_errors(errors: list[str]) -> str:
         return "wecom_auth_required"
     if send_errors_indicate_stale_android_worker(errors):
         return "wecom_android_code_stale"
+    if send_errors_indicate_wechat_android_send_failed(errors):
+        return "android_send_failed"
     if send_errors_indicate_gui_busy(errors):
         return "gui_send_busy"
     if send_errors_indicate_gui_timeout(errors):
@@ -3603,6 +3621,58 @@ def ready_wecom_android_transport(*, require_preferred: bool = True) -> tuple[st
     if not isinstance(health, dict) or not health.get("ok") or not health.get("device_authorized"):
         return None
     return endpoint, token
+
+
+def personal_wechat_delivery_transport_ready() -> bool:
+    """Return true when desktop or native Android WeChat can deliver.
+
+    This probe is deliberately local and read-only. It prevents the durable
+    outbox from consuming retry attempts while the phone is unauthorized and
+    still lets a restored desktop session release the same stored result.
+    """
+
+    state_path = PRIVATE / "wechat_desktop_unlock_watchdog.state.json"
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        state = {}
+    if isinstance(state, dict):
+        observed = parse_iso_datetime(str(state.get("started_at") or ""))
+        terminal = (
+            state.get("after") if isinstance(state.get("after"), dict) else {}
+        )
+        if not terminal or not terminal.get("status"):
+            terminal = (
+                state.get("desktop")
+                if isinstance(state.get("desktop"), dict)
+                else {}
+            )
+        if (
+            observed is not None
+            and (datetime.now() - observed).total_seconds() <= 120
+            and str(terminal.get("status") or "") == "unlocked"
+        ):
+            return True
+
+    adb = shutil.which(os.environ.get("ADB", "adb"))
+    if not adb:
+        return False
+    serial = configured_wechat_unlock_serial()
+    command = [adb]
+    if serial:
+        command.extend(["-s", serial])
+    command.append("get-state")
+    try:
+        proc = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=3,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return proc.returncode == 0 and proc.stdout.strip() == "device"
 
 
 def android_text_fallback_allowed(task: dict[str, Any], result: dict[str, Any], errors: list[str]) -> bool:
@@ -7104,6 +7174,25 @@ def transport_recovery_sort_timestamp(task: dict[str, Any]) -> float:
 
 def deferred_send_backoff_elapsed(task: dict[str, Any], now: datetime) -> bool:
     reason = str(task.get("send_deferred_reason") or "")
+    if reason == "android_send_failed":
+        if not personal_wechat_delivery_transport_ready():
+            return False
+        backoff = int(
+            os.environ.get("WECHAT_WORKER_ANDROID_SEND_BACKOFF_SECONDS", "15")
+        )
+        if backoff <= 0:
+            return True
+        last = parse_iso_datetime(
+            str(
+                task.get("last_send_attempt_at")
+                or task.get("resent_at")
+                or task.get("completed_at")
+                or ""
+            )
+        )
+        if not last:
+            return True
+        return (now - last).total_seconds() >= backoff
     if reason == "gui_send_busy":
         if gui_send_lock_busy():
             return False
@@ -7203,6 +7292,8 @@ def failed_send_retryable(task: dict[str, Any], now: datetime) -> bool:
     reason = send_deferred_reason_from_errors(errors)
     if reason == "wecom_android_code_stale":
         max_retries = int(os.environ.get("WECOM_ANDROID_STALE_WORKER_RETRIES", "2"))
+    elif reason == "android_send_failed":
+        max_retries = int(os.environ.get("WECHAT_WORKER_ANDROID_SEND_MAX_RETRIES", "3"))
     elif reason == "wecom_transport_transient":
         max_retries = int(os.environ.get("WECOM_TRANSPORT_SEND_MAX_RETRIES", "3"))
     elif reason == "gui_compose_verification":
@@ -7271,6 +7362,7 @@ def transient_send_retry_limit_reached(task: dict[str, Any]) -> bool:
         "required_artifact_delivery_before_poststage",
         "gui_compose_verification",
         "wecom_android_code_stale",
+        "android_send_failed",
         "wecom_transport_transient",
     }:
         return False

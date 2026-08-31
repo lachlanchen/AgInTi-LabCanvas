@@ -12447,6 +12447,79 @@ stderr: noisy internal trace
         self.assertTrue(worker.send_errors_indicate_deferable(errors))
         self.assertEqual(worker.send_deferred_reason_from_errors(errors), "wechat_entry_required")
 
+    def test_android_precommit_send_failure_is_retryable_but_uncertainty_is_not(self) -> None:
+        worker = load_worker()
+        failed = [
+            "attempt 1: WECHAT_ANDROID_SEND_FAILED: native sender exited 1: "
+            "Android device is not authorized"
+        ]
+        uncertain = [
+            "attempt 1: ANDROID_WECHAT_UNCERTAIN: Send was tapped but delivery "
+            "could not be verified"
+        ]
+
+        self.assertTrue(worker.send_errors_indicate_deferable(failed))
+        self.assertEqual(
+            worker.send_deferred_reason_from_errors(failed),
+            "android_send_failed",
+        )
+        self.assertFalse(worker.send_errors_indicate_deferable(uncertain))
+
+    def test_android_send_failure_waits_for_transport_then_retries_stored_result(self) -> None:
+        worker = load_worker()
+        errors = [
+            "attempt 1: WECHAT_ANDROID_SEND_FAILED: native sender exited 1: "
+            "Android device is not authorized"
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "android-delivery-recovery",
+                        "chat": "lachlanchan",
+                        "status": "send_failed",
+                        "send_deferred_reason": "android_send_failed",
+                        "send_retry_count": 1,
+                        "send_errors": errors,
+                        "last_send_attempt_at": "2026-01-01T00:00:00",
+                        "result": {
+                            "message": "stored reply",
+                            "confirmation": "",
+                            "files": [],
+                        },
+                    }
+                ],
+            )
+
+            with mock.patch.object(
+                worker,
+                "personal_wechat_delivery_transport_ready",
+                return_value=False,
+            ):
+                self.assertIsNone(worker.claim_next_deferred_send(queue))
+
+            with (
+                mock.patch.object(
+                    worker,
+                    "personal_wechat_delivery_transport_ready",
+                    return_value=True,
+                ),
+                mock.patch.dict(
+                    worker.os.environ,
+                    {"WECHAT_WORKER_ANDROID_SEND_BACKOFF_SECONDS": "0"},
+                    clear=False,
+                ),
+            ):
+                claimed = worker.claim_next_deferred_send(queue)
+
+        self.assertIsNotNone(claimed)
+        assert claimed is not None
+        self.assertEqual(claimed["status"], worker.SEND_RETRYING_STATUS)
+        self.assertEqual(claimed["send_deferred_reason"], "android_send_failed")
+        self.assertEqual(claimed["send_retry_count"], 2)
+
     def test_wecom_gui_pre_send_verification_error_is_retryable(self) -> None:
         worker = load_worker()
         errors = [
