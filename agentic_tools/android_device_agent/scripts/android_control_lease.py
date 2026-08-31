@@ -280,28 +280,47 @@ def main() -> int:
     subparsers = parser.add_subparsers(dest="command_name", required=True)
     run = subparsers.add_parser(
         "run",
-        help="Run one command while holding the shared Android GUI lane.",
+        help="Run one explicit command while holding the shared Android GUI lane.",
     )
-    run.add_argument("--lock-path", type=Path, required=True)
-    run.add_argument("--priority-path", type=Path, required=True)
-    run.add_argument("--purpose", required=True)
-    run.add_argument("--timeout-seconds", type=float, default=90.0)
+    cooperative = subparsers.add_parser(
+        "run-cooperative",
+        help="Run background maintenance fairly without outranking explicit work.",
+    )
+    for command_parser in (run, cooperative):
+        command_parser.add_argument("--lock-path", type=Path, required=True)
+        command_parser.add_argument("--priority-path", type=Path, required=True)
+        command_parser.add_argument("--purpose", required=True)
+        command_parser.add_argument("--timeout-seconds", type=float, default=90.0)
+        command_parser.add_argument("argv", nargs=argparse.REMAINDER)
     run.add_argument("--lease-seconds", type=float, default=300.0)
-    run.add_argument("argv", nargs=argparse.REMAINDER)
     args = parser.parse_args()
     command = list(args.argv)
     if command and command[0] == "--":
         command = command[1:]
     if not command:
-        parser.error("run requires a command after --")
-    with priority_android_control(
-        lock_path=args.lock_path.expanduser().resolve(),
-        priority_path=args.priority_path.expanduser().resolve(),
-        purpose=args.purpose,
-        timeout_seconds=args.timeout_seconds,
-        lease_seconds=args.lease_seconds,
-    ):
-        completed = subprocess.run(command, check=False)
+        parser.error(f"{args.command_name} requires a command after --")
+    control = (
+        cooperative_android_control(
+            lock_path=args.lock_path.expanduser().resolve(),
+            priority_path=args.priority_path.expanduser().resolve(),
+            purpose=args.purpose,
+            timeout_seconds=args.timeout_seconds,
+        )
+        if args.command_name == "run-cooperative"
+        else priority_android_control(
+            lock_path=args.lock_path.expanduser().resolve(),
+            priority_path=args.priority_path.expanduser().resolve(),
+            purpose=args.purpose,
+            timeout_seconds=args.timeout_seconds,
+            lease_seconds=args.lease_seconds,
+        )
+    )
+    try:
+        with control:
+            completed = subprocess.run(command, check=False)
+    except (AndroidControlBusy, TimeoutError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 75
     return int(completed.returncode)
 
 

@@ -24,6 +24,7 @@ LAYOUT_FILE="$STATE_DIR/${NAME}.layout"
 DUAL_WINDOW_NAME="${ANDROID_DEVICE_DUAL_WINDOW_NAME:-wecom-virtual}"
 DUAL_GUARD_WINDOW_NAME="${ANDROID_DEVICE_DUAL_GUARD_WINDOW_NAME:-layout-guard}"
 DUAL_GUARD_SECONDS="${ANDROID_DEVICE_DUAL_GUARD_SECONDS:-10}"
+DUAL_GUARD_LEASE_TIMEOUT_SECONDS="${ANDROID_DEVICE_DUAL_GUARD_LEASE_TIMEOUT_SECONDS:-8}"
 DUAL_WINDOW_WIDTH="${ANDROID_DEVICE_DUAL_WINDOW_WIDTH:-680}"
 DUAL_WINDOW_HEIGHT="${ANDROID_DEVICE_DUAL_WINDOW_HEIGHT:-1360}"
 DUAL_WINDOW_Y="${ANDROID_DEVICE_DUAL_WINDOW_Y:-500}"
@@ -352,7 +353,6 @@ wait "$child_pid"'
 heal_dual_layout_once() {
   local dual_state physical_package virtual_id virtual_package serial
   need adb
-  need flock
   need tmux
   [[ "$(stored_layout)" == "dual" ]] || return 0
   tmux has-session -t "$SESSION" 2>/dev/null || return 0
@@ -360,9 +360,18 @@ heal_dual_layout_once() {
   serial="$(known_serial 2>/dev/null || true)"
   [[ -n "$serial" ]] || return 0
 
-  mkdir -p "$(dirname "$CONTROL_LOCK")"
-  exec 9>>"$CONTROL_LOCK"
-  flock -n 9 || return 0
+  if [[ "${ANDROID_DEVICE_LAYOUT_GUARD_LEASE_HELD:-0}" != "1" ]]; then
+    need python3
+    python3 "$CONTROL_LEASE" run-cooperative \
+      --lock-path "$CONTROL_LOCK" \
+      --priority-path "$CONTROL_PRIORITY" \
+      --purpose mix2s_layout_guard \
+      --timeout-seconds "$DUAL_GUARD_LEASE_TIMEOUT_SECONDS" \
+      -- env ANDROID_DEVICE_LAYOUT_GUARD_LEASE_HELD=1 \
+      "$ROOT/scripts/mix2s" dual-heal --no-wake
+    return $?
+  fi
+
   dual_state="$(dual_activity_state "$serial" 2>/dev/null || true)"
   IFS='|' read -r physical_package virtual_id virtual_package <<<"$dual_state"
   if [[ "$physical_package" == "com.tencent.mm" &&

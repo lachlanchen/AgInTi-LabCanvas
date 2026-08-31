@@ -3087,7 +3087,10 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertIn("restart_novnc_transport", android_source)
         self.assertIn("heal_dual_layout_once", android_source)
         self.assertIn("ensure_dual_guard", android_source)
-        self.assertIn('flock -n 9 || return 0', android_source)
+        self.assertIn("run-cooperative", android_source)
+        self.assertIn("mix2s_layout_guard", android_source)
+        self.assertIn("ANDROID_DEVICE_LAYOUT_GUARD_LEASE_HELD", android_source)
+        self.assertNotIn('flock -n 9 || return 0', android_source)
         self.assertIn('tmux respawn-pane -k -t "$SESSION:$DUAL_WINDOW_NAME.0"', android_source)
         self.assertIn(
             "Preserve Xvfb, scrcpy,",

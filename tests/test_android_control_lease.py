@@ -223,3 +223,30 @@ class AndroidControlLeaseTests(unittest.TestCase):
 
             self.assertEqual(returncode, 7)
             self.assertFalse(marker.exists())
+
+    def test_cooperative_cli_returns_child_status_and_cleans_waiter(self):
+        module = load_lease()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            marker = root / "priority.json"
+            lock = root / "android.lock"
+            argv = [
+                "android_control_lease.py",
+                "run-cooperative",
+                "--lock-path",
+                str(lock),
+                "--priority-path",
+                str(marker),
+                "--purpose",
+                "layout-guard-test",
+                "--",
+                sys.executable,
+                "-c",
+                "raise SystemExit(9)",
+            ]
+            with mock.patch.object(sys, "argv", argv):
+                returncode = module.main()
+
+            self.assertEqual(returncode, 9)
+            self.assertFalse(marker.exists())
+            self.assertFalse(module.cooperative_waiter_path(marker).exists())
