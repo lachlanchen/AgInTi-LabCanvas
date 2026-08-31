@@ -4289,6 +4289,52 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertIn("01-EchoMind-sent.png", screenshot)
         self.assertEqual(len(calls), 2)
 
+    def test_send_gui_message_uses_android_when_desktop_requires_entry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            proof = Path(tmp) / "android-sent.png"
+            proof.write_bytes(b"png")
+            config = {
+                "chat_name": "EchoMind",
+                "send_target": {
+                    "name": "EchoMind",
+                    "expected_title": "EchoMind",
+                },
+                "_android_task_id": "direct-reply-source-7",
+            }
+            with (
+                mock.patch.object(
+                    direct_chatops,
+                    "send_gui_message_once",
+                    side_effect=RuntimeError("WECHAT_ENTRY_REQUIRED: approve login"),
+                ) as desktop,
+                mock.patch.object(
+                    direct_chatops,
+                    "send_android_message_once",
+                    return_value=str(proof),
+                ) as android,
+            ):
+                screenshot = direct_chatops.send_gui_message(config, "hi")
+
+        self.assertEqual(screenshot, str(proof))
+        desktop.assert_called_once_with(config, "hi")
+        android.assert_called_once_with(config, "hi")
+
+    def test_direct_android_task_id_is_bound_to_exact_source(self) -> None:
+        config = {"config_id": "echomind-direct-chatops.local.json"}
+        row = self.row("hello", local_id=7, server_id="server-7")
+
+        first = direct_chatops.direct_android_task_id(config, row, kind="reply")
+        repeated = direct_chatops.direct_android_task_id(config, row, kind="reply")
+        changed = direct_chatops.direct_android_task_id(
+            config,
+            self.row("hello", local_id=8, server_id="server-8"),
+            kind="reply",
+        )
+
+        self.assertEqual(first, repeated)
+        self.assertNotEqual(first, changed)
+        self.assertTrue(first.startswith("direct-reply-"))
+
     def test_send_gui_message_allows_search_only_when_configured(self) -> None:
         calls: list[list[str]] = []
         original_run = direct_chatops.run_subprocess_group

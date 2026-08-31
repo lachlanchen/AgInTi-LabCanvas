@@ -193,6 +193,46 @@ that passed recipient confirmation and native Send remains delivered even when
 restoring the chat surface afterward would fail. Any following text component
 performs its own exact-chat guard.
 
+Personal-WeChat Android intake has two complementary lanes. Native notification
+events carry messages authored by other people. WeChat does not notify the
+account about text authored by that same account on another client, so
+`wechat_android_screen_ingress.py` watches only allowlisted chat rows and copies
+new outgoing green bubbles through WeChat's native `Copy` action. OCR locates
+the row and action, but the copied native text is the payload. The first pass
+seeds each visible route without replaying history. Both lanes write the same
+synthetic `message_999999.db`, which the ordinary per-chat monitors already
+consume.
+
+Screen-intake failures are isolated per route. An exact-title mismatch defers
+only that chat with bounded persistent backoff; a changed row signature bypasses
+the old backoff, and the other routes continue in the same poll. When OCR sees
+both a chat-title line and a message preview containing the same alias, the
+exact title line wins. This prevents one renamed or temporarily hidden chat from
+poisoning all personal-WeChat intake.
+
+The MIX 2S exposes WeChat on physical display 0 and WeCom on a virtual display,
+but Android 9 UIAutomator is not display-addressable. Consequently all phone
+GUI reads and writes share one serialized control lease and one clipboard lock.
+Passive WeCom subprocesses are interruptible when a personal-WeChat send needs
+the lane; the operation then restores the dual layout. Physical screenshots use
+the display token parsed from SurfaceFlinger, and every touch/key command names
+display 0 explicitly. Direct personal-WeChat text first tries the guarded Linux
+desktop and falls back to the exact-title Android sender only when desktop
+preflight proves that WeChat is logged out, locked, or absent. The fallback is
+idempotent per exact inbound message and requires a post-send screenshot before
+reporting success.
+
+WeCom follows the same Android limitation. Before an automated read, text send,
+or file send, the bridge temporarily moves WeCom to physical display 0 and uses
+explicit `input touchscreen -d 0` and `input keyboard -d 0` commands. The
+right-side virtual WeCom pane is a review surface, not the UIAutomator input
+surface. After the exact-chat operation, the bridge restores WeChat on the left
+and WeCom on the right. In the WeCom hierarchy, `:id/gor` is the quoted-reply
+banner, not an attachment tray; preserve it. File delivery opens the real plus
+button, accepts the titleless owned attachment modal only after exact chat-title
+verification, and uses the known lower-right plus-button fallback when the icon
+sits just below the composer's measured bounds.
+
 An ordinary inbound video attachment is save-only. Its source-local-id task may
 copy the exact MP4 into the ignored task `source_media/` directory, but it must
 remain silent and cannot enter LazyEdit, AutoPublish, transcription, return-file
@@ -223,6 +263,8 @@ Never commit these files or paste their secrets into public logs.
 | `wechat_gui_send.lock` | Global send lock for all GUI sends. |
 | `wechat_mirror.sqlite` | Evidence and message mirror. |
 | `wechat_memory.sqlite` | Structured notes, links, todos, and tags. |
+| `wechat_android_ingress/message_999999.db` | Synthetic exact-chat intake for Android notifications and native screen-copy self messages. |
+| `wechat_android_send.sqlite` | Idempotent native Android outbound component ledger. |
 | `wechat_decrypt/` | External checkout, keys, decrypted DB cache, and logs. |
 | `wechat_image_keys.local.json` | Optional private image decode keys. |
 | `codex_sessions/sessions.local.json` | Per-chat fast/worker Codex session ids. |

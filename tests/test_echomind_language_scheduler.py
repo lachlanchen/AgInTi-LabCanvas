@@ -961,6 +961,12 @@ Reading detail with corrected pinyin and romaji. Reading detail with corrected p
 
         self.assertEqual(result["status"], "sent_verified")
         self.assertEqual(send.call_count, 2)
+        task_ids = [
+            call.kwargs["task"]["id"]
+            for call in send.call_args_list
+        ]
+        self.assertEqual(task_ids[0], task_ids[1])
+        self.assertTrue(task_ids[0].startswith("echomind-daily-pdf-"))
         self.assertFalse(priority_path.exists())
         self.assertNotIn("pending_daily_pdf", state)
         self.assertEqual(state["last_daily_pdf_attempt_date"], "2026-07-22")
@@ -1099,8 +1105,9 @@ Reading detail with corrected pinyin and romaji. Reading detail with corrected p
             priority_path = Path(tmp) / "priority.json"
             observed: dict[str, object] = {}
 
-            def sender(*_args):
+            def sender(*args):
                 observed.update(json.loads(priority_path.read_text(encoding="utf-8")))
+                observed["android_task_id"] = args[0]["_android_task_id"]
                 return "sent.png"
 
             with (
@@ -1115,6 +1122,9 @@ Reading detail with corrected pinyin and romaji. Reading detail with corrected p
         self.assertEqual(screenshot, "sent.png")
         self.assertEqual(observed["chat"], "EchoMind")
         self.assertEqual(observed["owner"], "echomind_periodic_lesson")
+        self.assertTrue(
+            str(observed["android_task_id"]).startswith("echomind-periodic-")
+        )
         self.assertFalse(priority_path.exists())
 
 

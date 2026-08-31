@@ -31,6 +31,8 @@ CHAT_SYNC_MAX_TARGETS_PER_CYCLE="${WECHAT_CHAT_SYNC_MAX_TARGETS_PER_CYCLE:-0}"
 ANDROID_INGRESS="${WECHAT_ANDROID_INGRESS:-1}"
 ANDROID_INGRESS_INTERVAL="${WECHAT_ANDROID_INGRESS_INTERVAL:-1}"
 ANDROID_INGRESS_SERIAL="${WECHAT_ANDROID_INGRESS_SERIAL:-$UNLOCK_ADB_SERIAL}"
+ANDROID_SCREEN_INGRESS="${WECHAT_ANDROID_SCREEN_INGRESS:-1}"
+ANDROID_SCREEN_INGRESS_INTERVAL="${WECHAT_ANDROID_SCREEN_INGRESS_INTERVAL:-4}"
 WORKER_COUNT="${WECHAT_WORKER_COUNT:-2}"
 LOG_MAINTENANCE="${WECHAT_LOG_MAINTENANCE:-1}"
 LOG_MAINTENANCE_INTERVAL="${WECHAT_LOG_MAINTENANCE_INTERVAL:-300}"
@@ -124,6 +126,8 @@ Environment:
   WECHAT_ANDROID_INGRESS      1 to consume private Android WeChat notifications, default 1
   WECHAT_ANDROID_INGRESS_INTERVAL  Android notification poll interval, default 1 second
   WECHAT_ANDROID_INGRESS_SERIAL    optional device serial; defaults to unlock-watchdog serial
+  WECHAT_ANDROID_SCREEN_INGRESS    1 to recover self-authored text from physical display 0
+  WECHAT_ANDROID_SCREEN_INGRESS_INTERVAL  passive screen poll interval, default 4 seconds
   WECHAT_WORKER_COUNT         parallel queue workers, default 2
   WECHAT_LOG_MAINTENANCE      1 to cap generated logs/evidence, default 1
   WECHAT_LOG_MAINTENANCE_INTERVAL  retention pass interval, default 300 seconds
@@ -247,6 +251,16 @@ android_ingress_command() {
   printf ">> %q 2>&1" "$LOG_DIR/supervisor-android-ingress.log"
 }
 
+android_screen_ingress_command() {
+  local args=(python3 -u agentic_tools/wechat_gui_agent/scripts/wechat_android_screen_ingress.py --configs "$CONFIGS" --interval "$ANDROID_SCREEN_INGRESS_INTERVAL" --loop)
+  if [[ -n "$ANDROID_INGRESS_SERIAL" ]]; then
+    args+=(--serial "$ANDROID_INGRESS_SERIAL")
+  fi
+  printf "cd %q && agentic_tools/wechat_gui_agent/scripts/wechat_restart_loop.sh android-screen-ingress " "$ROOT"
+  printf "%q " "${args[@]}"
+  printf ">> %q 2>&1" "$LOG_DIR/supervisor-android-screen-ingress.log"
+}
+
 log_maintenance_command() {
   printf "cd %q && python3 -u agentic_tools/wechat_gui_agent/scripts/wechat_output_retention.py --root %q --extra-root %q --max-log-mib %q --keep-log-mib %q --log-retention-days %q --interval %q --loop" \
     "$ROOT" "$ROOT/output/wechat_gui_agent" "$ROOT/output/wecom" "$LOG_MAX_MIB" "$LOG_KEEP_MIB" "$LOG_RETENTION_DAYS" "$LOG_MAINTENANCE_INTERVAL"
@@ -311,6 +325,9 @@ ensure_runtime_windows() {
   if [[ "$ANDROID_INGRESS" != "0" ]]; then
     start_missing_window android-ingress "$(android_ingress_command)"
   fi
+  if [[ "$ANDROID_SCREEN_INGRESS" != "0" ]]; then
+    start_missing_window android-screen-ingress "$(android_screen_ingress_command)"
+  fi
   if [[ "$LOG_MAINTENANCE" != "0" ]]; then
     start_missing_window log-maintenance "$(log_maintenance_command)"
   fi
@@ -367,6 +384,9 @@ reload_worker_windows() {
   if [[ "$ANDROID_INGRESS" != "0" ]]; then
     start_missing_window android-ingress "$(android_ingress_command)"
   fi
+  if [[ "$ANDROID_SCREEN_INGRESS" != "0" ]]; then
+    start_missing_window android-screen-ingress "$(android_screen_ingress_command)"
+  fi
   if [[ "$LOG_MAINTENANCE" != "0" ]]; then
     start_missing_window log-maintenance "$(log_maintenance_command)"
   fi
@@ -392,6 +412,9 @@ reload_monitor_windows() {
   fi
   if [[ "$ANDROID_INGRESS" != "0" ]]; then
     respawn_or_new_window "android-ingress" "$(android_ingress_command)"
+  fi
+  if [[ "$ANDROID_SCREEN_INGRESS" != "0" ]]; then
+    respawn_or_new_window "android-screen-ingress" "$(android_screen_ingress_command)"
   fi
   if [[ "$LOG_MAINTENANCE" != "0" ]]; then
     start_missing_window log-maintenance "$(log_maintenance_command)"
@@ -445,6 +468,9 @@ case "$action" in
     fi
     if [[ "$ANDROID_INGRESS" != "0" ]]; then
       tmux new-window -t "$SESSION" -n android-ingress "$(android_ingress_command)"
+    fi
+    if [[ "$ANDROID_SCREEN_INGRESS" != "0" ]]; then
+      tmux new-window -t "$SESSION" -n android-screen-ingress "$(android_screen_ingress_command)"
     fi
     if [[ "$LOG_MAINTENANCE" != "0" ]]; then
       tmux new-window -t "$SESSION" -n log-maintenance "$(log_maintenance_command)"

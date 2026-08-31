@@ -27,7 +27,7 @@ ANDROID_SCRIPTS = ROOT / "agentic_tools" / "android_device_agent" / "scripts"
 if str(ANDROID_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(ANDROID_SCRIPTS))
 
-from android_control_lease import priority_android_control
+from android_control_lease import priority_android_control, serialized_android_clipboard
 from wechat_message_policy import file_transport_identity
 
 
@@ -40,6 +40,7 @@ DEFAULT_DEVICE_LOCK = (
     / ".private"
     / "wecom_android_bridge.lock"
 )
+DEFAULT_CLIPBOARD_LOCK = ANDROID_PRIVATE / "android_scrcpy_clipboard.lock"
 DEFAULT_PRIORITY = ANDROID_PRIVATE / "android_control_priority.json"
 DEFAULT_OUTPUT = ROOT / "output" / "wechat_android_send"
 DEFAULT_ANDROID_LAYOUT = (
@@ -134,6 +135,15 @@ def virtual_display_id_from_stack_list(payload: str) -> int | None:
     return max(display_ids) if display_ids else None
 
 
+def physical_display_token_from_surface_flinger(payload: str) -> str:
+    """Parse the built-in HWC display token accepted by ``screencap -d``."""
+    match = re.search(
+        r"(?m)^Display\s+(\d+)\s+\(HWC display\s+0\):",
+        str(payload or ""),
+    )
+    return match.group(1) if match else ""
+
+
 class AndroidWechatSender:
     def __init__(
         self,
@@ -154,6 +164,10 @@ class AndroidWechatSender:
         self.output_dir = output_dir
         self.max_list_pages = max_list_pages
         self.display = os.environ.get("WECHAT_ANDROID_DISPLAY", ":99")
+        self.physical_display_id = int(
+            os.environ.get("WECHAT_ANDROID_PHYSICAL_DISPLAY_ID", "0")
+        )
+        self._physical_display_token: str | None = None
         self.scrcpy_window = os.environ.get(
             "WECHAT_ANDROID_SCRCPY_WINDOW",
             "LabCanvas Android MIX 2S",
@@ -189,7 +203,7 @@ class AndroidWechatSender:
         wecom_restored = False
         purpose = f"personal_wechat_send:{self.task_id[:80]}"
         with priority_android_control(
-            lock_path=DEFAULT_DEVICE_LOCK,
+            lock_path=self.device_lock_path(),
             priority_path=DEFAULT_PRIORITY,
             purpose=purpose,
             timeout_seconds=float(os.environ.get("WECHAT_ANDROID_LOCK_TIMEOUT", "120")),
@@ -312,8 +326,64 @@ class AndroidWechatSender:
     def shell(self, command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[Any]:
         return self.adb_run(["shell", *command], **kwargs)
 
+    def keyevent(self, key: str | int, *, check: bool = True) -> subprocess.CompletedProcess[Any]:
+        """Send a key only to personal WeChat's physical Android display."""
+        return self.shell(
+            [
+                "input",
+                "keyboard",
+                "-d",
+                str(self.physical_display_id),
+                "keyevent",
+                str(key),
+            ],
+            check=check,
+        )
+
+    def tap(self, x: int, y: int, *, check: bool = True) -> subprocess.CompletedProcess[Any]:
+        """Send a touch only to personal WeChat's physical Android display."""
+        return self.shell(
+            [
+                "input",
+                "touchscreen",
+                "-d",
+                str(self.physical_display_id),
+                "tap",
+                str(int(x)),
+                str(int(y)),
+            ],
+            check=check,
+        )
+
+    def swipe(
+        self,
+        x1: int,
+        y1: int,
+        x2: int,
+        y2: int,
+        duration_ms: int,
+        *,
+        check: bool = True,
+    ) -> subprocess.CompletedProcess[Any]:
+        """Send a swipe only to personal WeChat's physical Android display."""
+        return self.shell(
+            [
+                "input",
+                "touchscreen",
+                "-d",
+                str(self.physical_display_id),
+                "swipe",
+                str(int(x1)),
+                str(int(y1)),
+                str(int(x2)),
+                str(int(y2)),
+                str(int(duration_ms)),
+            ],
+            check=check,
+        )
+
     def wake_and_launch(self) -> None:
-        self.shell(["input", "keyevent", "224"], check=False)
+        self.keyevent(224, check=False)
         self.shell(["wm", "dismiss-keyguard"], check=False)
         self.shell(["svc", "power", "stayon", "true"], check=False)
         self.collapse_system_overlays()
@@ -329,7 +399,7 @@ class AndroidWechatSender:
                 # Android Back exits the app from this activity; its visible X
                 # closes the page, after which LauncherUI can be raised again.
                 self.screenshot(f"aux-webwx-device-{attempt}")
-                self.shell(["input", "tap", "55", "132"], check=False)
+                self.tap(55, 132, check=False)
                 time.sleep(0.7)
             self.launch_wechat_main()
         package, activity = self.current_component()
@@ -411,6 +481,15 @@ class AndroidWechatSender:
         proc = self.shell(["am", "stack", "list"], timeout=15, check=False)
         return virtual_display_id_from_stack_list(str(proc.stdout or ""))
 
+    def device_lock_path(self) -> Path:
+        """Return the shared lane used by physical and virtual app control.
+
+        UIAutomator on this Android release is not display-addressable. WeCom
+        therefore visits display 0 while polling and restores the dual layout
+        afterward, so physical WeChat work must use the same device lock.
+        """
+        return DEFAULT_DEVICE_LOCK
+
     def component_on_display(self, display_id: int) -> tuple[str, str]:
         proc = self.shell(["dumpsys", "activity", "activities"], timeout=15, check=False)
         return resumed_component_on_display(str(proc.stdout or ""), display_id)
@@ -427,9 +506,28 @@ class AndroidWechatSender:
         path = self.output_dir / (
             f"{safe_slug(self.task_id)}-{safe_label}-{datetime.now().strftime('%H%M%S%f')}.png"
         )
-        proc = self.adb_run(["exec-out", "screencap", "-p"], binary=True, timeout=20)
+        token = self.physical_display_token()
+        command = ["exec-out", "screencap"]
+        if token:
+            command.extend(["-d", token])
+        command.append("-p")
+        proc = self.adb_run(command, binary=True, timeout=20)
         path.write_bytes(proc.stdout)
         return path
+
+    def physical_display_token(self) -> str:
+        """Return SurfaceFlinger's physical display token for display 0."""
+        if self._physical_display_token:
+            return self._physical_display_token
+        proc = self.shell(
+            ["dumpsys", "SurfaceFlinger", "--display-id"],
+            timeout=15,
+            check=False,
+        )
+        self._physical_display_token = physical_display_token_from_surface_flinger(
+            str(proc.stdout or "")
+        )
+        return self._physical_display_token
 
     def header_text(self, screenshot: Path) -> str:
         crop = screenshot.with_name(f"{screenshot.stem}-header.png")
@@ -466,17 +564,17 @@ class AndroidWechatSender:
             match = self.find_target_line(current)
             if match is not None and self.open_target_line(match):
                 return self.screenshot("target-open")
-            self.shell(["input", "keyevent", "4"], check=False)
+            self.keyevent(4, check=False)
             time.sleep(0.7)
             current = self.screenshot("back-to-chat-list")
-        self.shell(["input", "swipe", "540", "500", "540", "1750", "450"], check=False)
+        self.swipe(540, 500, 540, 1750, 450, check=False)
         time.sleep(0.7)
         for page in range(self.max_list_pages):
             current = self.screenshot(f"chat-list-{page}")
             match = self.find_target_line(current)
             if match is not None and self.open_target_line(match):
                 return self.screenshot("target-open")
-            self.shell(["input", "swipe", "540", "1750", "540", "500", "450"], check=False)
+            self.swipe(540, 1750, 540, 500, 450, check=False)
             time.sleep(0.7)
         raise AndroidWechatError(
             f"ANDROID_WECHAT_TITLE_GUARD: exact target {self.chat!r} was not found"
@@ -507,20 +605,28 @@ class AndroidWechatSender:
         return candidates[0]
 
     def open_target_line(self, line: OcrLine) -> bool:
-        self.shell(["input", "tap", "500", str(line.center_y)])
-        time.sleep(1.0)
-        shot = self.screenshot("opened-title-guard")
-        if self.current_chat_matches(shot):
-            return True
-        self.shell(["input", "keyevent", "4"], check=False)
-        time.sleep(0.5)
+        candidate = line
+        for attempt in range(2):
+            self.tap(500, candidate.center_y)
+            time.sleep(1.0)
+            shot = self.screenshot(f"opened-title-guard-{attempt}")
+            if self.current_chat_matches(shot):
+                return True
+            self.keyevent(4, check=False)
+            time.sleep(0.5)
+            if attempt == 0:
+                refreshed = self.screenshot("target-row-refresh")
+                replacement = self.find_target_line(refreshed)
+                if replacement is None:
+                    break
+                candidate = replacement
         return False
 
     def send_text_component(self, component: dict[str, Any]) -> dict[str, Any]:
         self.ensure_exact_chat()
         before = self.screenshot("text-before")
         width, height = image_size(before)
-        self.shell(["input", "tap", str(int(width * 0.40)), str(int(height * 0.962))])
+        self.tap(int(width * 0.40), int(height * 0.962))
         time.sleep(0.5)
         self.paste_text(component["value"])
         time.sleep(0.7)
@@ -531,11 +637,11 @@ class AndroidWechatSender:
         committed = False
         try:
             if action_point is not None:
-                self.shell(["input", "tap", str(action_point[0]), str(action_point[1])])
+                self.tap(action_point[0], action_point[1])
             elif action is not None and action.center_y > int(height * 0.45):
-                self.shell(["input", "tap", str(action.right - 5), str(action.center_y)])
+                self.tap(action.right - 5, action.center_y)
             else:
-                self.shell(["input", "tap", str(int(width * 0.91)), str(int(height * 0.603))])
+                self.tap(int(width * 0.91), int(height * 0.603))
             committed = True
             time.sleep(1.3)
             after = self.screenshot("text-sent")
@@ -555,44 +661,50 @@ class AndroidWechatSender:
             raise
 
     def paste_text(self, text: str) -> None:
-        env = {**os.environ, "DISPLAY": self.display}
-        search = run_checked(
-            ["xdotool", "search", "--name", f"^{re.escape(self.scrcpy_window)}"],
-            env=env,
-            timeout=10,
-        )
-        windows = [line.strip() for line in search.stdout.splitlines() if line.strip()]
-        if not windows:
-            raise AndroidWechatError("scrcpy window unavailable for Unicode clipboard input")
-        clipboard = subprocess.Popen(
-            ["xclip", "-selection", "clipboard", "-loops", "1"],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-            env=env,
-        )
-        assert clipboard.stdin is not None
-        clipboard.stdin.write(text.encode("utf-8"))
-        clipboard.stdin.close()
-        time.sleep(0.2)
-        run_checked(
-            [
-                "xdotool",
-                "windowfocus",
-                "--sync",
-                windows[-1],
-                "key",
-                "--clearmodifiers",
-                "ctrl+v",
-            ],
-            env=env,
-            timeout=10,
-        )
-        try:
-            clipboard.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            clipboard.terminate()
-            clipboard.wait(timeout=2)
+        with serialized_android_clipboard(
+            lock_path=DEFAULT_CLIPBOARD_LOCK,
+            timeout_seconds=8.0,
+        ):
+            env = {**os.environ, "DISPLAY": self.display}
+            search = run_checked(
+                ["xdotool", "search", "--name", f"^{re.escape(self.scrcpy_window)}"],
+                env=env,
+                timeout=10,
+            )
+            windows = [line.strip() for line in search.stdout.splitlines() if line.strip()]
+            if not windows:
+                raise AndroidWechatError(
+                    "scrcpy window unavailable for Unicode clipboard input"
+                )
+            clipboard = subprocess.Popen(
+                ["xclip", "-selection", "clipboard", "-loops", "1"],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                env=env,
+            )
+            assert clipboard.stdin is not None
+            clipboard.stdin.write(text.encode("utf-8"))
+            clipboard.stdin.close()
+            time.sleep(0.2)
+            run_checked(
+                [
+                    "xdotool",
+                    "windowfocus",
+                    "--sync",
+                    windows[-1],
+                    "key",
+                    "--clearmodifiers",
+                    "ctrl+v",
+                ],
+                env=env,
+                timeout=10,
+            )
+            try:
+                clipboard.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                clipboard.terminate()
+                clipboard.wait(timeout=2)
 
     def send_file_component(self, component: dict[str, Any]) -> dict[str, Any]:
         path = component["path"]
@@ -643,14 +755,14 @@ class AndroidWechatSender:
         time.sleep(1.0)
         confirmation = self.screenshot("file-share-confirm")
         if not self.share_confirmation_matches_target(confirmation):
-            self.shell(["input", "keyevent", "4"], check=False)
+            self.keyevent(4, check=False)
             raise AndroidWechatError("share confirmation did not name the exact target")
         action_point = green_action_center(confirmation, min_y_ratio=0.65)
         action = find_action_line(ocr_lines(confirmation), ("发送", "傳送", "Send"))
         if action_point is None and (
             action is None or action.center_y < int(image_size(confirmation)[1] * 0.65)
         ):
-            self.shell(["input", "keyevent", "4"], check=False)
+            self.keyevent(4, check=False)
             raise AndroidWechatError("share confirmation action was not visible")
         self.mark_component(
             component,
@@ -660,10 +772,10 @@ class AndroidWechatSender:
         committed = False
         try:
             if action_point is not None:
-                self.shell(["input", "tap", str(action_point[0]), str(action_point[1])])
+                self.tap(action_point[0], action_point[1])
             else:
                 assert action is not None
-                self.shell(["input", "tap", str(action.right - 5), str(action.center_y)])
+                self.tap(action.right - 5, action.center_y)
             committed = True
             time.sleep(2.5)
             after = self.screenshot("file-shared")
@@ -767,13 +879,13 @@ class AndroidWechatSender:
     def tap_share_target(self, line: OcrLine) -> None:
         """Tap the matched tile or row instead of a neighboring recent target."""
 
-        self.shell(["input", "tap", str(line.center_x), str(line.center_y)])
+        self.tap(line.center_x, line.center_y)
 
     def search_share_target(self, screenshot: Path) -> OcrLine | None:
         lines = ocr_lines(screenshot)
         search = find_action_line(lines, ("搜索", "搜尋", "Search"))
         if search is not None:
-            self.shell(["input", "tap", str(search.right - 5), str(search.center_y)])
+            self.tap(search.right - 5, search.center_y)
             time.sleep(0.5)
             self.paste_text(str(self.target.get("query") or self.aliases[0]))
             time.sleep(0.8)
@@ -782,7 +894,7 @@ class AndroidWechatSender:
                 search_results=True,
             )
         for page in range(3):
-            self.shell(["input", "swipe", "540", "1750", "540", "550", "400"], check=False)
+            self.swipe(540, 1750, 540, 550, 400, check=False)
             time.sleep(0.7)
             match = self.find_share_target_line(
                 self.screenshot(f"file-share-scroll-{page}"),

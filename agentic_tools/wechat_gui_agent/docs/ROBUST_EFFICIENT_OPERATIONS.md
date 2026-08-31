@@ -2138,6 +2138,45 @@ Stuck GUI sender:
   the file component's terminal success. Failure to navigate back afterward
   cannot downgrade that committed component or trigger desktop duplication;
   later text performs a fresh exact-chat guard independently.
+- Personal-WeChat Android intake is deliberately split by evidence source.
+  Notifications cover other participants. Self-authored messages sent from a
+  different WeChat client produce no notification, so
+  `wechat_android_screen_ingress.py` compares allowlisted chat-row signatures,
+  opens only the changed exact chat, and extracts visible outgoing bubbles with
+  native long-press `Copy`. OCR is navigation evidence only. Existing visible
+  history is seeded and never replayed. Both sources append to the established
+  synthetic `message_999999.db`, preserving the configured owner wxid and the
+  normal per-chat cursor/coverage pipeline.
+- Treat every self-message route as an independent fault domain. Persist a
+  bounded retry timestamp for an exact route/signature pair, continue polling
+  the remaining routes, and bypass the backoff immediately when that route's
+  signature changes. Prefer the exact OCR title line over a preview line that
+  merely contains the alias. Never overwrite other changed signatures when one
+  route was the only route processed.
+- The physical WeChat surface and virtual WeCom surface cannot use independent
+  UIAutomator locks on Android 9 because hierarchy reads are not
+  display-addressable. Use one shared phone-control lease and clipboard lock.
+  Screen intake is passive and yields to explicit sends; after 30 seconds
+  without a successful personal scan it may request one bounded priority pass.
+  Long passive WeCom ADB/media commands poll the priority marker and terminate
+  promptly when preempted. This is a neutral defer, not a health failure. Every
+  personal operation restores the virtual WeCom surface and dual scrcpy layout.
+- Personal-WeChat direct text delivery shares the same guarded Android sender
+  as worker delivery. The desktop remains the fast first path, but
+  `WECHAT_ENTRY_REQUIRED`, an absent desktop window, or an explicit lock proof
+  switches to Android without asking for another login. The Android component
+  key is bound to the exact inbound source row, and delivery is accepted only
+  after exact-title and post-send screenshot verification. Busy/time-out or
+  uncertain submissions remain deferred and never trigger an unsafe duplicate.
+- WeCom automation must temporarily place WeCom on physical display 0. The
+  virtual right pane remains review-only; Android 9 UIAutomator cannot target
+  it reliably. Use explicit display-0 touchscreen/keyboard input, then restore
+  the dual WeChat-left/WeCom-right layout in the same phone-control transaction.
+  Do not classify `:id/gor` as the attachment tray: it is the quoted-message
+  banner and may carry context that must survive a file send. Open the genuine
+  plus control, require the exact chat lock before accepting a titleless owned
+  attachment modal, and allow the known lower-right plus fallback when layout
+  bounds place the icon just below the composer.
 - Use `wechat_career_daily_agent.py retry --date YYYY-MM-DD --send
   --attach-report` for artifact-only career recovery. It reuses the generated
   bilingual PDFs and message and never invokes the career model.

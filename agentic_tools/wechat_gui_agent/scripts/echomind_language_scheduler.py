@@ -7,6 +7,7 @@ import argparse
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 import fcntl
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -323,6 +324,11 @@ def send_with_busy_retry(sender: Any, *args: Any, **kwargs: Any) -> Any:
 
 
 def send_scheduled_file(pdf: Path, config: dict) -> None:
+    identity = file_transport_identity(pdf)
+    task_id = (
+        "echomind-daily-pdf-"
+        f"{hashlib.sha256((pdf.name + str(identity.get('sha256') or '')).encode('utf-8')).hexdigest()[:24]}"
+    )
     with reserve_gui_send_priority("echomind_daily_pdf", config["chat_name"]):
         send_with_busy_retry(
             send_file,
@@ -330,12 +336,37 @@ def send_scheduled_file(pdf: Path, config: dict) -> None:
             config["chat_name"],
             CONFIG,
             target=config.get("send_target"),
+            task={"id": task_id},
         )
 
 
-def send_scheduled_message(config: dict, message: str) -> str:
+def send_scheduled_message(
+    config: dict,
+    message: str,
+    *,
+    generated_at: str = "",
+) -> str:
+    identity = "|".join(
+        (
+            str(config.get("chat_name") or "EchoMind"),
+            str(generated_at or "unspecified"),
+            hashlib.sha256(message.encode("utf-8")).hexdigest(),
+        )
+    )
+    send_config = dict(config)
+    send_config["_android_task_id"] = (
+        "echomind-periodic-"
+        f"{hashlib.sha256(identity.encode('utf-8')).hexdigest()[:24]}"
+    )
     with reserve_gui_send_priority("echomind_periodic_lesson", config["chat_name"]):
-        return str(send_with_busy_retry(direct.send_gui_message, config, message) or "")
+        return str(
+            send_with_busy_retry(
+                direct.send_gui_message,
+                send_config,
+                message,
+            )
+            or ""
+        )
 
 
 def seconds_until_due(state: dict, interval_seconds: int, *, now: datetime | None = None) -> float:
@@ -1882,7 +1913,11 @@ def deliver_pending_lesson(
             if periodic_lesson_delivery_recorded(config, pending):
                 delivery = {"requested": True, "status": "sent_verified_recovered"}
             else:
-                screenshot = send_scheduled_message(config, message)
+                screenshot = send_scheduled_message(
+                    config,
+                    message,
+                    generated_at=str(pending.get("generated_at") or ""),
+                )
                 if not screenshot or not Path(screenshot).is_file():
                     raise RuntimeError(f"EchoMind lesson send was not verified: {screenshot or 'no screenshot'}")
                 delivery = {"requested": True, "status": "sent_verified", "screenshot": screenshot}

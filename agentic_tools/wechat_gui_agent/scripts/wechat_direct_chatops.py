@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime, timedelta
+import hashlib
 import html
 import json
 import os
@@ -65,6 +66,7 @@ DECRYPTED = PRIVATE / "wechat_decrypt" / "decrypted"
 VENV_PYTHON = PRIVATE / "wechat_decrypt" / ".venv" / "bin" / "python"
 BACKEND_SCRIPT = ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wechat_direct_backend.py"
 DEFAULT_QUEUE = PRIVATE / "wechat_task_queue.jsonl"
+ANDROID_SEND_SCRIPT = ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wechat_android_send.py"
 ANDROID_INGRESS_DB_NAME = "message_999999.db"
 DEFAULT_ANDROID_INGRESS_DB = PRIVATE / "wechat_android_ingress" / ANDROID_INGRESS_DB_NAME
 DEFAULT_POLL_SECONDS = 0.8
@@ -606,7 +608,13 @@ def run_once(config: dict[str, Any], state: dict[str, Any], *, send: bool, no_de
             if send:
                 started = time.monotonic()
                 try:
-                    screenshot = send_gui_message(config, reply_text)
+                    send_config = dict(config)
+                    send_config["_android_task_id"] = direct_android_task_id(
+                        config,
+                        trigger_row,
+                        kind="reply",
+                    )
+                    screenshot = send_gui_message(send_config, reply_text)
                     status = "sent"
                 except Exception as exc:
                     metrics["send_error"] = str(exc)[:500]
@@ -657,7 +665,14 @@ def run_once(config: dict[str, Any], state: dict[str, Any], *, send: bool, no_de
             if send:
                 started = time.monotonic()
                 try:
-                    screenshot = send_gui_message(config, ack_text)
+                    source_row = latest_inbound_row(config, new_rows) or new_rows[-1]
+                    send_config = dict(config)
+                    send_config["_android_task_id"] = direct_android_task_id(
+                        config,
+                        source_row,
+                        kind="organizer-ack",
+                    )
+                    screenshot = send_gui_message(send_config, ack_text)
                     status = "sent"
                 except Exception as exc:
                     metrics["send_error"] = str(exc)[:500]
@@ -7836,6 +7851,114 @@ def build_route_contract(config: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def direct_android_task_id(
+    config: dict[str, Any],
+    source_row: dict[str, Any],
+    *,
+    kind: str,
+) -> str:
+    """Bind Android retry idempotency to one exact inbound message."""
+
+    identity = "|".join(
+        (
+            str(config.get("config_id") or config.get("chat_name") or "wechat"),
+            str(source_row.get("_message_db") or ""),
+            str(source_row.get("server_id") or ""),
+            str(source_row.get("local_id") or ""),
+            str(kind or "reply"),
+        )
+    )
+    digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24]
+    return f"direct-{kind}-{digest}"
+
+
+def desktop_message_can_fallback_to_android(exc: Exception | str) -> bool:
+    text = str(exc).casefold()
+    return any(
+        marker in text
+        for marker in (
+            "wechat_entry_required",
+            "no visible wechat window found",
+            "weixin for linux is locked",
+            "unlock on phone",
+        )
+    )
+
+
+def send_android_message_once(config: dict[str, Any], message: str) -> str:
+    """Send through the allowlisted phone client and return visual proof."""
+
+    target = config.get("send_target")
+    if not (isinstance(target, dict) and target.get("name")):
+        raise RuntimeError(
+            "Refusing unguarded Android WeChat send: missing send_target"
+        )
+    target_name = str(target.get("name") or config.get("chat_name") or "").strip()
+    task_id = str(config.get("_android_task_id") or "").strip()
+    if not task_id:
+        nonce = f"{target_name}|{time.time_ns()}|{hashlib.sha256(message.encode('utf-8')).hexdigest()}"
+        task_id = f"direct-adhoc-{hashlib.sha256(nonce.encode('utf-8')).hexdigest()[:24]}"
+
+    with tempfile.NamedTemporaryFile(
+        "w+", suffix=".json", encoding="utf-8", delete=False
+    ) as handle:
+        target_file = Path(handle.name)
+        json.dump({target_name: target}, handle, ensure_ascii=False)
+    command = [
+        sys.executable,
+        str(ANDROID_SEND_SCRIPT),
+        "--targets-file",
+        str(target_file),
+        "--target",
+        target_name,
+        "--task-id",
+        task_id,
+        "--message",
+        message,
+        "--send",
+    ]
+    serial = str(config.get("android_serial") or os.environ.get("ANDROID_SERIAL") or "").strip()
+    if serial:
+        command.extend(["--serial", serial])
+    try:
+        proc = run_subprocess_group(
+            command,
+            timeout=int(config.get("android_send_timeout_seconds", 300)),
+            env=os.environ.copy(),
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(
+            f"WECHAT_ANDROID_SEND_TIMEOUT: native sender timed out after {exc.timeout} seconds"
+        ) from exc
+    finally:
+        target_file.unlink(missing_ok=True)
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "").strip()
+        raise RuntimeError(
+            f"WECHAT_ANDROID_SEND_FAILED: native sender exited {proc.returncode}: "
+            f"{detail[-1200:]}"
+        )
+    try:
+        payload = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            "WECHAT_ANDROID_SEND_FAILED: sender returned invalid JSON"
+        ) from exc
+    if not isinstance(payload, dict) or not payload.get("ok"):
+        raise RuntimeError("WECHAT_ANDROID_SEND_FAILED: sender did not verify delivery")
+    text_components = [
+        item
+        for item in payload.get("components", [])
+        if isinstance(item, dict) and item.get("kind") == "text"
+    ]
+    if not text_components:
+        raise RuntimeError("WECHAT_ANDROID_SEND_FAILED: no verified text component")
+    proof = str(text_components[-1].get("after") or "").strip()
+    if not proof or not Path(proof).is_file():
+        raise RuntimeError("WECHAT_ANDROID_SEND_FAILED: visual proof is missing")
+    return proof
+
+
 def send_gui_message(config: dict[str, Any], message: str) -> str:
     if is_no_reply_control(message):
         return ""
@@ -7846,6 +7969,11 @@ def send_gui_message(config: dict[str, Any], message: str) -> str:
         try:
             return send_gui_message_once(config, message)
         except Exception as exc:
+            if (
+                os.environ.get("WECHAT_DIRECT_ANDROID_FALLBACK", "1") != "0"
+                and desktop_message_can_fallback_to_android(exc)
+            ):
+                return send_android_message_once(config, message)
             errors.append(f"attempt {attempt}: {truncate_text(str(exc), 1200)}")
             if is_deferable_send_error(exc):
                 break

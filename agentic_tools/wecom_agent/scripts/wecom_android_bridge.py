@@ -45,7 +45,7 @@ ANDROID_CONTROL_SCRIPTS = ROOT / "agentic_tools" / "android_device_agent" / "scr
 if str(ANDROID_CONTROL_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(ANDROID_CONTROL_SCRIPTS))
 
-from android_control_lease import read_active_priority
+from android_control_lease import read_active_priority, serialized_android_clipboard
 
 DEFAULT_CONFIG = PRIVATE / "wecom_android_bridge.local.json"
 DEFAULT_STATE_DB = PRIVATE / "wecom_android_bridge.local.sqlite"
@@ -58,6 +58,13 @@ DEFAULT_CONTROL_PRIORITY = (
     / "android_device_agent"
     / ".private"
     / "android_control_priority.json"
+)
+DEFAULT_CLIPBOARD_LOCK = (
+    ROOT
+    / "agentic_tools"
+    / "android_device_agent"
+    / ".private"
+    / "android_scrcpy_clipboard.lock"
 )
 DEFAULT_ANDROID_LAYOUT = (
     ROOT / "output" / "android_device_agent" / "android-mix2s.layout"
@@ -784,15 +791,43 @@ def find_attachment_button_nodes(
         )
         return vertical_overlap > 0 and bounds[0] >= composer_bounds[2] - 8
 
+    known_all = find_nodes_by_resource_suffix(
+        root,
+        ATTACHMENT_RESOURCE_SUFFIXES,
+        package=package,
+    )
     known = [
         node
-        for node in find_nodes_by_resource_suffix(
-            root,
-            ATTACHMENT_RESOURCE_SUFFIXES,
-            package=package,
-        )
+        for node in known_all
         if beside_composer(node)
     ]
+    if not known and known_all:
+        try:
+            screen = parse_bounds(root.attrib.get("bounds", ""))
+        except BridgeError:
+            right = 0
+            bottom = 0
+            for node in root.iter("node"):
+                try:
+                    bounds = parse_bounds(node.attrib.get("bounds", ""))
+                except BridgeError:
+                    continue
+                right = max(right, bounds[2])
+                bottom = max(bottom, bounds[3])
+            screen = (0, 0, right or 1080, bottom or 2160)
+        width = max(1, screen[2] - screen[0])
+        height = max(1, screen[3] - screen[1])
+        known = []
+        for node in known_all:
+            try:
+                bounds = parse_bounds(node.attrib.get("bounds", ""))
+            except BridgeError:
+                continue
+            if (
+                bounds[0] >= screen[0] + int(width * 0.65)
+                and bounds[1] >= screen[1] + int(height * 0.65)
+            ):
+                known.append(node)
     candidates = known
     if not candidates and composer_bounds != (0, 0, 0, 0):
         candidates = [
@@ -1848,7 +1883,9 @@ class AndroidBridge:
     def dual_virtual_display_id(self) -> int | None:
         if not self.dual_layout_requested():
             return None
-        output = self.adb_shell("am", "stack", "list", timeout=15, check=False)
+        output = str(
+            self.adb_shell("am", "stack", "list", timeout=15, check=False)
+        )
         display_ids = {
             int(value)
             for value in re.findall(r"\bdisplayId=(\d+)\b", output)
@@ -1973,21 +2010,72 @@ class AndroidBridge:
         input_data: str | bytes | None = None,
         env: dict[str, str] | None = None,
     ) -> subprocess.CompletedProcess[Any]:
-        if bool(getattr(self._passive_control, "active", False)):
+        passive = bool(getattr(self._passive_control, "active", False))
+        if passive:
             self.assert_passive_control_available()
-        process = subprocess.run(
-            command,
-            input=input_data,
-            capture_output=True,
-            text=text,
-            timeout=timeout,
-            check=False,
-            env=env,
-        )
+        if passive and input_data is None:
+            process = self.run_interruptible_passive(
+                command,
+                timeout=timeout,
+                text=text,
+                env=env,
+            )
+        else:
+            process = subprocess.run(
+                command,
+                input=input_data,
+                capture_output=True,
+                text=text,
+                timeout=timeout,
+                check=False,
+                env=env,
+            )
         if check and process.returncode != 0:
             stderr = process.stderr if text else process.stderr.decode("utf-8", errors="replace")
             raise BridgeError(f"command failed ({command[0]}): {str(stderr)[-500:]}")
         return process
+
+    def run_interruptible_passive(
+        self,
+        command: list[str],
+        *,
+        timeout: float,
+        text: bool,
+        env: dict[str, str] | None,
+    ) -> subprocess.CompletedProcess[Any]:
+        """Run passive work while checking for higher-priority GUI requests."""
+        started = time.monotonic()
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=text,
+            env=env,
+        )
+        try:
+            while True:
+                elapsed = time.monotonic() - started
+                remaining = float(timeout) - elapsed
+                if remaining <= 0:
+                    raise subprocess.TimeoutExpired(command, timeout)
+                try:
+                    stdout, stderr = process.communicate(timeout=min(0.25, remaining))
+                    return subprocess.CompletedProcess(
+                        command,
+                        int(process.returncode or 0),
+                        stdout,
+                        stderr,
+                    )
+                except subprocess.TimeoutExpired:
+                    self.assert_passive_control_available()
+        except (BridgeError, subprocess.TimeoutExpired):
+            process.terminate()
+            try:
+                process.communicate(timeout=2.0)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.communicate()
+            raise
 
     def adb(self, *args: str, timeout: float = 30, check: bool = True) -> subprocess.CompletedProcess[str]:
         if not self.serial:
@@ -1996,6 +2084,64 @@ class AndroidBridge:
 
     def adb_shell(self, *args: str, timeout: float = 30, check: bool = True) -> str:
         return self.adb("shell", *args, timeout=timeout, check=check).stdout
+
+    def input_tap(self, x: int, y: int, *, check: bool = True) -> str:
+        return self.adb_shell(
+            "input",
+            "touchscreen",
+            "-d",
+            "0",
+            "tap",
+            str(int(x)),
+            str(int(y)),
+            check=check,
+        )
+
+    def input_swipe(
+        self,
+        x1: int,
+        y1: int,
+        x2: int,
+        y2: int,
+        duration_ms: int,
+        *,
+        check: bool = True,
+    ) -> str:
+        return self.adb_shell(
+            "input",
+            "touchscreen",
+            "-d",
+            "0",
+            "swipe",
+            str(int(x1)),
+            str(int(y1)),
+            str(int(x2)),
+            str(int(y2)),
+            str(int(duration_ms)),
+            check=check,
+        )
+
+    def input_keyevent(self, key: str | int, *, check: bool = True) -> str:
+        return self.adb_shell(
+            "input",
+            "keyboard",
+            "-d",
+            "0",
+            "keyevent",
+            str(key),
+            check=check,
+        )
+
+    def input_text(self, value: str, *, check: bool = True) -> str:
+        return self.adb_shell(
+            "input",
+            "keyboard",
+            "-d",
+            "0",
+            "text",
+            value,
+            check=check,
+        )
 
     def capture_raw_screenshot(self) -> RawScreenshot:
         process = self.run(
@@ -2158,19 +2304,17 @@ class AndroidBridge:
                 break
 
     def current_package(self) -> str:
-        virtual_display = self.dual_virtual_display_id()
-        if virtual_display is not None:
-            activities = self.adb_shell(
-                "dumpsys", "activity", "activities", timeout=20, check=False
-            )
-            component = resumed_component_on_display(activities, virtual_display)
+        activities = self.adb_shell(
+            "dumpsys", "activity", "activities", timeout=20, check=False
+        )
+        component = resumed_component_on_display(activities, 0)
+        if component:
             return component.partition("/")[0]
         output = self.adb_shell("dumpsys", "window", "windows", timeout=20, check=False)
         match = re.search(r"mCurrentFocus=.*?\s([A-Za-z0-9_.]+)/", output)
         if not match:
             match = re.search(r"mFocusedApp=.*?\s([A-Za-z0-9_.]+)/", output)
         if not match:
-            activities = self.adb_shell("dumpsys", "activity", "activities", timeout=20, check=False)
             match = re.search(r"mResumedActivity:.*?\s([A-Za-z0-9_.]+)/", activities)
             if not match:
                 match = re.search(r"topResumedActivity=.*?\s([A-Za-z0-9_.]+)/", activities)
@@ -2182,9 +2326,9 @@ class AndroidBridge:
                 "dumpsys", "activity", "activities", timeout=20, check=False
             )
         )
-        virtual_display = self.dual_virtual_display_id()
-        if virtual_display is not None:
-            return resumed_component_on_display(output, virtual_display)
+        component = resumed_component_on_display(output, 0)
+        if component:
+            return component
         for pattern in (
             r"mResumedActivity:.*?\s([A-Za-z0-9_.$]+/[A-Za-z0-9_.$]+)",
             r"topResumedActivity=.*?\s([A-Za-z0-9_.$]+/[A-Za-z0-9_.$]+)",
@@ -2219,8 +2363,6 @@ class AndroidBridge:
 
     def wecom_is_foreground(self, root: ET.Element | None = None) -> bool:
         """Use the focused Android activity when UIAutomator metadata is stale."""
-        if self.dual_layout_requested():
-            return self.current_package() == self.package
         if root is not None and self.package in hierarchy_packages(root):
             return True
         return self.current_package() == self.package
@@ -2246,13 +2388,20 @@ class AndroidBridge:
             self.config.get("launch_component")
             or f"{self.package}/{WECOM_LAUNCH_COMPONENT}"
         )
-        command = ["am", "start"]
-        virtual_display = self.dual_virtual_display_id()
-        if virtual_display is not None:
-            command.extend(
-                ["--display", str(virtual_display), "-f", "0x04000000"]
-            )
-        command.extend(["-n", component])
+        # UIAutomator on this Android release is not display-addressable.
+        # WeCom therefore visits the physical automation lane while the shared
+        # lock is held, then restore_dual_layout_locked() returns it to the
+        # right-hand review pane.
+        command = [
+            "am",
+            "start",
+            "--display",
+            "0",
+            "-f",
+            "0x04000000",
+            "-n",
+            component,
+        ]
         self.adb_shell(*command, timeout=30)
 
     def launch_wecom(self) -> None:
@@ -2402,11 +2551,11 @@ class AndroidBridge:
     def tap_node(self, root: ET.Element, node: ET.Element) -> None:
         target = clickable_ancestor(root, node)
         x, y = bounds_center(target.attrib.get("bounds", ""))
-        self.adb_shell("input", "tap", str(x), str(y))
+        self.input_tap(x, y)
 
     def press_back(self) -> None:
         self.ensure_navigation_allowed()
-        self.adb_shell("input", "keyevent", "4", check=False)
+        self.input_keyevent(4, check=False)
         time.sleep(0.6)
 
     def dismiss_anr_dialog(self, root: ET.Element) -> bool:
@@ -2536,6 +2685,17 @@ class AndroidBridge:
                         self._poll_health.get("consecutive_poll_failures") or 0
                     )
                     + 1,
+                }
+            )
+
+    def record_poll_deferred(self) -> None:
+        """Finish a poll preempted by an explicit phone action without a fault."""
+        with self._health_lock:
+            self._poll_health.update(
+                {
+                    "last_poll_attempt_at": now_iso(),
+                    "last_poll_error": "",
+                    "poll_in_progress": False,
                 }
             )
 
@@ -2795,7 +2955,7 @@ class AndroidBridge:
         for _ in range(max(1, max_swipes)):
             # Swipe the viewport upward to advance toward newer rows. Keep
             # both endpoints inside the message surface (jcp).
-            self.adb_shell("input", "swipe", "520", "1600", "520", "400", "280")
+            self.input_swipe(520, 1600, 520, 400, 280)
             time.sleep(0.35)
             current = self.dump_hierarchy(attempts=3)
             if not chat_title_matches(visible_chat_title(current), chat):
@@ -2896,28 +3056,40 @@ class AndroidBridge:
     def paste_text(self, text: str) -> None:
         if not text:
             return
-        env, window = self.scrcpy_window_id()
-        process = subprocess.Popen(
-            ["xclip", "-selection", "clipboard", "-loops", "1"],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-            env=env,
-        )
-        assert process.stdin is not None
-        process.stdin.write(text.encode("utf-8"))
-        process.stdin.close()
-        time.sleep(0.2)
-        self.run(
-            ["xdotool", "windowfocus", "--sync", window, "key", "--clearmodifiers", "ctrl+v"],
-            timeout=10,
-            env=env,
-        )
-        try:
-            process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            process.terminate()
-            process.wait(timeout=2)
+        with serialized_android_clipboard(
+            lock_path=DEFAULT_CLIPBOARD_LOCK,
+            timeout_seconds=8.0,
+        ):
+            env, window = self.scrcpy_window_id()
+            process = subprocess.Popen(
+                ["xclip", "-selection", "clipboard", "-loops", "1"],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                env=env,
+            )
+            assert process.stdin is not None
+            process.stdin.write(text.encode("utf-8"))
+            process.stdin.close()
+            time.sleep(0.2)
+            self.run(
+                [
+                    "xdotool",
+                    "windowfocus",
+                    "--sync",
+                    window,
+                    "key",
+                    "--clearmodifiers",
+                    "ctrl+v",
+                ],
+                timeout=10,
+                env=env,
+            )
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.terminate()
+                process.wait(timeout=2)
 
     def clear_automation_draft(self, chat: str) -> bool:
         """Leave the chat with an empty composer after our own failed write."""
@@ -3004,7 +3176,7 @@ class AndroidBridge:
         expected_count: int,
         prefer_exact_decoration: bool = True,
     ) -> None:
-        self.adb_shell("input", "text", "@")
+        self.input_text("@")
         picker = self.mention_picker()
         matches = self.exact_mention_rows(
             picker,
@@ -3537,6 +3709,12 @@ class AndroidBridge:
     def wait_for_package(self, package: str, *, timeout: float = 15) -> None:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
+            try:
+                root = self.dump_hierarchy(attempts=2)
+            except BridgeError:
+                root = None
+            if root is not None and package in hierarchy_packages(root):
+                return
             if self.current_package() == package:
                 return
             time.sleep(0.4)
@@ -3558,6 +3736,14 @@ class AndroidBridge:
         """
         current = root
         for _ in range(max(1, attempts)):
+            title = visible_chat_title(current)
+            if title and not chat_title_matches(title, chat):
+                raise BridgeError(
+                    f"WeCom changed chat while opening the file sheet: {title!r}"
+                )
+            file_nodes = find_nodes(current, text="文件", package=self.package)
+            if file_nodes:
+                return current, file_nodes[-1]
             plus = find_attachment_button_nodes(
                 current,
                 package=self.package,
@@ -3570,15 +3756,27 @@ class AndroidBridge:
             else:
                 # Signed WeCom 5.0.10 exposes the plus icon with a stable
                 # resource id and bounds but marks it non-clickable. Its broad
-                # clickable parent spans the whole composer, so tapping that
-                # parent's centre would focus text instead of opening files.
+                # clickable parent spans the whole composer.
                 x, y = bounds_center(attachment_button.attrib.get("bounds", ""))
-                self.adb_shell("input", "tap", str(x), str(y))
+                self.input_tap(x, y)
             for _ in range(max(1, polls_per_attempt)):
                 time.sleep(0.25)
-                current = self.ensure_chat_identity(chat)
+                current = self.dump_hierarchy(attempts=2)
+                title = visible_chat_title(current)
+                if title and not chat_title_matches(title, chat):
+                    raise BridgeError(
+                        f"WeCom changed chat while opening the file sheet: {title!r}"
+                    )
                 file_nodes = find_nodes(current, text="文件", package=self.package)
                 if file_nodes:
+                    if self.package not in hierarchy_packages(current):
+                        raise BridgeError(
+                            "WeCom file sheet is not owned by the expected package"
+                        )
+                    # The signed 5.0.10 client hides the title beneath its
+                    # attachment modal. The exact chat was verified before the
+                    # tap and remains protected by the shared GUI lock; a
+                    # visible non-matching title above is still rejected.
                     return current, file_nodes[-1]
         raise BridgeError("WeCom file action is unavailable after attachment-menu retry")
 
@@ -4158,7 +4356,7 @@ class AndroidBridge:
                 last_error = str(exc)
             if page >= pages:
                 break
-            self.adb_shell("input", "swipe", "520", "350", "520", "1450", "500")
+            self.input_swipe(520, 350, 520, 1450, 500)
             time.sleep(0.55)
             root = self.dump_hierarchy(attempts=3)
             if not chat_title_matches(visible_chat_title(root), chat):
@@ -4420,7 +4618,7 @@ class AndroidBridge:
                 last_error = str(exc)
             if page >= pages:
                 break
-            self.adb_shell("input", "swipe", "520", "350", "520", "1450", "500")
+            self.input_swipe(520, 350, 520, 1450, 500)
             time.sleep(0.55)
             root = self.dump_hierarchy(attempts=3)
             if not chat_title_matches(visible_chat_title(root), chat):
@@ -4723,15 +4921,7 @@ class AndroidBridge:
         x, y = bounds_center(viewer.attrib.get("bounds", ""))
         baseline_id = self.media_store_max_image_id()
         started_at = time.time()
-        self.adb_shell(
-            "input",
-            "swipe",
-            str(x),
-            str(y),
-            str(x),
-            str(y),
-            "900",
-        )
+        self.input_swipe(x, y, x, y, 900)
         deadline = time.monotonic() + 8.0
         action_root: ET.Element | None = None
         save_nodes: list[ET.Element] = []
@@ -4913,7 +5103,7 @@ class AndroidBridge:
         long_content_index: dict[tuple[str, str, str], tuple[int, int]] = {}
         for page_index in range(pages):
             # Pull the viewport downward to walk backward through older rows.
-            self.adb_shell("input", "swipe", "520", "350", "520", "1450", "500")
+            self.input_swipe(520, 350, 520, 1450, 500)
             time.sleep(0.55)
             root = self.dump_hierarchy(attempts=3)
             if not chat_title_matches(visible_chat_title(root), chat):
@@ -5805,6 +5995,9 @@ class AndroidBridge:
                     result = self.poll_cycle()
                 except Exception as exc:
                     error_text = f"{type(exc).__name__}: {str(exc)[:500]}"
+                    if "WECOM_ANDROID_PREEMPTED:" in error_text:
+                        self.record_poll_deferred()
+                        continue
                     self.record_poll_failure(error_text)
                     recovery: dict[str, Any] | None = None
                     if self.surface_failure_text(error_text):

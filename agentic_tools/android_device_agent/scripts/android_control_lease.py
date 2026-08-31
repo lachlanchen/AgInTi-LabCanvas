@@ -16,6 +16,10 @@ import time
 from typing import Any, Iterator
 
 
+class AndroidControlBusy(RuntimeError):
+    """Raised when background Android work must yield to an explicit action."""
+
+
 def process_is_alive(pid: int) -> bool:
     if pid <= 0:
         return False
@@ -129,6 +133,114 @@ def priority_android_control(
                 fcntl.flock(handle, fcntl.LOCK_UN)
             finally:
                 remove_priority(priority_path, token=token)
+
+
+@contextmanager
+def passive_android_control(
+    *,
+    lock_path: Path,
+    priority_path: Path,
+    purpose: str,
+) -> Iterator[dict[str, Any]]:
+    """Acquire the shared GUI lane only when no explicit request is waiting.
+
+    Passive screen readers must never publish their own priority claim or wait
+    ahead of a user-requested send. The second priority check closes the race
+    between the initial observation and acquiring the file lock.
+    """
+    active = read_active_priority(priority_path, exclude_pid=os.getpid())
+    if active is not None:
+        raise AndroidControlBusy(
+            f"ANDROID_CONTROL_PRIORITY: {active.get('purpose') or 'explicit request'}"
+        )
+    lock_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    with lock_path.open("a+", encoding="utf-8") as handle:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise AndroidControlBusy("ANDROID_CONTROL_BUSY: shared GUI lane is active") from exc
+        try:
+            active = read_active_priority(priority_path, exclude_pid=os.getpid())
+            if active is not None:
+                raise AndroidControlBusy(
+                    f"ANDROID_CONTROL_PRIORITY: {active.get('purpose') or 'explicit request'}"
+                )
+            yield {"purpose": str(purpose or "passive_android_control")[:160]}
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+
+
+@contextmanager
+def cooperative_android_control(
+    *,
+    lock_path: Path,
+    priority_path: Path,
+    purpose: str,
+    timeout_seconds: float = 8.0,
+) -> Iterator[dict[str, Any]]:
+    """Wait briefly for the background GUI lane without outranking user work.
+
+    This is for recurring readers that must eventually get a turn but must not
+    publish a priority claim. It closes the starvation gap left by a purely
+    nonblocking passive probe while continuing to yield to explicit sends.
+    """
+    timeout = max(0.1, float(timeout_seconds))
+    deadline = time.monotonic() + timeout
+    lock_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    with lock_path.open("a+", encoding="utf-8") as handle:
+        while True:
+            active = read_active_priority(priority_path, exclude_pid=os.getpid())
+            if active is not None:
+                raise AndroidControlBusy(
+                    f"ANDROID_CONTROL_PRIORITY: "
+                    f"{active.get('purpose') or 'explicit request'}"
+                )
+            try:
+                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError as exc:
+                if time.monotonic() >= deadline:
+                    raise AndroidControlBusy(
+                        f"ANDROID_CONTROL_BUSY: shared GUI lane exceeded {timeout:.1f}s"
+                    ) from exc
+                time.sleep(0.1)
+        try:
+            active = read_active_priority(priority_path, exclude_pid=os.getpid())
+            if active is not None:
+                raise AndroidControlBusy(
+                    f"ANDROID_CONTROL_PRIORITY: "
+                    f"{active.get('purpose') or 'explicit request'}"
+                )
+            yield {"purpose": str(purpose or "cooperative_android_control")[:160]}
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+
+
+@contextmanager
+def serialized_android_clipboard(
+    *,
+    lock_path: Path,
+    timeout_seconds: float = 5.0,
+) -> Iterator[None]:
+    """Serialize the host clipboard shared by physical and virtual scrcpy."""
+    timeout = max(0.1, float(timeout_seconds))
+    lock_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    deadline = time.monotonic() + timeout
+    with lock_path.open("a+", encoding="utf-8") as handle:
+        while True:
+            try:
+                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError as exc:
+                if time.monotonic() >= deadline:
+                    raise AndroidControlBusy(
+                        f"ANDROID_CLIPBOARD_BUSY: exceeded {timeout:.1f}s"
+                    ) from exc
+                time.sleep(0.05)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
 
 
 def main() -> int:

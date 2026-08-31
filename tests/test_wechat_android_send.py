@@ -153,7 +153,40 @@ class WechatAndroidSendTests(unittest.TestCase):
                 result = sender.ensure_exact_chat()
 
             self.assertEqual(result, screen)
-            shell.assert_called_once_with(["input", "tap", "500", str(match.center_y)])
+            shell.assert_called_once_with(
+                ["input", "touchscreen", "-d", "0", "tap", "500", str(match.center_y)],
+                check=True,
+            )
+
+    def test_open_target_relocates_row_after_transient_wrong_chat(self):
+        module = load_sender()
+        with tempfile.TemporaryDirectory() as tmp:
+            sender = module.AndroidWechatSender(
+                adb="adb",
+                serial="device",
+                target={"name": "LazyResearch", "expected_title": "LazyResearch"},
+                task_id="task-row-refresh",
+                state_db=Path(tmp) / "state.sqlite",
+                output_dir=Path(tmp) / "output",
+            )
+            original = module.OcrLine("LazyResearch", 190, 1800, 510, 1860)
+            refreshed = module.OcrLine("LazyResearch", 190, 1380, 510, 1440)
+            with mock.patch.object(sender, "tap") as tap, mock.patch.object(
+                sender, "screenshot", side_effect=[Path("wrong.png"), Path("list.png"), Path("right.png")]
+            ), mock.patch.object(
+                sender, "current_chat_matches", side_effect=[False, True]
+            ), mock.patch.object(
+                sender, "find_target_line", return_value=refreshed
+            ), mock.patch.object(sender, "keyevent"), mock.patch.object(
+                sender_module_time(module), "sleep"
+            ):
+                matched = sender.open_target_line(original)
+
+            self.assertTrue(matched)
+            self.assertEqual(
+                tap.call_args_list,
+                [mock.call(500, original.center_y), mock.call(500, refreshed.center_y)],
+            )
 
     def test_short_chat_title_uses_exact_centered_header_line(self):
         module = load_sender()
@@ -274,6 +307,8 @@ class WechatAndroidSendTests(unittest.TestCase):
             )
             with mock.patch.object(module, "require_tools"), mock.patch.object(
                 module, "priority_android_control", return_value=nullcontext()
+            ), mock.patch.object(
+                sender, "device_lock_path", return_value=root / "physical.lock"
             ), mock.patch.object(sender, "wake_and_launch"), mock.patch.object(
                 sender, "ensure_exact_chat"
             ) as ensure, mock.patch.object(
@@ -304,6 +339,8 @@ class WechatAndroidSendTests(unittest.TestCase):
             )
             with mock.patch.object(module, "require_tools"), mock.patch.object(
                 module, "priority_android_control", return_value=nullcontext()
+            ), mock.patch.object(
+                sender, "device_lock_path", return_value=root / "physical.lock"
             ), mock.patch.object(
                 sender,
                 "wake_and_launch",
@@ -380,6 +417,84 @@ Display #0 (activities from top to bottom):
             module.virtual_display_id_from_stack_list("displayId=0 displayId=7"),
             7,
         )
+
+    def test_dual_display_uses_shared_android_ui_lock(self):
+        module = load_sender()
+        with tempfile.TemporaryDirectory() as tmp:
+            sender = module.AndroidWechatSender(
+                adb="adb",
+                serial="device",
+                target={"name": "EchoMind", "expected_title": "EchoMind"},
+                task_id="task-dual-lock",
+                state_db=Path(tmp) / "state.sqlite",
+                output_dir=Path(tmp) / "output",
+            )
+            with mock.patch.object(
+                sender, "dual_virtual_display_id", return_value=18
+            ), mock.patch.object(
+                sender,
+                "component_on_display",
+                return_value=(module.WECOM_PACKAGE, ".launch.WwMainActivity"),
+            ):
+                lock_path = sender.device_lock_path()
+
+            self.assertEqual(lock_path, module.DEFAULT_DEVICE_LOCK)
+
+    def test_physical_display_token_parser_and_screenshot_are_display_bound(self):
+        module = load_sender()
+        payload = (
+            'Display 19260591652815745 (HWC display 0): port=129 '
+            'pnpId=QCM displayName="jdi fhd video"\n'
+        )
+        self.assertEqual(
+            module.physical_display_token_from_surface_flinger(payload),
+            "19260591652815745",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            sender = module.AndroidWechatSender(
+                adb="adb",
+                serial="device",
+                target={"name": "EchoMind", "expected_title": "EchoMind"},
+                task_id="task-physical-screen",
+                state_db=Path(tmp) / "state.sqlite",
+                output_dir=Path(tmp) / "output",
+            )
+            with mock.patch.object(
+                sender,
+                "physical_display_token",
+                return_value="19260591652815745",
+            ), mock.patch.object(sender, "adb_run") as adb_run:
+                adb_run.return_value.stdout = b"png"
+                path = sender.screenshot("bound")
+
+            self.assertEqual(path.read_bytes(), b"png")
+            adb_run.assert_called_once_with(
+                [
+                    "exec-out",
+                    "screencap",
+                    "-d",
+                    "19260591652815745",
+                    "-p",
+                ],
+                binary=True,
+                timeout=20,
+            )
+
+    def test_single_display_keeps_shared_wecom_lock(self):
+        module = load_sender()
+        with tempfile.TemporaryDirectory() as tmp:
+            sender = module.AndroidWechatSender(
+                adb="adb",
+                serial="device",
+                target={"name": "EchoMind", "expected_title": "EchoMind"},
+                task_id="task-single-lock",
+                state_db=Path(tmp) / "state.sqlite",
+                output_dir=Path(tmp) / "output",
+            )
+            with mock.patch.object(sender, "dual_virtual_display_id", return_value=None):
+                lock_path = sender.device_lock_path()
+
+            self.assertEqual(lock_path, module.DEFAULT_DEVICE_LOCK)
 
     def test_unknown_target_is_rejected_by_allowlist(self):
         module = load_sender()
@@ -490,7 +605,10 @@ Display #0 (activities from top to bottom):
             with mock.patch.object(sender, "shell") as shell:
                 sender.tap_share_target(line)
 
-            shell.assert_called_once_with(["input", "tap", "700", "693"])
+            shell.assert_called_once_with(
+                ["input", "touchscreen", "-d", "0", "tap", "700", "693"],
+                check=True,
+            )
 
     def test_share_confirmation_rejects_search_results_screen(self):
         module = load_sender()
@@ -578,7 +696,55 @@ Display #0 (activities from top to bottom):
                 ),
                 2,
             )
-            shell.assert_any_call(["input", "tap", "55", "132"], check=False)
+            shell.assert_any_call(
+                ["input", "touchscreen", "-d", "0", "tap", "55", "132"],
+                check=False,
+            )
+
+    def test_phone_input_is_explicitly_bound_to_physical_display_zero(self):
+        module = load_sender()
+        with tempfile.TemporaryDirectory() as tmp:
+            sender = module.AndroidWechatSender(
+                adb="adb",
+                serial="device",
+                target={"name": "EchoMind", "expected_title": "EchoMind"},
+                task_id="task-display",
+                state_db=Path(tmp) / "state.sqlite",
+                output_dir=Path(tmp) / "output",
+            )
+            with mock.patch.object(sender, "shell") as shell:
+                sender.keyevent(4, check=False)
+                sender.tap(12, 34)
+                sender.swipe(1, 2, 3, 4, 500, check=False)
+
+            self.assertEqual(
+                shell.call_args_list,
+                [
+                    mock.call(
+                        ["input", "keyboard", "-d", "0", "keyevent", "4"],
+                        check=False,
+                    ),
+                    mock.call(
+                        ["input", "touchscreen", "-d", "0", "tap", "12", "34"],
+                        check=True,
+                    ),
+                    mock.call(
+                        [
+                            "input",
+                            "touchscreen",
+                            "-d",
+                            "0",
+                            "swipe",
+                            "1",
+                            "2",
+                            "3",
+                            "4",
+                            "500",
+                        ],
+                        check=False,
+                    ),
+                ],
+            )
 
     def test_collapse_system_overlays_is_fail_closed_visual_normalization(self):
         module = load_sender()

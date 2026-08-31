@@ -60,6 +60,24 @@ def load_ingest():
 
 
 class WeComAndroidBridgeTests(unittest.TestCase):
+    def test_passive_subprocess_is_interrupted_by_external_priority(self) -> None:
+        bridge = load_bridge()
+        runtime = object.__new__(bridge.AndroidBridge)
+        runtime._passive_control = bridge.threading.local()
+        runtime._passive_control.active = True
+        runtime.assert_passive_control_available = mock.Mock(
+            side_effect=[None, bridge.BridgeError("WECOM_ANDROID_PREEMPTED: personal_wechat")]
+        )
+
+        started = time.monotonic()
+        with self.assertRaisesRegex(bridge.BridgeError, "personal_wechat"):
+            runtime.run(
+                [sys.executable, "-c", "import time; time.sleep(10)"],
+                timeout=20,
+            )
+
+        self.assertLess(time.monotonic() - started, 2.0)
+
     def test_resumed_component_is_scoped_to_exact_display(self) -> None:
         bridge = load_bridge()
         payload = """
@@ -90,15 +108,29 @@ Display #11 (activities from top to bottom):
         runtime = object.__new__(bridge.AndroidBridge)
         runtime.package = bridge.PACKAGE
         runtime.adb_shell = mock.Mock(return_value=payload)
+        runtime.dump_hierarchy = mock.Mock(
+            side_effect=bridge.BridgeError("hierarchy unavailable")
+        )
 
         self.assertFalse(runtime.dual_virtual_wecom_drawn(11))
 
-    def test_start_wecom_targets_virtual_display_in_dual_mode(self) -> None:
+    def test_dual_virtual_health_requires_wecom_on_exact_virtual_display(self) -> None:
+        bridge = load_bridge()
+        payload = """
+Display #11 (activities from top to bottom):
+    mResumedActivity: ActivityRecord{b u0 com.tencent.wework/.launch.WwMainActivity t2}
+"""
+        runtime = object.__new__(bridge.AndroidBridge)
+        runtime.package = bridge.PACKAGE
+        runtime.adb_shell = mock.Mock(return_value=payload)
+
+        self.assertTrue(runtime.dual_virtual_wecom_drawn(11))
+
+    def test_start_wecom_targets_physical_automation_lane(self) -> None:
         bridge = load_bridge()
         runtime = object.__new__(bridge.AndroidBridge)
         runtime.config = {}
         runtime.package = bridge.PACKAGE
-        runtime.dual_virtual_display_id = mock.Mock(return_value=11)
         runtime.adb_shell = mock.Mock(return_value="")
 
         runtime.start_wecom_component()
@@ -107,12 +139,115 @@ Display #11 (activities from top to bottom):
             "am",
             "start",
             "--display",
-            "11",
+            "0",
             "-f",
             "0x04000000",
             "-n",
             "com.tencent.wework/.launch.LaunchSplashActivity",
             timeout=30,
+        )
+
+    def test_wecom_tap_explicitly_targets_physical_display(self) -> None:
+        bridge = load_bridge()
+        runtime = object.__new__(bridge.AndroidBridge)
+        runtime.adb_shell = mock.Mock(return_value="")
+
+        runtime.input_tap(100, 200)
+
+        runtime.adb_shell.assert_called_once_with(
+            "input",
+            "touchscreen",
+            "-d",
+            "0",
+            "tap",
+            "100",
+            "200",
+            check=True,
+        )
+
+    def test_clipboard_selects_physical_scrcpy_window(self) -> None:
+        bridge = load_bridge()
+        runtime = object.__new__(bridge.AndroidBridge)
+        runtime.display = ":99"
+        runtime.scrcpy_window_name = "LabCanvas Android MIX 2S"
+        runtime.run = mock.Mock(
+            return_value=subprocess.CompletedProcess([], 0, stdout="123\n", stderr="")
+        )
+
+        env, window = runtime.scrcpy_window_id()
+
+        self.assertEqual(window, "123")
+        self.assertEqual(env["DISPLAY"], ":99")
+        runtime.run.assert_called_once_with(
+            [
+                "xdotool",
+                "search",
+                "--name",
+                "^LabCanvas\\ Android\\ MIX\\ 2S",
+            ],
+            timeout=10,
+            env=env,
+        )
+
+    def test_wecom_back_explicitly_targets_physical_display(self) -> None:
+        bridge = load_bridge()
+        runtime = object.__new__(bridge.AndroidBridge)
+        runtime.adb_shell = mock.Mock(return_value="")
+
+        runtime.input_keyevent(4, check=False)
+
+        runtime.adb_shell.assert_called_once_with(
+            "input", "keyboard", "-d", "0", "keyevent", "4", check=False
+        )
+
+    def test_wecom_swipe_explicitly_targets_physical_display(self) -> None:
+        bridge = load_bridge()
+        runtime = object.__new__(bridge.AndroidBridge)
+        runtime.adb_shell = mock.Mock(return_value="")
+
+        runtime.input_swipe(1, 2, 3, 4, 300)
+
+        runtime.adb_shell.assert_called_once_with(
+            "input",
+            "touchscreen",
+            "-d",
+            "0",
+            "swipe",
+            "1",
+            "2",
+            "3",
+            "4",
+            "300",
+            check=True,
+        )
+
+    def test_current_package_reads_physical_display_zero(self) -> None:
+        bridge = load_bridge()
+        activities = """
+Display #0 (activities from top to bottom):
+    mResumedActivity: ActivityRecord{a u0 com.tencent.wework/.launch.WwMainActivity t1}
+Display #19 (activities from top to bottom):
+    mResumedActivity: ActivityRecord{b u0 com.miui.home/.launcher.SecondaryDisplayLauncher t2}
+"""
+        runtime = object.__new__(bridge.AndroidBridge)
+        runtime.adb_shell = mock.Mock(return_value=activities)
+
+        self.assertEqual(runtime.current_package(), bridge.PACKAGE)
+
+    def test_current_activity_reads_physical_display_zero(self) -> None:
+        bridge = load_bridge()
+        activities = """
+Display #0 (activities from top to bottom):
+    mResumedActivity: ActivityRecord{a u0 com.tencent.wework/.launch.WwMainActivity t1}
+Display #19 (activities from top to bottom):
+    mResumedActivity: ActivityRecord{b u0 com.miui.home/.launcher.SecondaryDisplayLauncher t2}
+"""
+        runtime = object.__new__(bridge.AndroidBridge)
+        runtime.adb_shell = mock.Mock(return_value=activities)
+
+        self.assertEqual(
+            runtime.current_activity(),
+            "com.tencent.wework/.launch.WwMainActivity",
         )
 
     def test_long_text_is_split_at_readable_numbered_boundaries(self) -> None:
@@ -690,6 +825,10 @@ Display #11 (activities from top to bottom):
                 mock.call(
                     "am",
                     "start",
+                    "--display",
+                    "0",
+                    "-f",
+                    "0x04000000",
                     "-n",
                     "com.tencent.wework/.launch.LaunchSplashActivity",
                     timeout=30,
@@ -698,6 +837,10 @@ Display #11 (activities from top to bottom):
                 mock.call(
                     "am",
                     "start",
+                    "--display",
+                    "0",
+                    "-f",
+                    "0x04000000",
                     "-n",
                     "com.tencent.wework/.launch.LaunchSplashActivity",
                     timeout=30,
@@ -1321,6 +1464,27 @@ Display #11 (activities from top to bottom):
         self.assertEqual(health["consecutive_poll_failures"], 2)
         self.assertIn("chat list", health["last_poll_error"])
 
+    def test_preempted_poll_is_deferred_without_counting_as_failure(self) -> None:
+        bridge = load_bridge()
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(Path(tmp) / "state.sqlite"),
+                    "staging_dir": str(Path(tmp) / "staging"),
+                }
+            )
+            runtime.record_poll_success()
+            runtime.record_poll_attempt()
+            runtime.record_poll_deferred()
+
+            health = runtime.poll_health_snapshot()
+
+        self.assertFalse(health["poll_in_progress"])
+        self.assertEqual(health["consecutive_poll_failures"], 0)
+        self.assertEqual(health["last_poll_error"], "")
+
     def test_poll_health_allows_bounded_active_reconciliation(self) -> None:
         bridge = load_bridge()
         with tempfile.TemporaryDirectory() as tmp:
@@ -1474,6 +1638,40 @@ Display #11 (activities from top to bottom):
         self.assertIs(result, composer)
         runtime.press_back.assert_called_once_with()
 
+    def test_normalize_chat_surface_preserves_quoted_reply_banner(self) -> None:
+        bridge = load_bridge()
+        tray = ET.fromstring(
+            """
+            <hierarchy><node>
+              <node text="LabAgent(6)" resource-id="com.tencent.wework:id/nsm"
+                    package="com.tencent.wework" />
+              <node text="" resource-id="com.tencent.wework:id/gor"
+                    class="androidx.recyclerview.widget.RecyclerView"
+                    package="com.tencent.wework" bounds="[0,1755][1080,1876]" />
+              <node text="发消息或按住..." resource-id="com.tencent.wework:id/iju"
+                    class="android.widget.EditText" package="com.tencent.wework"
+                    bounds="[139,1922][826,1983]" />
+            </node></hierarchy>
+            """
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(Path(tmp) / "state.sqlite"),
+                    "staging_dir": str(Path(tmp) / "staging"),
+                }
+            )
+            runtime.current_package = mock.Mock(return_value=bridge.PACKAGE)
+            runtime.open_chat = mock.Mock(return_value=tray)
+            runtime.press_back = mock.Mock()
+
+            result = runtime.normalize_chat_surface("LabAgent")
+
+        self.assertIs(result, tray)
+        runtime.press_back.assert_not_called()
+
     def test_normalize_chat_surface_restores_text_composer_from_voice_mode(self) -> None:
         bridge = load_bridge()
         voice_mode = ET.fromstring(
@@ -1612,6 +1810,29 @@ Display #11 (activities from top to bottom):
         self.assertEqual(len(found), 1)
         self.assertTrue(found[0].attrib["resource-id"].endswith("random_composer"))
 
+    def test_attachment_button_accepts_known_lower_right_icon_below_composer(self) -> None:
+        bridge = load_bridge()
+        root = ET.fromstring(
+            """
+            <hierarchy bounds="[0,0][1080,2116]"><node bounds="[0,0][1080,2116]">
+              <node text="发消息或按住..." resource-id="com.tencent.wework:id/iju"
+                    class="android.widget.EditText" package="com.tencent.wework"
+                    bounds="[139,1922][826,1983]" />
+              <node text="" resource-id="com.tencent.wework:id/hvp"
+                    class="android.widget.ImageView" package="com.tencent.wework"
+                    bounds="[28,2000][105,2077]" />
+              <node text="" resource-id="com.tencent.wework:id/ijh"
+                    class="android.widget.ImageView" package="com.tencent.wework"
+                    bounds="[975,2000][1052,2077]" />
+            </node></hierarchy>
+            """
+        )
+
+        found = bridge.find_attachment_button_nodes(root)
+
+        self.assertEqual(len(found), 1)
+        self.assertTrue(found[0].attrib["resource-id"].endswith(":id/ijh"))
+
     def test_open_file_action_retries_after_first_tap_only_hides_keyboard(self) -> None:
         bridge = load_bridge()
         composer = ET.fromstring(
@@ -1643,7 +1864,7 @@ Display #11 (activities from top to bottom):
                     "staging_dir": str(Path(tmp) / "staging"),
                 }
             )
-            runtime.ensure_chat_identity = mock.Mock(side_effect=[composer, menu])
+            runtime.dump_hierarchy = mock.Mock(side_effect=[composer, menu])
             runtime.tap_node = mock.Mock()
 
             with mock.patch.object(bridge.time, "sleep"):
@@ -1694,8 +1915,8 @@ Display #11 (activities from top to bottom):
                     "staging_dir": str(Path(tmp) / "staging"),
                 }
             )
-            runtime.ensure_chat_identity = mock.Mock(return_value=menu)
-            runtime.adb_shell = mock.Mock(return_value="")
+            runtime.dump_hierarchy = mock.Mock(return_value=menu)
+            runtime.input_tap = mock.Mock()
             runtime.tap_node = mock.Mock()
 
             with mock.patch.object(bridge.time, "sleep"):
@@ -1708,7 +1929,7 @@ Display #11 (activities from top to bottom):
 
         self.assertIs(found_menu, menu)
         self.assertEqual(action.attrib.get("text"), "文件")
-        runtime.adb_shell.assert_called_once_with("input", "tap", "1014", "2039")
+        runtime.input_tap.assert_called_once_with(1014, 2039)
         runtime.tap_node.assert_not_called()
 
     def test_open_file_action_supports_current_composer_and_plus_ids(self) -> None:
@@ -1749,8 +1970,8 @@ Display #11 (activities from top to bottom):
                     "staging_dir": str(Path(tmp) / "staging"),
                 }
             )
-            runtime.ensure_chat_identity = mock.Mock(return_value=menu)
-            runtime.adb_shell = mock.Mock(return_value="")
+            runtime.dump_hierarchy = mock.Mock(return_value=menu)
+            runtime.input_tap = mock.Mock()
             runtime.tap_node = mock.Mock()
 
             with mock.patch.object(bridge.time, "sleep"):
@@ -1763,8 +1984,172 @@ Display #11 (activities from top to bottom):
 
         self.assertIs(found_menu, menu)
         self.assertEqual(action.attrib.get("text"), "文件")
-        runtime.adb_shell.assert_called_once_with("input", "tap", "1013", "2038")
+        runtime.input_tap.assert_called_once_with(1013, 2038)
         runtime.tap_node.assert_not_called()
+
+    def test_open_file_action_accepts_titleless_owned_attachment_modal(self) -> None:
+        bridge = load_bridge()
+        composer = ET.fromstring(
+            """
+            <hierarchy><node>
+              <node text="LabAgent(6)" resource-id="com.tencent.wework:id/nsm"
+                    package="com.tencent.wework" />
+              <node text="" resource-id="com.tencent.wework:id/ijh"
+                    package="com.tencent.wework" clickable="false"
+                    bounds="[975,2000][1052,2077]" />
+            </node></hierarchy>
+            """
+        )
+        titleless_menu = ET.fromstring(
+            """
+            <hierarchy><node package="com.tencent.wework">
+              <node text="文件" package="com.tencent.wework" clickable="true"
+                    bounds="[0,0][100,100]" />
+            </node></hierarchy>
+            """
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(Path(tmp) / "state.sqlite"),
+                    "staging_dir": str(Path(tmp) / "staging"),
+                }
+            )
+            runtime.dump_hierarchy = mock.Mock(return_value=titleless_menu)
+            runtime.input_tap = mock.Mock()
+
+            with mock.patch.object(bridge.time, "sleep"):
+                found_menu, action = runtime.open_file_action(
+                    "LabAgent", composer, attempts=1, polls_per_attempt=1
+                )
+
+        self.assertIs(found_menu, titleless_menu)
+        self.assertEqual(action.attrib.get("text"), "文件")
+
+    def test_open_file_action_ignores_quoted_reply_banner(self) -> None:
+        bridge = load_bridge()
+        second_page = ET.fromstring(
+            """
+            <hierarchy><node package="com.tencent.wework">
+              <node text="LabAgent(6)" resource-id="com.tencent.wework:id/nsm"
+                    package="com.tencent.wework" />
+              <node text="" resource-id="com.tencent.wework:id/gor"
+                    class="androidx.recyclerview.widget.RecyclerView"
+                    package="com.tencent.wework" bounds="[0,1755][1080,1876]" />
+              <node text="企业名片" package="com.tencent.wework" />
+              <node text="发消息或按住..." resource-id="com.tencent.wework:id/iju"
+                    class="android.widget.EditText" package="com.tencent.wework"
+                    bounds="[139,1922][826,1983]" />
+              <node text="" resource-id="com.tencent.wework:id/ijh"
+                    package="com.tencent.wework" clickable="true"
+                    bounds="[975,1914][1052,1991]" />
+            </node></hierarchy>
+            """
+        )
+        first_page = ET.fromstring(
+            """
+            <hierarchy><node package="com.tencent.wework">
+              <node text="" resource-id="com.tencent.wework:id/gor"
+                    class="androidx.recyclerview.widget.RecyclerView"
+                    package="com.tencent.wework" bounds="[0,1755][1080,1876]" />
+              <node text="文件" package="com.tencent.wework" clickable="true"
+                    bounds="[0,0][100,100]" />
+            </node></hierarchy>
+            """
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(Path(tmp) / "state.sqlite"),
+                    "staging_dir": str(Path(tmp) / "staging"),
+                }
+            )
+            runtime.dump_hierarchy = mock.Mock(return_value=first_page)
+            runtime.tap_node = mock.Mock()
+            runtime.input_swipe = mock.Mock()
+
+            with mock.patch.object(bridge.time, "sleep"):
+                found_menu, action = runtime.open_file_action(
+                    "LabAgent", second_page, attempts=1, polls_per_attempt=2
+                )
+
+        self.assertIs(found_menu, first_page)
+        self.assertEqual(action.attrib.get("text"), "文件")
+        runtime.input_swipe.assert_not_called()
+        runtime.tap_node.assert_called_once()
+
+    def test_open_file_action_waits_past_quoted_reply_relayout(self) -> None:
+        bridge = load_bridge()
+        lower_second_page = ET.fromstring(
+            """
+            <hierarchy><node package="com.tencent.wework">
+              <node text="LabAgent(6)" resource-id="com.tencent.wework:id/nsm"
+                    package="com.tencent.wework" />
+              <node text="" resource-id="com.tencent.wework:id/gor"
+                    class="androidx.recyclerview.widget.RecyclerView"
+                    package="com.tencent.wework" bounds="[0,1841][1080,1962]" />
+              <node text="企业名片" package="com.tencent.wework" />
+              <node text="快捷回复" package="com.tencent.wework" />
+              <node text="发消息或按住..." resource-id="com.tencent.wework:id/iju"
+                    class="android.widget.EditText" package="com.tencent.wework"
+                    bounds="[139,2008][826,2069]" />
+              <node text="" resource-id="com.tencent.wework:id/ijh"
+                    package="com.tencent.wework" clickable="true"
+                    bounds="[975,1992][1052,2069]" />
+            </node></hierarchy>
+            """
+        )
+        raised_second_page = ET.fromstring(
+            """
+            <hierarchy><node package="com.tencent.wework">
+              <node text="" resource-id="com.tencent.wework:id/gor"
+                    class="androidx.recyclerview.widget.RecyclerView"
+                    package="com.tencent.wework" bounds="[0,961][1080,1082]" />
+              <node text="企业名片" package="com.tencent.wework" />
+              <node text="快捷回复" package="com.tencent.wework" />
+            </node></hierarchy>
+            """
+        )
+        first_page = ET.fromstring(
+            """
+            <hierarchy><node package="com.tencent.wework">
+              <node text="" resource-id="com.tencent.wework:id/gor"
+                    class="androidx.recyclerview.widget.RecyclerView"
+                    package="com.tencent.wework" bounds="[0,961][1080,1082]" />
+              <node text="文件" package="com.tencent.wework" clickable="true"
+                    bounds="[0,0][100,100]" />
+            </node></hierarchy>
+            """
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(Path(tmp) / "state.sqlite"),
+                    "staging_dir": str(Path(tmp) / "staging"),
+                }
+            )
+            runtime.dump_hierarchy = mock.Mock(
+                side_effect=[raised_second_page, first_page]
+            )
+            runtime.tap_node = mock.Mock()
+
+            with mock.patch.object(bridge.time, "sleep"):
+                found_menu, action = runtime.open_file_action(
+                    "LabAgent",
+                    lower_second_page,
+                    attempts=1,
+                    polls_per_attempt=2,
+                )
+
+        self.assertIs(found_menu, first_page)
+        self.assertEqual(action.attrib.get("text"), "文件")
+        runtime.tap_node.assert_called_once()
 
     def test_send_text_normalizes_chat_surface_before_composing(self) -> None:
         bridge = load_bridge()
@@ -2282,14 +2667,12 @@ Display #11 (activities from top to bottom):
                 </hierarchy>
                 """
             )
-            runtime.adb_shell = mock.Mock(return_value="")
+            runtime.input_swipe = mock.Mock()
             runtime.dump_hierarchy = mock.Mock(return_value=root)
 
             runtime.move_chat_to_live_tail("LabAgent", root, max_swipes=1)
 
-        runtime.adb_shell.assert_called_once_with(
-            "input", "swipe", "520", "1600", "520", "400", "280"
-        )
+        runtime.input_swipe.assert_called_once_with(520, 1600, 520, 400, 280)
 
     def test_history_scan_swipes_down_toward_older_rows(self) -> None:
         bridge = load_bridge()
@@ -2303,15 +2686,13 @@ Display #11 (activities from top to bottom):
                 }
             )
             root = ET.fromstring('<hierarchy><node text="LabAgent(6)" /></hierarchy>')
-            runtime.adb_shell = mock.Mock(return_value="")
+            runtime.input_swipe = mock.Mock()
             runtime.dump_hierarchy = mock.Mock(return_value=root)
             runtime.parse_messages = mock.Mock(return_value=[])
 
             runtime.scan_older_message_records("LabAgent", [], max_pages=1)
 
-        runtime.adb_shell.assert_called_once_with(
-            "input", "swipe", "520", "350", "520", "1450", "500"
-        )
+        runtime.input_swipe.assert_called_once_with(520, 350, 520, 1450, 500)
 
     def test_parse_messages_recovers_merged_chat_history_with_all_senders(self) -> None:
         bridge = load_bridge()
@@ -2790,8 +3171,8 @@ Display #11 (activities from top to bottom):
                     node,
                 ],
             ) as locate, mock.patch.object(
-                runtime, "adb_shell", return_value=""
-            ) as adb_shell, mock.patch.object(
+                runtime, "input_swipe"
+            ) as input_swipe, mock.patch.object(
                 runtime, "dump_hierarchy", return_value=root
             ):
                 found_root, found_screenshot, found_node = (
@@ -2803,9 +3184,7 @@ Display #11 (activities from top to bottom):
         self.assertIs(found_node, node)
         self.assertEqual(locate.call_count, 2)
         self.assertEqual(locate.call_args_list[1].args[2]["image_bounds"], "")
-        adb_shell.assert_called_once_with(
-            "input", "swipe", "520", "350", "520", "1450", "500"
-        )
+        input_swipe.assert_called_once_with(520, 350, 520, 1450, 500)
 
     def test_parse_messages_recovers_native_inbound_document_event(self) -> None:
         bridge = load_bridge()
@@ -2911,7 +3290,7 @@ Display #11 (activities from top to bottom):
                 '<hierarchy><node text="LabAgent(6)" resource-id="com.tencent.wework:id/n5i" '
                 'package="com.tencent.wework" /></hierarchy>'
             )
-            with mock.patch.object(runtime, "adb_shell"), mock.patch.object(
+            with mock.patch.object(runtime, "input_swipe"), mock.patch.object(
                 runtime, "dump_hierarchy", side_effect=[chat_root, chat_root, chat_root]
             ), mock.patch.object(
                 runtime, "parse_messages", side_effect=[[article], [article], []]
@@ -2956,7 +3335,7 @@ Display #11 (activities from top to bottom):
                 '<hierarchy><node text="LabAgent(6)" resource-id="com.tencent.wework:id/n5i" '
                 'package="com.tencent.wework" /></hierarchy>'
             )
-            with mock.patch.object(runtime, "adb_shell"), mock.patch.object(
+            with mock.patch.object(runtime, "input_swipe"), mock.patch.object(
                 runtime, "dump_hierarchy", side_effect=[chat_root, chat_root]
             ), mock.patch.object(
                 runtime, "parse_messages", side_effect=[[unlabeled], [labeled]]
