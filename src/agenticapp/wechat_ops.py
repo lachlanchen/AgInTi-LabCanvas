@@ -84,6 +84,11 @@ def add_wechat_parser(subparsers: argparse._SubParsersAction) -> None:
 
     health = nested.add_parser("health", help="Check direct monitor state, self-message guards, and DB catch-up.")
     health.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+    health.add_argument(
+        "--compact",
+        action="store_true",
+        help="Return a bounded agent-facing summary of schedules, queues, and phone intake lanes.",
+    )
     health.set_defaults(func=cmd_health)
 
     doctor = nested.add_parser("doctor", help="Check local commands and WeChat tool files.")
@@ -761,6 +766,190 @@ def cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def phone_ingress_status(script_name: str) -> dict[str, Any]:
+    """Probe one bounded Android WeChat intake lane without reading chat content."""
+
+    script = SCRIPTS / script_name
+    if not script.is_file():
+        return {"ok": False, "reason": "status_script_missing"}
+    try:
+        proc = subprocess.run(
+            [sys.executable, str(script), "--status"],
+            cwd=PACKAGE_ROOT,
+            env=os.environ.copy(),
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=20,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {"ok": False, "reason": type(exc).__name__}
+    payload = parse_json_object(proc.stdout) or {}
+    if not payload:
+        return {
+            "ok": False,
+            "reason": "invalid_status_output",
+            "returncode": proc.returncode,
+        }
+    return payload
+
+
+def status_timestamp_age_seconds(value: object) -> int | None:
+    parsed = parse_health_timestamp(value)
+    if parsed is None:
+        return None
+    return max(0, int((datetime.now(timezone.utc) - parsed).total_seconds()))
+
+
+def compact_phone_lane(payload: dict[str, Any], *, self_authored: bool) -> dict[str, Any]:
+    last_poll = payload.get("last_poll_at")
+    age = status_timestamp_age_seconds(last_poll)
+    fresh = age is not None and age <= 120
+    result = {
+        "ok": bool(payload.get("ok")) and fresh,
+        "fresh": fresh,
+        "last_poll_age_seconds": age,
+        "routes": int(payload.get("routes") or 0),
+    }
+    if self_authored:
+        result.update(
+            {
+                "seeded_routes": int(payload.get("seeded_routes") or 0),
+                "deferred_routes": int(payload.get("deferred_routes") or 0),
+                "last_error": str(payload.get("last_error") or "")[:240],
+            }
+        )
+    else:
+        result.update(
+            {
+                "listener_enabled": bool(payload.get("listener_enabled")),
+                "listener_live": bool(payload.get("listener_live")),
+            }
+        )
+    return result
+
+
+def compact_health_payload(
+    payload: dict[str, Any],
+    *,
+    notification_status: dict[str, Any] | None = None,
+    self_status: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build the small authoritative status packet used by backend agents."""
+
+    transport = payload.get("transport_health")
+    transport = transport if isinstance(transport, dict) else {}
+    schedules = transport.get("schedules")
+    schedules = schedules if isinstance(schedules, dict) else {}
+    career = schedules.get("career_daily")
+    career = career if isinstance(career, dict) else {}
+    echomind = schedules.get("echomind")
+    echomind = echomind if isinstance(echomind, dict) else {}
+    labagent = schedules.get("labagent_idle_inspiration")
+    labagent = labagent if isinstance(labagent, dict) else {}
+    queues = transport.get("queues")
+    queues = queues if isinstance(queues, dict) else {}
+    monitors = transport.get("direct_monitors")
+    monitors = monitors if isinstance(monitors, dict) else {}
+    configured = int(monitors.get("configured") or 0)
+    heartbeat_healthy = int(monitors.get("heartbeat_healthy") or 0)
+    monitor_heartbeats_ok = configured > 0 and heartbeat_healthy == configured
+
+    notification = compact_phone_lane(
+        notification_status or phone_ingress_status("wechat_android_ingress.py"),
+        self_authored=False,
+    )
+    self_lane = compact_phone_lane(
+        self_status or phone_ingress_status("wechat_android_screen_ingress.py"),
+        self_authored=True,
+    )
+    notification["reaches_agent"] = bool(notification["ok"] and monitor_heartbeats_ok)
+    self_lane["reaches_agent"] = bool(self_lane["ok"] and monitor_heartbeats_ok)
+
+    compact_queues: dict[str, Any] = {}
+    for name in ("wechat", "wecom"):
+        item = queues.get(name)
+        item = item if isinstance(item, dict) else {}
+        compact_queues[name] = {
+            "ok": bool(item.get("ok")),
+            "active": int(item.get("active") or 0),
+            "pending": int(item.get("pending") or 0),
+            "recent_failure_count": len(item.get("recent_failed_ids") or []),
+            "stale_count": len(item.get("stale_ids") or []),
+        }
+
+    echo_retry = bool(echomind.get("daily_pdf_generation_retry_active"))
+    schedule_summary = {
+        "career_daily": {
+            "running": bool(career.get("running")),
+            "status": str(career.get("career_status") or "unknown"),
+            "delivered": bool(career.get("career_complete")),
+            "retry_pending": bool(career.get("career_retry_pending")),
+        },
+        "memo_daily": {
+            "required": bool(career.get("organizer_required")),
+            "status": str(career.get("organizer_status") or "unknown"),
+            "delivered": bool(career.get("organizer_complete")),
+            "retry_pending": bool(career.get("organizer_retry_pending")),
+        },
+        "echomind_periodic_lesson": {
+            "running": bool(echomind.get("running")),
+            "interval_seconds": int(echomind.get("interval_seconds") or 0),
+            "pending": bool(echomind.get("pending_lesson")),
+            "retry_pending": bool(echomind.get("pending_lesson_retry_pending")),
+        },
+        "echomind_daily_pdf": {
+            "target_date": str(echomind.get("daily_pdf_target_date") or ""),
+            "status": "quality_retry_pending" if echo_retry else "current_or_not_due",
+            "retry_pending": echo_retry,
+            "next_attempt_at": str(echomind.get("pending_daily_pdf_next_attempt_at") or ""),
+        },
+        "labagent_idle_inspiration": {
+            "running": bool(labagent.get("ok")),
+            "status": str(labagent.get("status") or "unknown"),
+        },
+    }
+    issue_codes = [
+        str(item.get("code") or "")
+        for item in transport.get("issues") or []
+        if isinstance(item, dict) and item.get("code")
+    ]
+    agent_failures = transport.get("agent_failures")
+    agent_failures = agent_failures if isinstance(agent_failures, dict) else {}
+    schedules_ok = bool(schedules.get("ok"))
+    queues_ok = all(item["ok"] for item in compact_queues.values())
+    phone_ok = bool(notification["reaches_agent"] and self_lane["reaches_agent"])
+    operational = bool(
+        schedules_ok
+        and queues_ok
+        and phone_ok
+        and int(agent_failures.get("terminal_failures") or 0) == 0
+    )
+    return {
+        "ok": operational,
+        "operational": operational,
+        "degraded": bool(issue_codes),
+        "checked_at": str(transport.get("checked_at") or payload.get("checked_at") or ""),
+        "issues": issue_codes,
+        "desktop_wechat": {
+            "available": bool((transport.get("wechat_client") or {}).get("available")),
+            "status": str((transport.get("wechat_client") or {}).get("status") or "unknown"),
+        },
+        "phone_ingress": {
+            "other_people": notification,
+            "self_authored": self_lane,
+        },
+        "direct_monitor_heartbeats": {
+            "ok": monitor_heartbeats_ok,
+            "healthy": heartbeat_healthy,
+            "configured": configured,
+        },
+        "schedules": schedule_summary,
+        "queues": compact_queues,
+        "agent_failures_last_hour": int(agent_failures.get("terminal_failures") or 0),
+    }
+
+
 def cmd_health(args: argparse.Namespace) -> int:
     payload = direct_monitor_health()
     transport = persistent_transport_health()
@@ -803,6 +992,15 @@ def cmd_health(args: argparse.Namespace) -> int:
         )
     if not payload["ok"]:
         summary += " (attention needed)"
+    if getattr(args, "compact", False):
+        compact = compact_health_payload(payload)
+        compact_summary = (
+            "wechat compact health: operational"
+            if compact["operational"]
+            else "wechat compact health: attention needed"
+        )
+        print_payload(compact, args.json, compact_summary)
+        return 0 if compact["operational"] else 1
     print_payload(payload, args.json, summary)
     return 0 if payload["ok"] else 1
 

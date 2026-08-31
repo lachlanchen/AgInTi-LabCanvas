@@ -17,6 +17,110 @@ from agenticapp import wechat_ops
 
 
 class WeChatOpsHealthTests(unittest.TestCase):
+    def compact_health_fixture(self) -> dict:
+        return {
+            "checked_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "transport_health": {
+                "checked_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                "issues": [{"code": "wechat_login_required"}],
+                "wechat_client": {"available": False, "status": "entry_required"},
+                "direct_monitors": {"configured": 6, "heartbeat_healthy": 6},
+                "agent_failures": {"terminal_failures": 0},
+                "queues": {
+                    "wechat": {
+                        "ok": True,
+                        "active": 0,
+                        "pending": 0,
+                        "recent_failed_ids": [],
+                        "stale_ids": [],
+                    },
+                    "wecom": {
+                        "ok": True,
+                        "active": 0,
+                        "pending": 0,
+                        "recent_failed_ids": [],
+                        "stale_ids": [],
+                    },
+                },
+                "schedules": {
+                    "ok": True,
+                    "career_daily": {
+                        "running": True,
+                        "career_status": "delivered",
+                        "career_complete": True,
+                        "organizer_required": True,
+                        "organizer_status": "delivered",
+                        "organizer_complete": True,
+                    },
+                    "echomind": {
+                        "running": True,
+                        "interval_seconds": 21600,
+                        "daily_pdf_target_date": "2026-08-30",
+                        "daily_pdf_generation_retry_active": True,
+                        "pending_daily_pdf_next_attempt_at": "2026-08-31T01:41:51+00:00",
+                    },
+                    "labagent_idle_inspiration": {"ok": True, "status": "ok"},
+                },
+            },
+        }
+
+    def test_compact_health_treats_fresh_phone_fallback_as_operational(self) -> None:
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        payload = wechat_ops.compact_health_payload(
+            self.compact_health_fixture(),
+            notification_status={
+                "ok": True,
+                "routes": 6,
+                "listener_enabled": True,
+                "listener_live": True,
+                "last_poll_at": now,
+            },
+            self_status={
+                "ok": True,
+                "routes": 6,
+                "seeded_routes": 6,
+                "deferred_routes": 0,
+                "last_poll_at": now,
+                "last_error": "",
+            },
+        )
+
+        self.assertTrue(payload["operational"])
+        self.assertTrue(payload["degraded"])
+        self.assertEqual(payload["desktop_wechat"]["status"], "entry_required")
+        self.assertTrue(payload["phone_ingress"]["other_people"]["reaches_agent"])
+        self.assertTrue(payload["phone_ingress"]["self_authored"]["reaches_agent"])
+        self.assertEqual(payload["schedules"]["career_daily"]["status"], "delivered")
+        self.assertEqual(payload["schedules"]["memo_daily"]["status"], "delivered")
+        self.assertEqual(
+            payload["schedules"]["echomind_daily_pdf"]["status"],
+            "quality_retry_pending",
+        )
+
+    def test_compact_health_rejects_stale_phone_lane(self) -> None:
+        stale = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat(timespec="seconds")
+        payload = wechat_ops.compact_health_payload(
+            self.compact_health_fixture(),
+            notification_status={
+                "ok": True,
+                "routes": 6,
+                "listener_enabled": True,
+                "listener_live": True,
+                "last_poll_at": stale,
+            },
+            self_status={
+                "ok": True,
+                "routes": 6,
+                "seeded_routes": 6,
+                "deferred_routes": 0,
+                "last_poll_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                "last_error": "",
+            },
+        )
+
+        self.assertFalse(payload["operational"])
+        self.assertFalse(payload["phone_ingress"]["other_people"]["fresh"])
+
     def test_production_selftest_targets_resolve(self) -> None:
         for check in wechat_ops.selftest_checks_for_suite("all"):
             module_name, class_name, method_name = check["test"].rsplit(".", 2)

@@ -218,6 +218,45 @@ class WorkspaceAgentTests(unittest.TestCase):
         self.assertIn("lazyedit_publish.py", prompt)
         self.assertIn("Invoke a matched ready routine", prompt)
 
+    def test_dictated_phone_schedule_message_request_selects_wechat_health_routine(self):
+        request = (
+            "i was checking phone and schedulr tell me which daily things delivered "
+            "and can msg from me and other people reach agent"
+        )
+
+        contracts = selected_routine_contracts(request, ROOT)
+
+        self.assertEqual([item["id"] for item in contracts], ["wechat-chatops"])
+        self.assertEqual(
+            contracts[0]["commands"][0],
+            "PYTHONPATH=src python -m agenticapp wechat health --compact --json",
+        )
+        self.assertIn("Do not inspect raw chat text", contracts[0]["guidance"])
+
+    def test_phone_holder_does_not_select_wechat_transport(self):
+        contracts = selected_routine_contracts(
+            "Design a printable phone holder in CAD and export STEP",
+            ROOT,
+        )
+
+        self.assertNotIn("wechat-chatops", {item["id"] for item in contracts})
+
+    def test_wechat_health_prompt_discloses_authoritative_read_only_shortcut(self):
+        request = (
+            "check mobile msg and schedulr for labcanvas agent, do not send anything"
+        )
+        prompt = build_agent_prompt(
+            request,
+            root=ROOT,
+            task_dir=ROOT / "output" / "webapp" / "agent" / "wechat-health-test",
+            policy=select_agent_policy(request, backend="aginti"),
+            conversation_id="wechat-health-test",
+        )
+
+        self.assertIn("`wechat-chatops` ready=true", prompt)
+        self.assertIn("agenticapp wechat health --compact --json", prompt)
+        self.assertIn("Do not inspect raw chat text or private message ledgers", prompt)
+
     def test_task_runner_registers_declared_artifact(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

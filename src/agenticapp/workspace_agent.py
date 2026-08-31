@@ -477,9 +477,28 @@ def capability_catalog(root: str | Path) -> list[dict[str, Any]]:
             "id": "wechat-chatops",
             "title": "WeChat GUI, message bridge, files, and worker routines",
             "ready": (project_root / "agentic_tools" / "wechat_gui_agent").exists(),
-            "commands": ["labcanvas wechat status", "labcanvas wechat worker", "labcanvas wechat send"],
-            "paths": ["agentic_tools/wechat_gui_agent", "docs/WECHAT_AUTOMATION.md"],
+            "commands": [
+                "PYTHONPATH=src python -m agenticapp wechat health --compact --json",
+                "python agentic_tools/wechat_gui_agent/scripts/wechat_android_ingress.py --status",
+                "python agentic_tools/wechat_gui_agent/scripts/wechat_android_screen_ingress.py --status",
+                "labcanvas wechat worker",
+                "labcanvas wechat send",
+            ],
+            "paths": [
+                "agentic_tools/wechat_gui_agent",
+                "agentic_tools/wechat_gui_agent/docs/ROBUST_EFFICIENT_OPERATIONS.md",
+                "docs/WECHAT_AUTOMATION.md",
+            ],
             "outputs": ["messages", "files", "task records"],
+            "guidance": (
+                "For a read-only phone, message-intake, queue, or schedule question, run the "
+                "canonical compact health command first; it already includes both Android lanes. "
+                "Use the two raw Android status commands only when compact health marks a lane "
+                "unknown or stale. Treat that current snapshot as authoritative and stop once it "
+                "answers the request. Do not inspect raw chat text or private message ledgers or "
+                "artifact directories, and do not send or mutate anything, unless the current "
+                "request explicitly needs it."
+            ),
         },
         {
             "id": "labview-control",
@@ -537,14 +556,50 @@ CAPABILITY_TRIGGER_TERMS: dict[str, tuple[str, ...]] = {
 }
 
 
+def capability_triggered(capability_id: str, lowered: str) -> bool:
+    """Match explicit terms plus bounded dictation-friendly transport language."""
+
+    terms = CAPABILITY_TRIGGER_TERMS.get(capability_id, ())
+    if terms and any(term in lowered for term in terms):
+        return True
+    if capability_id != "wechat-chatops":
+        return False
+    device_terms = ("phone", "mobile", "mix 2s", "mix2s", "android", "手机")
+    message_terms = ("msg", "message", "chat", "inbound", "消息")
+    operation_terms = (
+        "agent",
+        "labcanvas",
+        "schedule",
+        "schedul",
+        "daily",
+        "reply",
+        "respond",
+        "reach",
+        "receive",
+        "send",
+        "group",
+        "monitor",
+        "回复",
+        "定时",
+        "发送",
+        "接收",
+        "群",
+    )
+    return (
+        any(term in lowered for term in device_terms)
+        and any(term in lowered for term in message_terms)
+        and any(term in lowered for term in operation_terms)
+    )
+
+
 def selected_routine_contracts(message: str, root: str | Path, *, limit: int = 6) -> list[dict[str, Any]]:
     """Return only established routine entrypoints relevant to this turn."""
 
     lowered = " ".join(str(message or "").casefold().split())
     selected: list[dict[str, Any]] = []
     for item in capability_catalog(root):
-        terms = CAPABILITY_TRIGGER_TERMS.get(str(item.get("id") or ""), ())
-        if terms and any(term in lowered for term in terms):
+        capability_id = str(item.get("id") or "")
+        if capability_triggered(capability_id, lowered):
             selected.append(
                 {
                     "id": item["id"],
@@ -553,6 +608,7 @@ def selected_routine_contracts(message: str, root: str | Path, *, limit: int = 6
                     "commands": list(item.get("commands") or []),
                     "paths": list(item.get("paths") or []),
                     "outputs": list(item.get("outputs") or []),
+                    "guidance": str(item.get("guidance") or ""),
                 }
             )
     return selected[: max(1, limit)]
@@ -610,7 +666,7 @@ def build_agent_prompt(
     routines = selected_routine_contracts(message, project_root)
     routine_context = "\n".join(
         f"- `{item['id']}` ready={str(item['ready']).lower()}; commands={json.dumps(item['commands'], ensure_ascii=False)}; "
-        f"outputs={json.dumps(item['outputs'], ensure_ascii=False)}"
+        f"outputs={json.dumps(item['outputs'], ensure_ascii=False)}; guidance={item['guidance']}"
         for item in routines
     ) or "- No domain routine was preselected; inspect the capability catalog only if the request needs one."
     ready = ", ".join(item["id"] for item in catalog if item["ready"])
