@@ -247,6 +247,9 @@ def select_agent_policy(
 
     if model_was_auto:
         configured = model_policy_for_effort(selected_effort, policy=model_policy or load_model_policy())
+        configured_effort = str(configured.get("reasoning_effort") or selected_effort).strip().lower()
+        if configured_effort in {"low", "medium", "high", "xhigh"}:
+            selected_effort = configured_effort
         if selected_effort == "low":
             selected_model = os.environ.get("LABCANVAS_AGENT_FAST_MODEL", configured["model"])
         elif selected_effort == "medium":

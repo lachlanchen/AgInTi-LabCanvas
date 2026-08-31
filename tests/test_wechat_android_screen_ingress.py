@@ -163,6 +163,38 @@ class WechatAndroidScreenIngressTests(unittest.TestCase):
                 scanner.route_retry_deferred(route["config_id"], "new-signature")
             )
 
+    def test_unchanged_route_is_periodically_audited_for_missed_self_messages(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            scanner = self.scanner(Path(tmp))
+            route = scanner.routes[0]
+            with sqlite3.connect(scanner.db_path) as conn:
+                conn.execute(
+                    "UPDATE AndroidScreenRoutes SET row_signature='same',initialized=1 "
+                    "WHERE config_id=?",
+                    (route["config_id"],),
+                )
+
+            selected = scanner.next_route({route["config_id"]: "same"})
+
+            self.assertEqual(selected["config_id"], route["config_id"])
+
+    def test_fresh_route_audit_does_not_create_continuous_phone_polling(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            scanner = self.scanner(Path(tmp))
+            route = scanner.routes[0]
+            with sqlite3.connect(scanner.db_path) as conn:
+                conn.execute(
+                    "UPDATE AndroidScreenRoutes SET row_signature='same',initialized=1 "
+                    "WHERE config_id=?",
+                    (route["config_id"],),
+                )
+            scanner.set_meta(
+                f"route_audited:{route['config_id']}",
+                datetime.now(timezone.utc).isoformat(),
+            )
+
+            self.assertIsNone(scanner.next_route({route["config_id"]: "same"}))
+
     def test_route_row_prefers_exact_title_over_message_preview(self) -> None:
         route = self.route()
         preview = self.module.OcrLine(

@@ -86,6 +86,12 @@ def main() -> int:
     parser.add_argument("--send-state-db", type=Path, default=DEFAULT_STATE_DB)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--interval", type=float, default=4.0)
+    parser.add_argument(
+        "--audit-interval",
+        type=float,
+        default=float(os.environ.get("WECHAT_ANDROID_SCREEN_ROUTE_AUDIT_SECONDS", "180")),
+        help="Periodically open one unchanged route so same-account messages cannot be hidden by a stale chat-row signature.",
+    )
     parser.add_argument("--max-bubbles", type=int, default=8)
     parser.add_argument("--loop", action="store_true")
     parser.add_argument("--status", action="store_true")
@@ -101,6 +107,7 @@ def main() -> int:
         send_state_db=args.send_state_db.expanduser().resolve(),
         output_dir=args.output_dir.expanduser().resolve(),
         max_bubbles=max(1, min(16, int(args.max_bubbles))),
+        audit_interval_seconds=max(30.0, float(args.audit_interval)),
     )
     if args.status:
         print(json.dumps(scanner.status(), ensure_ascii=False, indent=2))
@@ -127,6 +134,7 @@ class AndroidWechatScreenIngress:
         send_state_db: Path,
         output_dir: Path,
         max_bubbles: int = 8,
+        audit_interval_seconds: float = 180.0,
     ) -> None:
         self.adb = adb
         self.serial = serial
@@ -136,6 +144,7 @@ class AndroidWechatScreenIngress:
         self.send_state_db = send_state_db
         self.output_dir = output_dir
         self.max_bubbles = max_bubbles
+        self.audit_interval_seconds = max(30.0, float(audit_interval_seconds))
         self.display = os.environ.get("WECHAT_ANDROID_DISPLAY", ":99")
         self.routes = screen_routes(configs, targets)
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -299,6 +308,7 @@ class AndroidWechatScreenIngress:
             and current_signature == previous_signature
             and self.all_routes_seeded()
             and not self.any_route_retry_due()
+            and not self.any_route_audit_due()
         ):
             return safe_result(skipped="chat_list_unchanged")
 
@@ -359,6 +369,7 @@ class AndroidWechatScreenIngress:
             snapshot=texts,
             initialized=True,
         )
+        self.set_meta(f"route_audited:{route['config_id']}", utc_now())
 
         sender.keyevent(4, check=False)
         time.sleep(0.5)
@@ -439,7 +450,26 @@ class AndroidWechatScreenIngress:
                 )
             ):
                 return route
+        for route in self.routes:
+            config_id = route["config_id"]
+            if (
+                config_id in row_signatures
+                and self.route_audit_due(config_id)
+                and not self.route_retry_deferred(config_id, row_signatures[config_id])
+            ):
+                return route
         return None
+
+    def route_audit_due(self, config_id: str) -> bool:
+        observed = self.meta(f"route_audited:{config_id}")
+        age = timestamp_age_seconds(observed)
+        return age is None or age >= self.audit_interval_seconds
+
+    def any_route_audit_due(self) -> bool:
+        return any(
+            self.route_audit_due(route["config_id"])
+            for route in self.routes
+        )
 
     def route_retry_state(self, config_id: str) -> dict[str, Any]:
         try:

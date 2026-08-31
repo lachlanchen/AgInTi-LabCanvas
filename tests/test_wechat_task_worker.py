@@ -14223,6 +14223,88 @@ NVQNIF+NotoSansCJKjp-Regular-Identity-H CID Type 0C       Identity-H       yes y
         self.assertEqual(pdf_bytes, b"new-pdf")
         render.assert_called_once_with(report, pdf)
 
+    def test_preferred_research_pdf_rebuilds_current_unembedded_font_pdf(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            report = root / "report.zh.md"
+            pdf = root / "report.zh.pdf"
+            report.write_text("# 新报告\n", encoding="utf-8")
+            pdf.write_bytes(b"old-unembedded-pdf")
+            os.utime(pdf, (report.stat().st_mtime + 1, report.stat().st_mtime + 1))
+
+            def fake_render(_source: Path, output: Path) -> Path:
+                output.write_bytes(b"new-embedded-pdf")
+                return output
+
+            with (
+                mock.patch.object(
+                    worker,
+                    "analyze_pdf_font_embedding",
+                    return_value={
+                        "status": "checked",
+                        "unembedded_fonts": ["STSong-Light"],
+                    },
+                ),
+                mock.patch.object(
+                    worker,
+                    "analyze_pdf_layout_for_quality",
+                    return_value={"status": "checked", "issues": []},
+                ),
+                mock.patch.object(
+                    worker,
+                    "render_markdown_pdf",
+                    side_effect=fake_render,
+                ) as render,
+            ):
+                selected = worker.preferred_research_report_pdf(report, "zh")
+                pdf_bytes = pdf.read_bytes()
+
+        self.assertEqual(selected, pdf)
+        self.assertEqual(pdf_bytes, b"new-embedded-pdf")
+        render.assert_called_once_with(report, pdf)
+
+    def test_preferred_research_pdf_rebuilds_current_bad_layout(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            report = root / "report.zh.md"
+            pdf = root / "report.zh.pdf"
+            report.write_text("# 新报告\n", encoding="utf-8")
+            pdf.write_bytes(b"old-orphan-page-pdf")
+            os.utime(pdf, (report.stat().st_mtime + 1, report.stat().st_mtime + 1))
+
+            def fake_render(_source: Path, output: Path) -> Path:
+                output.write_bytes(b"new-compact-pdf")
+                return output
+
+            with (
+                mock.patch.object(
+                    worker,
+                    "analyze_pdf_font_embedding",
+                    return_value={"status": "checked", "unembedded_fonts": []},
+                ),
+                mock.patch.object(
+                    worker,
+                    "analyze_pdf_layout_for_quality",
+                    return_value={
+                        "status": "checked",
+                        "issues": ["orphan_final_pdf_page"],
+                    },
+                ),
+                mock.patch.object(
+                    worker,
+                    "render_markdown_pdf",
+                    side_effect=fake_render,
+                ) as render,
+            ):
+                selected = worker.preferred_research_report_pdf(report, "zh")
+                pdf_bytes = pdf.read_bytes()
+
+        self.assertEqual(selected, pdf)
+        self.assertEqual(pdf_bytes, b"new-compact-pdf")
+        render.assert_called_once_with(report, pdf)
+
     def test_completion_recovery_repaginates_terminal_note_before_model_repair(self) -> None:
         worker = load_worker()
         with tempfile.TemporaryDirectory() as tmp:

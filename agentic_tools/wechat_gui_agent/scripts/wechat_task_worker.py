@@ -4380,7 +4380,18 @@ def preferred_research_report_pdf(report: Path, language: str) -> Path | None:
             and exact_sibling.stat().st_size > 0
             and exact_sibling.stat().st_mtime >= report.stat().st_mtime
         ):
-            return exact_sibling.resolve()
+            font_audit = analyze_pdf_font_embedding(exact_sibling)
+            font_rebuild_required = bool(
+                font_audit.get("status") == "checked"
+                and font_audit.get("unembedded_fonts")
+            )
+            layout_audit = analyze_pdf_layout_for_quality(exact_sibling)
+            layout_rebuild_required = bool(layout_audit.get("issues"))
+            if not font_rebuild_required and not layout_rebuild_required:
+                return exact_sibling.resolve()
+            rebuilt = render_markdown_pdf(report, exact_sibling)
+            if rebuilt is not None:
+                return rebuilt.resolve()
     except OSError:
         pass
     return ensure_markdown_pdf_companion_for_language(report, language)
