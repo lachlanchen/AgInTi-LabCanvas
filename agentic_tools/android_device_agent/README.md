@@ -54,6 +54,14 @@ control and keeps the phone awake while connected. Its tmux pane also retries
 the exact device after a transient USB/ADB disconnect, so a live noVNC transport
 does not remain permanently blank after `scrcpy` exits.
 
+After ADB becomes `unauthorized` or the device disconnects, the primary
+physical-WeChat supervisor and the virtual-WeCom supervisor stay durable and
+idle (no CPU churn) instead of spinning. Once the same device is authorized
+again, both supervisors resume automatically. If an existing
+`labcanvas-android-mix2s` tmux session is missing only the primary window, the
+relay repairs that single window in place without duplicating mirrors or
+restarting unrelated project runtimes.
+
 To start the mirror and bring mobile WeChat to the foreground:
 
 ```bash
