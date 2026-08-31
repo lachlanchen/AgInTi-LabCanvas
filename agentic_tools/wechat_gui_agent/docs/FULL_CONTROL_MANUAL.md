@@ -259,6 +259,16 @@ private component ledger. If WeChat transcodes a returned video, the monitor
 matches XML `originsourcemd5` against that ledger and suppresses the row before
 routing. This prevents a returned MP4 from recursively creating new work.
 
+When the source exists only in Android WeChat, use `labcanvas wechat
+native-save-video`. The command verifies the exact chat, opens the agent-selected
+exact bubble, requests `查看原视频` when offered, invokes native album save, pulls
+the new `DCIM/WeiXin/mmexport...` MediaStore object, probes and checksums the
+host copy, and then deletes the temporary phone file plus MediaStore row. It
+writes `native-video-export.json`; Android media cannot enter AutoPublish unless
+that manifest binds the exact host path/checksum and records
+`device_copy_removed=true`. Screen/player/scrcpy/GUI recordings are forbidden
+as recovery substitutes. If native retrieval fails, stop.
+
 The serialized desktop Linux file chooser remains a preflight fallback only
 when Android proves its exact-title guard failed before sharing began. It uses
 clipboard path paste (`Ctrl+L`, paste absolute path, `Enter`). Uncertain Android
@@ -538,6 +548,22 @@ labcanvas wechat autopublish-video --chat "<CHAT_NAME>" --message-local-id 14 --
 
 `--fetch-gui` opens the official client and clicks the visible video so WeChat
 caches the MP4 before the tool copies it to Nutstore AutoPublish.
+
+When that desktop cache path is unavailable and the exact video is visible on
+the allowlisted Android chat:
+
+```bash
+labcanvas wechat native-save-video \
+  --target "<TARGET_KEY>" \
+  --task-id "<TASK_ID>" \
+  --output-dir "output/wechat_android_intake/<TASK>/native_original" \
+  --filename "<MEANINGFUL_NAME>.mp4" \
+  --video-tap x,y \
+  --json
+```
+
+The command always removes its exact phone-side export after successful host
+verification. It does not offer a recording fallback.
 
 For read-only Shipinhao summaries where the shared media URL expired, keep the
 exact card visible and run `shipinhao_gui_audio_capture.py` with object ID,

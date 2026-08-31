@@ -26,6 +26,7 @@ from wechat_message_shards import (
     parse_message_ref,
 )
 from wechat_mirror import DEFAULT_DB
+from wechat_video_source_policy import require_publishable_video_source
 import wechat_gui_send as gui
 
 
@@ -1351,6 +1352,18 @@ def copy_candidate(candidate: VideoCandidate, *, dest_dir: Path, title: str, rep
         "bytes": candidate.size_bytes,
         "media_id": candidate.media_id,
     }
+    try:
+        source_decision = require_publishable_video_source(candidate.path)
+    except RuntimeError as exc:
+        payload.update(
+            {
+                "ok": False,
+                "status": "native-source-required",
+                "error": str(exc),
+            }
+        )
+        return payload
+    payload["source_provenance"] = source_decision.as_dict()
     if candidate.message_db:
         payload["message_ref"] = f"{candidate.message_db}:{candidate.message_local_id}"
         payload["message_local_id"] = candidate.message_local_id

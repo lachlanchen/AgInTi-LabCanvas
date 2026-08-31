@@ -68,6 +68,7 @@ from wechat_source_recovery import (
     task_needs_source_recovery,
     task_source_text as source_recovery_task_text,
 )
+from wechat_video_source_policy import require_publishable_video_source
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -9123,7 +9124,7 @@ If no exact matching source media is available for "this image", "this PDF", "th
 Follow the routine supervisor contract. The contract is saved in `task.routine_contract`; use it as the routine checklist and update task state through the existing queue/status mechanisms instead of inventing an ad hoc workflow.
 Exception for WeChat video-to-AutoPublish requests: if the task asks to copy/download a WeChat video to Nutstore AutoPublish and the recent context contains a same-chat video row, first run:
 `PYTHONPATH=src python -m agenticapp wechat autopublish-video --chat "<chat>" --sync --fetch-gui --since-minutes 720 --json`
-This opens the chat in the isolated WeChat desktop, clicks the latest visible video so the official client caches the MP4, media-syncs it, and atomically copies it to `/home/lachlan/Nutstore Files/AutoPublish/AutoPublish`. Only report missing source after that command fails or returns no matching video.
+This uses an exact native WeChat cache when one exists. If the desktop cache is unavailable but the exact source is visible in Android WeChat, inspect the guarded exact-chat screen and run `PYTHONPATH=src python -m agenticapp wechat native-save-video --target "<allowlisted-target>" --task-id "<task-id>" --output-dir "<artifact-dir>/native_original" --filename "<meaningful-name>.mp4" --video-tap "x,y" --json`. That routine uses `查看原视频` when offered, saves through WeChat's native album action, verifies the pulled host file, then removes the temporary phone export. Never substitute a screen recording, scrcpy capture, cropped player capture, or GUI recording. If neither exact native route succeeds, stop without processing or publishing.
 If `task.preflight.autopublish_video` has `status: "artifact-ledger-match"` or `status: "copied"`, treat its `target` as the exact source video: it was matched by same-chat task history or WeChat video local_id/stem/size. Non-publish tasks save this source under the task artifact directory; LazyEdit/public publish tasks may copy into the AutoPublish intake when explicitly permitted.
 If `task.preflight.autopublish_video` exists and has `ok: false` for a task with `message_local_ids`, fail closed only after its `artifact_resolution.ok` is also false or missing: do not publish, transcode, or reuse any nearby/older video. Report that neither the exact WeChat cache nor the same-chat artifact ledger contained the referenced source, and include the safe next action.
 
@@ -16289,6 +16290,8 @@ def video_stem_tokens(path: Path) -> set[str]:
 def copy_exact_video_artifact_to_autopublish(source: Path, task: dict[str, Any]) -> Path:
     if is_passive_video_intake_task(task):
         raise RuntimeError("passive video intake cannot write to AutoPublish")
+    source = source.expanduser().resolve()
+    require_publishable_video_source(source)
     dest_dir = Path(os.environ.get("LABCANVAS_AUTOPUBLISH_DIR") or str(DEFAULT_AUTOPUBLISH_DIR)).expanduser()
     dest_dir.mkdir(parents=True, exist_ok=True)
     stem = safe_slug(source.stem)
@@ -19224,6 +19227,7 @@ LazyEdit/AutoPublish video publishing:
   `cd /home/lachlan/DiskMech/Projects/lazyedit && source ~/miniconda3/etc/profile.d/conda.sh && conda activate lazyedit`
 - If the source is a WeChat video, resolve the exact same-chat media first with:
   `PYTHONPATH=src python -m agenticapp wechat autopublish-video --chat "<chat>" --sync --fetch-gui --since-minutes 720 --json`
+- If that exact desktop-cache route cannot recover the source and the Android chat holds it, use `labcanvas wechat native-save-video` with the exact guarded chat and exact visible video tap. The native routine must finish its host checksum/probe and phone-export cleanup. Player/screen/scrcpy recordings are never valid LazyEdit sources; if native recovery fails, stop.
 - For real publishes, verify configured logo settings with:
   `curl -fsS http://127.0.0.1:18787/api/ui-settings/logo_settings | jq .`
 - For subtitle correction, create a correction context file under `{artifact_dir}` from the task JSON, current coalesced request, quoted message, recent history, source/reference rows, visible media metadata, and any user-provided script/transcript/story notes. Pass that file as `--correction-prompt-file`.

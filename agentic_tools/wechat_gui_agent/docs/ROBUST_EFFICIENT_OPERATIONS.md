@@ -1504,18 +1504,29 @@ the worker resolves the source in this order:
    exact local-id rows selected by routing;
 2. run `wechat_autopublish_video.py` with exact `message_local_ids` and
    optionally `--fetch-gui` so the official client/cache path has priority;
-3. if the cache path fails, search only same-chat queued task history for prior
+3. if the exact desktop cache is unavailable and the video is visible in the
+   allowlisted Android chat, run `labcanvas wechat native-save-video`; require
+   native `查看原视频`/album export when offered, host checksum plus `ffprobe`, and
+   verified deletion of the temporary phone MediaStore export;
+4. if both native cache routes fail, search only same-chat queued task history for prior
    `sent_file_paths`, result files, generated-video outputs, and task artifact
    MP4s;
-4. accept a ledger file only when it matches the current/source video row MD5,
+5. accept a ledger file only when it matches the current/source video row MD5,
    or when no MD5 exists and byte length matches that row;
-5. copy the exact match into Nutstore AutoPublish with a `_COMPLETED` name;
-6. pass the original generation/source task summary, supporting prompt/story
+6. copy the exact match into Nutstore AutoPublish with a `_COMPLETED` name;
+7. pass the original generation/source task summary, supporting prompt/story
    snippets, and safe source material into the LazyEdit correction and metadata
    prompt files;
-7. mark old cache-miss refusals or old unverified “submitted publish” bot
+8. mark old cache-miss refusals or old unverified “submitted publish” bot
    messages as obsolete context, not evidence;
-8. run LazyEdit and verify local plus remote publish queues.
+9. run LazyEdit and verify local plus remote publish queues.
+
+Android native intake is fail-closed. `native-video-export.json` must bind the
+exact path and SHA-256, identify `wechat_android_native_album_export`, reject
+automation capture provenance, and include `device_copy_removed=true`. A user
+may intentionally send a video that is itself a screen recording; that content
+is valid when it is the exact native attachment. Creating a fresh recording of
+the WeChat player, scrcpy window, or GUI as a source substitute is never valid.
 
 The guarded GUI cache stage is restart-safe. Before every exact scan it returns
 the chat to the newest messages, scans the bounded history window, chooses the

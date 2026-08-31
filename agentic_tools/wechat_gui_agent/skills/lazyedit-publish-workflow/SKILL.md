@@ -121,7 +121,32 @@ candidates and `--source /abs/video.mp4` when the exact source file is known.
 When a task references a specific WeChat video row, always pass
 `--message-local-id`; this prevents a nearby older cached MP4 from being copied
 or published by mistake. If the exact row cannot be cached, fail closed and ask
-for a resend or a GUI cache retry rather than falling back to another video.
+for a native-source retry rather than falling back to another video.
+
+If the desktop cache does not contain the exact video but it is visible in
+Android WeChat, use the native album route:
+
+```bash
+PYTHONPATH=src python -m agenticapp wechat native-save-video \
+  --target <ALLOWLISTED_TARGET> \
+  --task-id <TASK_ID> \
+  --output-dir <TASK_ARTIFACT_DIR>/native_original \
+  --filename <MEANINGFUL_NAME>.mp4 \
+  --video-tap x,y \
+  --expected-duration-seconds <SECONDS> \
+  --expected-original-size-mb <MB_WHEN_KNOWN> \
+  --json
+```
+
+The command selects `查看原视频` when present, exports with WeChat's native
+album action, pulls the new MediaStore object, validates its duration/size and
+streams, writes a checksum-bound `native-video-export.json`, and removes the
+temporary phone file plus MediaStore row. Host verification always precedes
+phone deletion. The publication gate requires `device_copy_removed=true`.
+Never use screen recording, scrcpy capture, cropped player output, or GUI
+recording as a replacement for the source. If native recovery fails, stop; do
+not send that substitute to LazyEdit. A screen recording intentionally sent by
+the user is valid only when this route recovers it as the exact attachment.
 
 After import, find the LazyEdit `video_id`:
 

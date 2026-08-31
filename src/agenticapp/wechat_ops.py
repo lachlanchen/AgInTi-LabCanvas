@@ -339,6 +339,27 @@ def add_wechat_parser(subparsers: argparse._SubParsersAction) -> None:
     finder.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
     finder.set_defaults(func=cmd_shipinhao_transcribe)
 
+    native_video = nested.add_parser(
+        "native-save-video",
+        help="Save one exact Android WeChat video through the native album and remove the phone export.",
+    )
+    native_video.add_argument("--serial", default=os.environ.get("ANDROID_SERIAL", ""))
+    native_video.add_argument("--adb", default=os.environ.get("ADB", "adb"))
+    native_video.add_argument("--target", required=True, help="Allowlisted Android WeChat target key.")
+    native_video.add_argument("--targets-file", type=Path)
+    native_video.add_argument("--task-id", required=True)
+    native_video.add_argument("--output-dir", type=Path, required=True)
+    native_video.add_argument("--filename", default="wechat-native-video.mp4")
+    native_video.add_argument("--video-tap", required=True, help="Exact visible video center as x,y.")
+    native_video.add_argument("--older-pages", type=int, default=0)
+    native_video.add_argument("--expected-duration-seconds", type=float, default=0.0)
+    native_video.add_argument("--duration-tolerance-seconds", type=float, default=2.0)
+    native_video.add_argument("--expected-original-size-mb", type=float, default=0.0)
+    native_video.add_argument("--original-download-timeout", type=float, default=600.0)
+    native_video.add_argument("--album-export-timeout", type=float, default=120.0)
+    native_video.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+    native_video.set_defaults(func=cmd_native_save_video)
+
     autopub = nested.add_parser("autopublish-video", help="Copy the latest mirrored WeChat video to Nutstore AutoPublish.")
     autopub.add_argument("--chat", action="append", default=[], help="Chat/group name to search. Repeatable. Defaults to all mirrored chats.")
     autopub.add_argument("--source", type=Path, help="Explicit local video path. Bypasses the mirror query.")
@@ -1160,6 +1181,7 @@ def selftest_contract_for_suite(suite: str) -> list[str]:
             "missing LazyEdit publish job triggers the worker's real publish command",
             "existing LazyEdit/remote job is monitored and not duplicated",
             "remote platform login blockers deliver an exact job-scoped QR and keep poststage polling",
+            "Android publication intake rejects player captures and requires a verified native export with phone cleanup",
         ],
         "transport-resume": [
             "WeChat queue rows carry a message-transport execution contract",
@@ -1271,6 +1293,13 @@ def publish_poststage_selftest_checks() -> list[dict[str, str]]:
         {
             "id": "remote_login_log_detection",
             "test": prefix + "test_detect_remote_publish_login_blocker_from_log",
+        },
+        {
+            "id": "android_native_source_guard",
+            "test": (
+                "tests.test_wechat_native_video_source.WeChatNativeVideoSourceTests."
+                "test_automation_capture_is_rejected_at_autopublish_copy_boundary"
+            ),
         },
     ]
 
@@ -2278,6 +2307,44 @@ def cmd_autopublish_video(args: argparse.Namespace) -> int:
         command.append("--list")
     if args.dry_run:
         command.append("--dry-run")
+    if getattr(args, "json", False):
+        command.append("--json")
+    return run_command(command, capture=False).returncode
+
+
+def cmd_native_save_video(args: argparse.Namespace) -> int:
+    command = [
+        sys.executable,
+        str(SCRIPTS / "wechat_android_native_video_save.py"),
+        "--target",
+        args.target,
+        "--task-id",
+        args.task_id,
+        "--output-dir",
+        str(args.output_dir),
+        "--filename",
+        args.filename,
+        "--video-tap",
+        args.video_tap,
+        "--older-pages",
+        str(args.older_pages),
+        "--expected-duration-seconds",
+        str(args.expected_duration_seconds),
+        "--duration-tolerance-seconds",
+        str(args.duration_tolerance_seconds),
+        "--expected-original-size-mb",
+        str(args.expected_original_size_mb),
+        "--original-download-timeout",
+        str(args.original_download_timeout),
+        "--album-export-timeout",
+        str(args.album_export_timeout),
+    ]
+    if args.serial:
+        command += ["--serial", args.serial]
+    if args.adb:
+        command += ["--adb", args.adb]
+    if args.targets_file:
+        command += ["--targets-file", str(args.targets_file)]
     if getattr(args, "json", False):
         command.append("--json")
     return run_command(command, capture=False).returncode

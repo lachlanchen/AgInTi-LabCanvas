@@ -9068,6 +9068,23 @@ stderr: noisy internal trace
             with self.assertRaisesRegex(RuntimeError, "cannot write to AutoPublish"):
                 worker.copy_exact_video_artifact_to_autopublish(source, task)
 
+    def test_automation_player_capture_cannot_write_autopublish(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "screen_raw.mp4"
+            source.write_bytes(b"player-capture")
+            task = {
+                "id": "video-publish-capture-rejected",
+                "request": "publish this video",
+                "route_decision": {
+                    "route_kind": "video_publish_existing",
+                    "public_publish_allowed": True,
+                },
+            }
+            with self.assertRaisesRegex(RuntimeError, "WECHAT_NATIVE_SOURCE_REQUIRED"):
+                worker.copy_exact_video_artifact_to_autopublish(source, task)
+
     def test_passive_video_intake_missing_source_retries_without_chat_message(self) -> None:
         worker = load_worker()
         task = {
