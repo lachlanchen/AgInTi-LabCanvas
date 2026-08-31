@@ -42,7 +42,13 @@ Default endpoints:
 
 - X display: `:99`
 - VNC: `127.0.0.1:5929`
-- noVNC: `http://127.0.0.1:6129/vnc.html?host=127.0.0.1&port=6129&autoconnect=1&resize=scale`
+- noVNC: `http://127.0.0.1:6129/vnc.html?host=127.0.0.1&port=6129&autoconnect=1&resize=scale&reconnect=1&reconnect_delay=1000`
+
+If the browser canvas turns white but the Android mirror is still healthy,
+run `scripts/mix2s transport-restart`. It replaces only websockify and keeps
+Xvfb, scrcpy, phone state, WeChat, and WeCom intact. A viewer opened with the
+URL above reconnects automatically.
+
 - tmux session: `labcanvas-android-mix2s`
 
 The launcher runs:

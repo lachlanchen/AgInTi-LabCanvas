@@ -36,7 +36,7 @@ CONTROL_PRIORITY="$ROOT/agentic_tools/android_device_agent/.private/android_cont
 usage() {
   cat <<'EOF'
 Usage:
-  android_device_desktop.sh [on|off|start|stop|restart|status|dual|single|wechat|wecom] [--serial SERIAL] [--open-wechat]
+  android_device_desktop.sh [on|off|start|stop|restart|transport-restart|status|dual|single|wechat|wecom] [--serial SERIAL] [--open-wechat]
 
 Starts a dedicated tmux-held noVNC desktop running scrcpy for an Android device.
 
@@ -44,6 +44,8 @@ Actions:
   on, start         Wake the phone and start its scrcpy/noVNC desktop.
   off, stop         Stop the complete desktop stack and sleep the phone.
   restart           Perform a complete off/on cycle.
+  transport-restart Restart only noVNC/websockify. Preserve Xvfb, scrcpy,
+                    phone state, WeChat, and WeCom.
   status            Report mirror, transport, and phone power state.
   dual              Keep WeChat physical and WeCom virtual side by side.
   single, wecom      Return to the automation-safe physical WeCom mirror.
@@ -63,7 +65,7 @@ EOF
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    on|off|start|stop|restart|status|dual|single|wechat|wecom) ACTION="$1"; shift ;;
+    on|off|start|stop|restart|transport-restart|status|dual|single|wechat|wecom) ACTION="$1"; shift ;;
     --serial) SERIAL="$2"; shift 2 ;;
     --open-wechat) OPEN_WECHAT="1"; shift ;;
     --no-wake) WAKE_DEVICE="0"; shift ;;
@@ -145,6 +147,11 @@ known_serial() {
 port_listening() {
   command -v ss >/dev/null 2>&1 &&
     ss -ltnH 2>/dev/null | awk -v suffix=":$1" '$4 ~ (suffix "$") {found=1} END {exit !found}'
+}
+
+novnc_url() {
+  printf '%s\n' \
+    "http://127.0.0.1:$NOVNC_PORT/vnc.html?host=127.0.0.1&port=$NOVNC_PORT&autoconnect=1&resize=scale&reconnect=1&reconnect_delay=1000"
 }
 
 regex_escape() {
@@ -395,7 +402,7 @@ status() {
   fi
   if port_listening "$VNC_PORT" && port_listening "$NOVNC_PORT"; then
     echo "transport: online (VNC $VNC_PORT, noVNC $NOVNC_PORT)"
-    echo "noVNC: http://127.0.0.1:$NOVNC_PORT/vnc.html?host=127.0.0.1&port=$NOVNC_PORT&autoconnect=1&resize=scale"
+    echo "noVNC: $(novnc_url)"
   else
     echo "transport: off"
   fi
@@ -408,6 +415,34 @@ status() {
   else
     echo "phone: no saved or authorized device"
   fi
+}
+
+restart_novnc_transport() {
+  local log_dir
+  need curl
+  need websockify
+  if ! port_listening "$VNC_PORT"; then
+    echo "Cannot restart noVNC: VNC relay $VNC_PORT is not listening." >&2
+    return 1
+  fi
+  stop_matching_processes "noVNC relay $NOVNC_PORT" \
+    "^(([^[:space:]]*/)?python3[[:space:]]+)?([^[:space:]]*/)?websockify[[:space:]].*127\\.0\\.0\\.1:$NOVNC_PORT[[:space:]]+127\\.0\\.0\\.1:$VNC_PORT([[:space:]]|$)"
+  log_dir="$ROOT/output/android_device_agent/$(date +%F)"
+  mkdir -p "$log_dir"
+  websockify -D --web=/usr/share/novnc \
+    --log-file="$log_dir/${NAME}_novnc.log" \
+    "127.0.0.1:$NOVNC_PORT" "127.0.0.1:$VNC_PORT"
+  for _ in {1..30}; do
+    if curl -fsS --max-time 2 -o /dev/null \
+      "http://127.0.0.1:$NOVNC_PORT/vnc.html"; then
+      echo "noVNC transport restored without restarting the Android mirror."
+      echo "noVNC: $(novnc_url)"
+      return 0
+    fi
+    sleep 0.1
+  done
+  echo "noVNC relay $NOVNC_PORT did not become HTTP-ready." >&2
+  return 1
 }
 
 sleep_device() {
@@ -545,6 +580,7 @@ case "$ACTION" in
       ensure_dual_layout
     fi
     ;;
+  transport-restart) restart_novnc_transport ;;
   status) status ;;
   dual)
     save_layout dual

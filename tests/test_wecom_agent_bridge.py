@@ -3007,6 +3007,7 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertIn("autofit-loop", source)
         self.assertIn("xdotool getdisplaygeometry", source)
         self.assertIn("resize=scale", source)
+        self.assertIn("reconnect=1", source)
         self.assertIn("WECOM_CLIENT_LAYERED_NATIVE_GEOMETRY", source)
         self.assertIn("native geometry", source)
         self.assertIn("supervise_client", source)
@@ -3070,6 +3071,7 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertNotIn("vnc_lite.html", source)
         self.assertIn("/vnc.html?", android_source)
         self.assertIn("resize=scale", android_source)
+        self.assertIn("reconnect=1", android_source)
         self.assertNotIn("vnc_lite.html", android_source)
         self.assertIn("ANDROID_DEVICE_RETRY_SECONDS", android_source)
         self.assertIn(
@@ -3079,7 +3081,12 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertIn("while true; do $command || true", android_source)
         self.assertIn("mirror: waiting for scrcpy retry", android_source)
         self.assertIn(
-            "on|off|start|stop|restart|status|dual|single|wechat|wecom",
+            "on|off|start|stop|restart|transport-restart|status|dual|single|wechat|wecom",
+            android_source,
+        )
+        self.assertIn("restart_novnc_transport", android_source)
+        self.assertIn(
+            "Preserve Xvfb, scrcpy,",
             android_source,
         )
         self.assertIn("--new-display=1080x2160/440", android_source)

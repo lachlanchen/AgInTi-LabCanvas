@@ -53,7 +53,7 @@ The routine starts only these dedicated resources:
 The full-client URL is:
 
 ```text
-http://127.0.0.1:6129/vnc.html?host=127.0.0.1&port=6129&autoconnect=1&resize=scale
+http://127.0.0.1:6129/vnc.html?host=127.0.0.1&port=6129&autoconnect=1&resize=scale&reconnect=1&reconnect_delay=1000
 ```
 
 `on` wakes the display, dismisses only a non-secure keyguard, and enables
@@ -99,3 +99,12 @@ Expected on state reports a running tmux session, connected mirror, online
 transport, current `single` or `dual` layout, and the noVNC URL. If the phone is
 disconnected, `off` still cleans the computer-side stack and reports that it
 could not change phone power.
+If the browser view turns white while `scripts/mix2s status` still reports a
+connected mirror, repair only the viewer transport:
+
+```bash
+scripts/mix2s transport-restart
+```
+
+Reload the URL above if the old tab did not include `reconnect=1`. This does
+not restart scrcpy, Xvfb, WeChat, WeCom, or the phone.

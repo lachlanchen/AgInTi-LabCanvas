@@ -22,7 +22,7 @@ LOGIN_FALLBACK_STAMP="$LOG_DIR/login-fallback.stamp"
 DOWNLOAD_URL="${WECOM_CLIENT_DOWNLOAD_URL:-https://work.weixin.qq.com/wework_admin/commdownload?platform=win&from=wwindex}"
 EXE_UNIX="$PREFIX/drive_c/Program Files (x86)/WXWork/WXWork.exe"
 EXE_WINDOWS='C:\Program Files (x86)\WXWork\WXWork.exe'
-NOVNC_URL="http://127.0.0.1:${NOVNC_PORT}/vnc.html?host=127.0.0.1&port=${NOVNC_PORT}&autoconnect=1&resize=scale"
+NOVNC_URL="http://127.0.0.1:${NOVNC_PORT}/vnc.html?host=127.0.0.1&port=${NOVNC_PORT}&autoconnect=1&resize=scale&reconnect=1&reconnect_delay=1000"
 APP_PATTERN='C:\\Program Files \(x86\)\\WXWork\\WXWork.exe'
 LAYERED_NATIVE_GEOMETRY="${WECOM_CLIENT_LAYERED_NATIVE_GEOMETRY:-1}"
 RESTART_WINDOW_SECONDS="${WECOM_CLIENT_RESTART_WINDOW_SECONDS:-3600}"

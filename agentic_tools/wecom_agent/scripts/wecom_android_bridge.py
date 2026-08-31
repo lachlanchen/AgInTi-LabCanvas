@@ -1016,7 +1016,7 @@ def initialize_config(
         ),
         "novnc_url": str(
             existing.get("novnc_url")
-            or "http://127.0.0.1:6129/vnc.html?host=127.0.0.1&port=6129&autoconnect=1&resize=scale"
+            or "http://127.0.0.1:6129/vnc.html?host=127.0.0.1&port=6129&autoconnect=1&resize=scale&reconnect=1&reconnect_delay=1000"
         ),
         "state_db": str(existing.get("state_db") or DEFAULT_STATE_DB),
         "queue": str(existing.get("queue") or DEFAULT_QUEUE),
