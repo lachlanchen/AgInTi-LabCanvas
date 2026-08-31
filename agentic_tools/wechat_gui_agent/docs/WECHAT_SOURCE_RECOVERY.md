@@ -23,7 +23,13 @@ agent for matching `research_summary` tasks.
 5. Parse `#js_content`, title, account, author, publish time, and image URLs.
 6. Save successful HTML and Markdown under the ignored task artifact directory
    and a hashed private cache under `.private/source_recovery_cache/`.
-7. If extraction remains blocked, give the worker exact-title/account,
+7. If no canonical URL is present but the exact Android source row contains a
+   native article card, `wechat_android_source_recovery.py` re-enters the exact
+   allowlisted chat, opens the matching title, copies the canonical link through
+   WeChat's native share menu, and reruns the same extractor. The recovered page
+   is accepted only when its title equals the card title or has a strong
+   publisher-suffix match.
+8. If extraction remains blocked, give the worker exact-title/account,
    `__biz`/`mid`/`sn`, DOI, arXiv, and GitHub reconstruction queries. The agent
    searches canonical papers, repositories, author pages, and trustworthy
    same-title copies, then labels the result as reconstructed.
@@ -65,6 +71,30 @@ the current Finder card. Media evidence runs before comment intelligence:
    object-ID/hash manifest.
 7. The worker discovers that manifest, validates it, transcribes the source-only
    audio, and writes `task.preflight.shipinhao_media_transcript`.
+
+When desktop WeChat is unavailable but the allowlisted MIX 2S transport is
+active, the same fallback is owned by `wechat_android_source_recovery.py`:
+
+1. Prewarm the source-audited `sndcpy` helper, then explicitly return to and
+   verify the exact source chat before scanning any card.
+2. Open only a card whose visible title/author terms match the exact task packet.
+3. Mute the physical phone speaker while capturing Android system audio and the
+   native player screen. Host or phone volume settings do not define whether
+   the stored stream contains audio.
+4. Keep the full raw capture private. Detect a repeated player loop only when
+   both audio correlation and visual-frame evidence agree, then produce one
+   source-duration recovered MP4 and WAV plus a source-ID/hash manifest.
+5. Validate that manifest in `shipinhao_media_transcribe.py`, transcribe it, and
+   create a bounded H.264/AAC delivery copy when the verified source exceeds the
+   normal mobile share size. The complete private source remains unchanged.
+6. Deliver the playable MP4, useful transcript, and one natural summary through
+   the exact-chat sender ledger. A committed native share is not downgraded just
+   because restoring the review surface later fails.
+
+The Android fallback is additive. Do not remove the desktop recovery code or
+pretend a desktop QR/login state is healthy. Whichever transport is selected
+must preserve the same source message ID, chat identity, object identity, and
+outbound idempotency contract.
 
 Never run `wx_channels_download` as a permanent root/TUN interceptor. A
 long-lived TUN provider can replace normal routes, break WeChat networking, and

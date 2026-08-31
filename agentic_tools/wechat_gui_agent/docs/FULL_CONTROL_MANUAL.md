@@ -527,8 +527,21 @@ exact card visible and run `shipinhao_gui_audio_capture.py` with object ID,
 title, author, and distinctive identity terms. The helper uses the same GUI
 serialization lane, records only the matching native player stream, and stops
 when the feed advances. Its private `verified-capture.json` is automatically
-consumed by the next worker preflight; do not send or commit the audio, full
-transcript, signed URL, or identity screenshots.
+consumed by the next worker preflight. Keep raw audio, signed URLs, hashes, and
+identity screenshots private and uncommitted; the worker may return the
+source-scoped reader-facing transcript when the current intake contract asks
+for it.
+
+If desktop WeChat is unavailable and the source row came from the allowlisted
+Android intake, the worker invokes `wechat_android_source_recovery.py` instead
+of asking for a pasted link. It returns to the exact chat after audio-helper
+prewarm, opens the exact native article/Finder card, and emits only a
+source-scoped manifest. Article cards copy and verify their canonical link.
+Finder cards capture muted system audio plus screen video, reject identity
+changes, and trim repeated playback only with matching audio and visual proof.
+The worker may send a bounded playable H.264/AAC copy while retaining the full
+verified capture privately. This mobile lane supplements rather than deletes
+the desktop lane.
 
 For bot-sent/generated videos, `wechat_task_worker.py` runs the exact
 message-local-id cache path first. If that fails, it checks the same-chat

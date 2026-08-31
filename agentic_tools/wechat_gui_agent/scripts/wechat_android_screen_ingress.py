@@ -34,8 +34,8 @@ if str(ANDROID_SCRIPTS) not in sys.path:
 
 from android_control_lease import (
     AndroidControlBusy,
+    cooperative_android_control,
     passive_android_control,
-    priority_android_control,
     serialized_android_clipboard,
 )
 from wechat_android_ingress import (
@@ -215,14 +215,13 @@ class AndroidWechatScreenIngress:
                 self.set_meta("last_poll_at", utc_now())
                 return safe_result(skipped="android_control_busy")
             try:
-                with priority_android_control(
+                with cooperative_android_control(
                     lock_path=navigator.device_lock_path(),
                     priority_path=DEFAULT_PRIORITY,
                     purpose="personal_wechat_screen_ingress",
                     timeout_seconds=float(
                         os.environ.get("WECHAT_ANDROID_SCREEN_LOCK_TIMEOUT", "30")
                     ),
-                    lease_seconds=90.0,
                 ):
                     result = self.run_with_restore(navigator)
             except (AndroidControlBusy, TimeoutError):

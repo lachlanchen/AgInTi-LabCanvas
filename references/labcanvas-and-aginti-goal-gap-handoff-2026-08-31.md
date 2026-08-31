@@ -1,0 +1,271 @@
+# LabCanvas And AgInTi Goal And Gap Handoff
+
+Date: 2026-08-31
+
+Status: active engineering contract and current verification checkpoint
+
+## Name And Intent
+
+The product name is **LabCanvas**, pronounced as two ordinary English words:
+`Lab Canvas` (`lab CAN-vuhs`). It is not Canva, commerce, commas, or Canyas;
+those variants came from speech recognition.
+
+The user's intended system is simple at the interaction boundary:
+
+```text
+WeChat / WeCom / Web / CLI
+        -> one persistent exact-chat agent session
+        -> mature routines and tools
+        -> verified useful response or artifact in the same chat
+```
+
+The implementation can be sophisticated, but using it should feel like talking
+to a capable colleague. A message must not disappear, stall behind unrelated
+work, trigger repetitive logs, or require the user to restate established
+context and tool knowledge.
+
+This checkpoint supplements the full governing contract in
+`references/labcanvas-conversation-derived-system-contract-2026-08-30.md`.
+It records the normalized two-track goal, the latest verified progress, and the
+remaining gap after reviewing the conversation and current runtime evidence.
+
+## Normalized Two-Track Goal
+
+### Track A: LabCanvas
+
+LabCanvas owns the application and operational system:
+
+- exact WeChat, WeCom, web, and CLI message transport;
+- one isolated resumable session per chat or DM;
+- complete same-chat context, consecutive-message coverage, and interruptions;
+- durable task, artifact, delivery, retry, and schedule state;
+- profile-specific emphasis without cross-chat leakage;
+- deterministic identity, permission, idempotency, and safety gates;
+- mature routine entry points for LazyEdit, LALACHAN/Xiaoyunque, Musia, CAD,
+  PCB, TeX/PDF, presentations, research, protein structure, images, audio,
+  video, documents, books, and other integrated tools;
+- concise natural delivery to the exact source chat;
+- truthful health and automatic bounded recovery after failure or reboot.
+
+LabCanvas must remain operational when a supported backend changes. A weaker
+model may reduce reasoning quality, but it must not change message coverage,
+source identity, permission boundaries, queue semantics, schedule timing, or
+artifact delivery guarantees.
+
+### Track B: AgInTi
+
+AgInTi is a general agent runtime, not a collection of LabCanvas group rules.
+It owns:
+
+- persistent sessions, provider handoff, compaction, and memory continuity;
+- planning, tool selection, web research, and recovery from partial state;
+- understanding an authoritative task packet and later interruptions;
+- using an existing routine rather than needlessly recreating it;
+- validating evidence before claiming completion;
+- retaining as much DeepSeek or LocalLLM capability as the provider genuinely
+  offers.
+
+Reusable runtime defects belong in AgInTi. Chat names, schedule policy,
+personal preferences, publishing authorization, and workstation-specific tool
+contracts belong in LabCanvas or the owning project skill.
+
+### Boundary Rule
+
+The backend agent decides **what the request means and what to do next**.
+LabCanvas and its routines make **the mechanics reliable and auditable**.
+
+Do not hardcode conversational answers in LabCanvas. Do not ask AgInTi to
+reimplement stable media acquisition, LazyEdit publication, CAD export, PDF
+compilation, browser control, or delivery mechanics on every task.
+
+## Conversation-Derived Requirements
+
+The repeated requirements reduce to the following system behavior:
+
+1. Treat every genuine inbound message as an immutable source event.
+2. Coalesce consecutive messages when that improves the answer, while retaining
+   a completion disposition for every source event.
+3. Feed later same-chat messages into the active task as interruptions. A newer
+   direction invalidates stale worker output before it can be delivered.
+4. Reply promptly for ordinary chat. Let substantial work continue durably and
+   return the useful result when finished.
+5. Do not bombard chats with logs, raw paths, model traces, repeated
+   acknowledgements, or duplicate files.
+6. Preserve sender and quoted-message attribution in group discussion.
+7. Keep each chat's context, memory, files, and artifacts isolated.
+8. Use exact original images, audio, videos, files, cards, and links. Never
+   substitute by proximity or modification time.
+9. A bare ordinary video is save-only. Public publication requires explicit
+   current-message intent and one exact video identity.
+10. Video publication uses LazyEdit with chat context for subtitle correction
+    and a separate concise metadata brief, then verifies requested platforms.
+11. A Shipinhao card in a source-reading chat should recover the exact video,
+    transcribe verified audio, summarize it naturally, and return the useful
+    video/transcript once. A Gongzhonghao card should recover and read the full
+    article when possible.
+12. Images, voice, PDFs, Word files, and archives should be read and used, not
+    merely acknowledged by checksum.
+13. Schedules run once immediately when created or changed, then at the
+    configured time. Daily jobs are independent of conversational quiet hours.
+14. Schedule retries reuse the stored output and exact occurrence identity;
+    they do not regenerate or replay after reboot.
+15. Explicit reversible local work should proceed without needless permission
+    prompts. Login, CAPTCHA, payment, publication, deletion, and other
+    irreversible external actions keep their real human gates.
+16. Desktop and Android transports are additive. A mobile fallback must not
+    delete or silently replace the desktop implementation.
+
+## Verified Current Reality
+
+### Exact Shipinhao Acceptance
+
+A real Shipinhao card from the Shares profile was processed end to end through
+the Android-native fallback:
+
+- the exact source chat and card identity were bound before capture;
+- native playback video and system audio were captured with the phone speaker
+  muted;
+- repeated playback was bounded using audio and visual evidence;
+- a full-duration source-scoped MP4 was retained privately;
+- the audio was transcribed into a timestamped transcript;
+- a natural summary, transcript artifact, and playable mobile-sized MP4 were
+  delivered to the exact source chat;
+- the queue row reached `done` with verified file-send evidence and no public
+  action.
+
+This is now a reusable worker path, not an operator-only procedure.
+
+### Message And Worker Correctness
+
+The current scoped validation passed:
+
+- 62 Android source, sender, ingress, and control-lease tests;
+- 498 worker/orchestration tests;
+- the complete guarded WeChat self-test, including exact message ledgers,
+  interruption preservation, passive-video safety, document/audio intake,
+  source recovery, LazyEdit poststage repair, and duplicate prevention;
+- 47 EchoMind scheduler tests after adding monotonic repair and busy-run
+  suppression.
+
+The final guarded startup suite passed all 97 checks after adding the two
+Android-native source checks. The complete LabCanvas repository suite passed
+all 1,730 tests.
+
+AgInTiFlow `0.20.295` also passed its syntax, safe-chat, deep-research,
+truthful-completion, and persistent-session smoke suites. After the recorded
+LocalLLM maintenance completion marker appeared, one isolated live LabCanvas
+turn selected AgInTi, completed in about eight seconds, returned the exact
+requested response, created no tool action, and modified no project source.
+
+Worker execution generations now fence stale in-memory workers. A manual
+reprocess or successor claim can leave diagnostic artifacts, but its older
+message/files cannot overwrite the queue row or reach chat delivery.
+
+### Queue And Schedule State
+
+At this checkpoint:
+
+- WeChat and WeCom queues have no active, stale, recently failed, or
+  delivery-blocked tasks requiring immediate attention;
+- the career analysis and memo organizer for 2026-08-31 are delivered;
+- the LabAgent idle scheduler is alive;
+- EchoMind's six-hour schedule is alive;
+- EchoMind's first previous-day PDF attempt was rejected because one repair
+  removed required romaji and, more fundamentally, there were zero readable
+  August 30 source messages.
+
+EchoMind repair is now monotonic: a candidate that introduces a deterministic
+defect absent from the current body is discarded. A manual immediate invocation
+also returns `in_progress` when the authoritative scheduled transaction already
+holds the lock, instead of waiting and generating a duplicate report.
+When the exact previous day has no readable language material, the occurrence
+now terminates as `skipped_no_source`: it sends nothing, clears retry state, and
+does not ask a model to invent a tutorial. Current health shows no EchoMind PDF
+error or pending retry.
+
+### Transport State
+
+The Android device is authorized and the Android intake/sender paths are active.
+The desktop personal-WeChat client is currently at `login_required`; health now
+reports that truth instead of treating a live polling loop as a logged-in
+client. Compact operator health reports `operational=true`, `degraded=true`:
+both six-route phone-ingress lanes are fresh and reach the agent, while the
+desktop issue remains visible. The desktop path is preserved for later login
+and review.
+
+## Remaining Gaps
+
+### P0: Unified Personal-WeChat Availability
+
+Compact health now separates operational phone ingress from the degraded
+desktop path, while the detailed desktop-centered view still returns a false
+top-level `ok`. The next correction is to make every health surface express the
+same lane-aware semantics:
+
+- desktop unavailable must stay truthful;
+- Android readiness must be measured from exact ingress and send evidence, not
+  merely ADB authorization;
+- a chat is operational when at least one permitted source and delivery lane is
+  proven usable;
+- desktop recovery must not interrupt healthy Android work, and vice versa.
+
+Acceptance: one new exact Android text message is ingested, routed, answered,
+and verified once while desktop WeChat remains logged out; health reports the
+usable Android lane and the degraded desktop lane separately.
+
+### P1: Android Gongzhonghao Live Acceptance
+
+The canonical-link and title-identity route is implemented and unit-tested, but
+still needs one harmless live native article-card acceptance test. It must open
+the exact same-chat card, copy its canonical URL, read the body, and send one
+concise summary without browser verification or cross-chat selection.
+
+### P1: Burst And Interrupt Live Acceptance
+
+Unit coverage proves source ledgers and stale-worker fencing. A harmless live
+test should still send several consecutive fragments plus one correction while
+work is active, then verify one coherent corrected answer and a disposition for
+every source row.
+
+### P1: Schedule Delivery Under Transport Failure
+
+Generation and delivery state are separated, but live acceptance should hold a
+due artifact while one transport is unavailable and deliver the same artifact
+once when an exact lane recovers. It must not rerun research or create a second
+file identity.
+
+### P2: AgInTi Capability Attribution
+
+AgInTi remains the configured primary backend. Continue representative tests
+for ordinary chat, research, files, schedules, CAD, publication supervision,
+and recovery. Compare raw provider output, AgInTi output, and routine evidence
+before deciding where to fix a failure.
+
+Do not start LocalLLM inference during an active maintenance fence. The current
+maintenance workflow now records completion, so normal provider handoff is
+permitted again; any future fence must be honored in the same way.
+
+## Next Acceptance Order
+
+1. Prove one live Android text round trip while desktop WeChat is unavailable.
+2. Prove one Android Gongzhonghao full-text round trip.
+3. Prove a live consecutive-message interruption turn.
+4. Prove deferred schedule delivery across a transport outage.
+5. Prove the next source-bearing EchoMind day compiles and delivers one accepted
+   PDF, while a source-empty day remains a quiet terminal skip.
+6. Run one bounded DeepSeek/AgInTi task through the normal LabCanvas queue and
+   attribute any quality loss to the correct layer.
+7. Commit and push only scoped source, tests, and documentation; keep private
+   captures, raw chat state, credentials, and runtime artifacts ignored.
+
+## Definition Of Done
+
+The campaign is not complete because one video worked or one test suite passed.
+The system is considered operational when ordinary users can send text, media,
+links, files, interruptions, and tool requests through an exact chat and obtain
+one useful verified result without operator rescue; schedules remain unique and
+recoverable; irreversible actions remain gated; and changing between AgInTi and
+another supported backend does not break the transport contract.
+
+The long-running improvement goal therefore remains active after this
+checkpoint.

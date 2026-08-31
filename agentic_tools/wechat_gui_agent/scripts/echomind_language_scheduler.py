@@ -1030,6 +1030,23 @@ def daily_pdf_requires_full_rewrite(issues: list[str]) -> bool:
     )
 
 
+def daily_pdf_repair_regressions(
+    current: str,
+    candidate: str,
+    *,
+    source_messages: list | None = None,
+) -> list[str]:
+    """Reject a repair that creates a deterministic defect already absent."""
+
+    current_issues = set(
+        daily_pdf_contract_issues(current, source_messages=source_messages)
+    )
+    candidate_issues = set(
+        daily_pdf_contract_issues(candidate, source_messages=source_messages)
+    )
+    return sorted(candidate_issues - current_issues)
+
+
 def audit_daily_pdf_body(
     body: str,
     *,
@@ -1426,6 +1443,19 @@ def run_daily_pdf(
     state["last_daily_pdf_attempt_at"] = current.isoformat(timespec="seconds")
     save_state(state)
     source_messages = previous_day_language_messages(config, yesterday)
+    if not source_messages:
+        outcome = {
+            "date": yesterday,
+            "status": "skipped_no_source",
+            "reason": "No readable exact-chat language material exists for the previous day.",
+        }
+        state["last_daily_pdf_date"] = yesterday
+        state["last_daily_pdf_outcome"] = outcome
+        state.pop("pending_daily_pdf", None)
+        state.pop("last_daily_pdf_error", None)
+        state.pop("last_daily_pdf_error_at", None)
+        save_state(state)
+        return outcome
     history_payload = build_context_from_messages(
         source_messages,
         (
@@ -1513,10 +1543,19 @@ only to personalize explanation; do not quote it or replace the previous-day sou
                 issues=issues,
                 audit_feedback=cumulative_daily_pdf_audit_feedback(audit_history),
             )
+            regressions = daily_pdf_repair_regressions(
+                body,
+                repaired_body,
+                source_messages=source_messages,
+            ) if repaired_body else []
+            if regressions:
+                rewrite_result["introduced_contract_issues"] = regressions
             repair_results.append(rewrite_result)
             full_rewrite_used = True
             if not repaired_body or repaired_body == body:
                 break
+            if regressions:
+                continue
             body = repaired_body
             (out_dir / f"{artifact_stem}.reauthored.texbody").write_text(
                 body,
@@ -1534,9 +1573,22 @@ only to personalize explanation; do not quote it or replace the previous-day sou
         )
         repair_results.append(repair_result)
         patch_issues = list(repair_result.get("repair_patch_issues") or [])
+        regressions = daily_pdf_repair_regressions(
+            body,
+            repaired_body,
+            source_messages=source_messages,
+        ) if repaired_body and repaired_body != body else []
+        if regressions:
+            repair_result["introduced_contract_issues"] = regressions
+            patch_issues.extend(
+                f"repair_introduced_{issue}" for issue in regressions
+            )
+            repair_result["repair_patch_issues"] = list(dict.fromkeys(patch_issues))
         if patch_issues:
             if full_rewrite_used:
-                break
+                # The attempt is discarded; preserve the last valid body and
+                # let the next bounded pass try a different complete section.
+                continue
             repaired_body, rewrite_result = rewrite_daily_pdf_body(
                 body,
                 report_date=yesterday,
@@ -1546,10 +1598,19 @@ only to personalize explanation; do not quote it or replace the previous-day sou
                 issues=issues,
                 audit_feedback=cumulative_daily_pdf_audit_feedback(audit_history),
             )
+            regressions = daily_pdf_repair_regressions(
+                body,
+                repaired_body,
+                source_messages=source_messages,
+            ) if repaired_body else []
+            if regressions:
+                rewrite_result["introduced_contract_issues"] = regressions
             repair_results.append(rewrite_result)
             full_rewrite_used = True
             if not repaired_body or repaired_body == body:
                 break
+            if regressions:
+                continue
             repair_suffix = "reauthored"
         else:
             repair_suffix = (
@@ -1660,11 +1721,24 @@ def daily_pdf_delivery_recorded(config: dict, pdf: Path) -> bool:
     )
 
 
-def run_daily_pdf_if_due(*, deliver: bool = True, force: bool = False, now: datetime | None = None) -> dict | None:
+def run_daily_pdf_if_due(
+    *,
+    deliver: bool = True,
+    force: bool = False,
+    now: datetime | None = None,
+    skip_if_busy: bool = False,
+) -> dict | None:
     """Run and persist the independent daily PDF transaction."""
     DAILY_PDF_LOCK.parent.mkdir(parents=True, exist_ok=True)
     with DAILY_PDF_LOCK.open("a+", encoding="utf-8") as lock_handle:
-        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+        lock_flags = fcntl.LOCK_EX | (fcntl.LOCK_NB if skip_if_busy else 0)
+        try:
+            fcntl.flock(lock_handle.fileno(), lock_flags)
+        except BlockingIOError:
+            return {
+                "status": "in_progress",
+                "message": "The existing daily PDF transaction remains authoritative.",
+            }
         config = direct.load_config(CONFIG)
         state = load_state()
         try:
@@ -1675,7 +1749,10 @@ def run_daily_pdf_if_due(*, deliver: bool = True, force: bool = False, now: date
             save_state(state)
             raise
         if result:
-            state["last_daily_pdf_delivery"] = result
+            if str(result.get("status") or "").startswith("skipped_"):
+                state["last_daily_pdf_outcome"] = result
+            else:
+                state["last_daily_pdf_delivery"] = result
             save_state(state)
         return result
 
@@ -1974,7 +2051,11 @@ def main() -> int:
         parser.error("use --once, --loop, or --daily-pdf-now")
     if args.daily_pdf_now:
         try:
-            result = run_daily_pdf_if_due(deliver=not args.no_send, force=True)
+            result = run_daily_pdf_if_due(
+                deliver=not args.no_send,
+                force=True,
+                skip_if_busy=True,
+            )
             print(json.dumps({"ok": True, "daily_pdf": result, "already_done": result is None}, ensure_ascii=False), flush=True)
             return 0
         except Exception as exc:

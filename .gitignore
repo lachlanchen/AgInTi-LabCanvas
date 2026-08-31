@@ -17,6 +17,7 @@ output/
 !.env.example
 .npmrc
 *.tgz
+/.aginti/
 .aginti/.env
 .aginti/.env.*
 !.aginti/.env.example

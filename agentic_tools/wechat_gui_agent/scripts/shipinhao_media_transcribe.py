@@ -1532,6 +1532,9 @@ def run_pipeline(
         result["status"] = "failed"
         result["failure_stage"] = str(result.pop("pipeline_stage", "pipeline"))
         result["error"] = f"{type(exc).__name__}: {str(exc)[:700]}"
+    if capture_metadata.get("video_path"):
+        result["capture_video_path"] = str(capture_metadata["video_path"])
+        result["capture_video_sha256"] = str(capture_metadata.get("video_sha256") or "")
     return write_result(result, output_dir)
 
 
@@ -1826,6 +1829,15 @@ def load_verified_capture_manifest(path: Path, *, profile: dict[str, Any], cache
     if not expected_sha or sha256_file(audio_path) != expected_sha:
         raise ValueError("capture audio hash does not match its visual identity manifest")
     payload["audio_path"] = str(audio_path)
+    raw_video_path = str(payload.get("video_path") or "").strip()
+    if raw_video_path:
+        video_path = Path(raw_video_path).expanduser().resolve()
+        if not video_path.is_file() or not video_path.is_relative_to(cache_root):
+            raise ValueError("capture video must be a private file below the Shipinhao cache root")
+        expected_video_sha = str(payload.get("video_sha256") or "")
+        if not expected_video_sha or sha256_file(video_path) != expected_video_sha:
+            raise ValueError("capture video hash does not match its visual identity manifest")
+        payload["video_path"] = str(video_path)
     payload["identity_terms"] = identity_terms
     payload["manifest_sha256"] = sha256_file(path)
     return payload

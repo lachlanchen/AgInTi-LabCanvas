@@ -2458,6 +2458,82 @@ stderr: noisy internal trace
         self.assertNotIn(wrong_url, str(captured["source_text"]))
         self.assertEqual(captured["profile"]["object_id"], "exact-object-123")
 
+    def test_android_shipinhao_profile_is_bound_to_exact_source_message(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "android-card-task",
+            "chat": "Shares鏈接",
+            "source": {
+                "server_id": "android-source-123",
+                "local_id": 42,
+                "message_db": "message_999999.db",
+            },
+            "request": "Current coalesced request:\n[视频号] Hui世界的视频",
+        }
+
+        profile = worker.shipinhao_profile_for_task(task)
+        changed = {
+            **task,
+            "source": {**task["source"], "server_id": "android-source-456"},
+        }
+        changed_profile = worker.shipinhao_profile_for_task(changed)
+
+        self.assertTrue(profile["detected"])
+        self.assertEqual(profile["author"], "Hui世界")
+        self.assertTrue(profile["exact_message_identity"])
+        self.assertNotEqual(profile["object_id"], changed_profile["object_id"])
+
+    def test_android_article_preflight_invokes_exact_native_source_recovery(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "android-article-task",
+            "chat": "Shares鏈接",
+            "source": {
+                "server_id": "android-article-source",
+                "message_db": "message_999999.db",
+            },
+            "route": {"send_target_name": "Shares鏈接"},
+            "request": (
+                "Current coalesced request:\n"
+                "[公众号] 请读这篇文章\n"
+                "title: 第一次，我们看到了高自由度灵巧手的另一种可能"
+            ),
+        }
+        completed = mock.Mock(
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "ok": True,
+                    "status": "recovered",
+                    "transport": "wechat_android",
+                    "url": "https://mp.weixin.qq.com/s/canonical",
+                    "source_quality": "full_article",
+                    "article_chars": 2100,
+                }
+            ),
+            stderr="",
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(worker.subprocess, "run", return_value=completed) as run:
+                result = worker.prepare_wechat_android_article_recovery(
+                    task,
+                    Path(tmp),
+                )
+
+        command = run.call_args.args[0]
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["source_quality"], "full_article")
+        self.assertEqual(command[command.index("--target") + 1], "Shares鏈接")
+        self.assertEqual(
+            command[command.index("--source-id") + 1],
+            "android-article-source",
+        )
+        self.assertEqual(
+            command[command.index("--title") + 1],
+            "第一次，我们看到了高自由度灵巧手的另一种可能",
+        )
+
     def test_shipinhao_download_route_promotes_exact_card_video_for_delivery(self) -> None:
         worker = load_worker()
         exact_card = (
@@ -2631,6 +2707,54 @@ stderr: noisy internal trace
         self.assertIn("阿拉斯加是美国面积最大的州", transcript)
         self.assertNotIn("large-v2", transcript)
         self.assertNotIn("exact_sph_share_link", transcript)
+
+    def test_large_native_shipinhao_capture_gets_bounded_delivery_copy(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "verified-full-source.mp4"
+            destination = root / "delivery" / "channel-video.mp4"
+            source.write_bytes(b"x" * 100)
+
+            def fake_run(command, **_kwargs):
+                Path(command[-1]).write_bytes(b"bounded-video")
+                return mock.Mock(returncode=0, stdout="", stderr="")
+
+            with mock.patch.dict(
+                worker.os.environ,
+                {"WECHAT_SHIPINHAO_DELIVERY_MAX_BYTES": "10"},
+                clear=False,
+            ), mock.patch.object(
+                worker.shutil, "which", return_value="/usr/bin/tool"
+            ), mock.patch.object(
+                worker.subprocess, "run", side_effect=fake_run
+            ), mock.patch.object(
+                worker,
+                "probe_shipinhao_delivery_media",
+                side_effect=[
+                    {
+                        "has_video": True,
+                        "has_audio": True,
+                        "duration_seconds": 57.6,
+                        "width": 1080,
+                        "height": 2160,
+                    },
+                    {
+                        "has_video": True,
+                        "has_audio": True,
+                        "duration_seconds": 57.6,
+                        "width": 720,
+                        "height": 1440,
+                    },
+                ],
+            ):
+                result = worker.prepare_shipinhao_delivery_video(source, destination)
+            delivered = destination.read_bytes()
+
+        self.assertEqual(result["delivery_copy"], "bounded_h264_aac")
+        self.assertEqual(result["delivery_width"], 720)
+        self.assertEqual(result["delivery_height"], 1440)
+        self.assertEqual(delivered, b"bounded-video")
 
     def test_verified_shipinhao_delivery_uses_bounded_agent_and_survives_backend_failure(self) -> None:
         worker = load_worker()
@@ -15215,8 +15339,82 @@ NVQNIF+NotoSansCJKjp-Regular-Identity-H CID Type 0C       Identity-H       yes y
         self.assertEqual(first["id"], "task-1")
         self.assertEqual(first["status"], "in_progress")
         self.assertIn("worker_id", first)
+        self.assertEqual(first["execution_generation"], 1)
         self.assertIsNone(second)
         self.assertEqual(rows[0]["status"], "in_progress")
+
+    def test_reprocess_and_reclaim_advance_execution_generation(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "task-generation",
+                        "chat": "Shares",
+                        "request": "Summarize the source.",
+                        "status": "done",
+                        "execution_generation": 3,
+                    }
+                ],
+            )
+
+            reset = worker.reprocess_task(queue, "task-generation", reason="retry")
+            claimed = worker.claim_next_pending(queue)
+
+        self.assertEqual(reset["execution_generation"], 4)
+        self.assertIsNotNone(claimed)
+        assert claimed is not None
+        self.assertEqual(claimed["execution_generation"], 5)
+
+    def test_stale_worker_generation_cannot_overwrite_reprocessed_row(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            current = {
+                "id": "task-fenced",
+                "chat": "Shares",
+                "request": "Use the corrected source.",
+                "status": "pending",
+                "execution_generation": 4,
+            }
+            worker.write_tasks(queue, [current])
+            stale = {
+                "id": "task-fenced",
+                "chat": "Shares",
+                "request": "Use the old source.",
+                "status": "done",
+                "worker_id": "pid:111",
+                "execution_generation": 3,
+                "result": {"message": "stale result", "files": []},
+            }
+
+            accepted = worker.rewrite_task(queue, stale)
+            stored = worker.read_tasks(queue)[0]
+
+        self.assertFalse(accepted)
+        self.assertEqual(stored["status"], "pending")
+        self.assertEqual(stored["request"], "Use the corrected source.")
+        self.assertNotIn("result", stored)
+        self.assertEqual(stored["stale_write_rejections"][-1]["rejected_generation"], 3)
+
+    def test_delivery_fence_requires_exact_claim_generation_and_worker(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            current = {
+                "id": "task-owned",
+                "chat": "Shares",
+                "status": worker.CLAIMED_STATUS,
+                "worker_id": "pid:222",
+                "execution_generation": 7,
+            }
+            worker.write_tasks(queue, [current])
+
+            self.assertTrue(worker.task_claim_is_current(queue, dict(current)))
+            stale = {**current, "execution_generation": 6, "worker_id": "pid:111"}
+            self.assertFalse(worker.task_claim_is_current(queue, stale))
 
     def test_claim_next_pending_recovers_new_read_only_schedule_once(self) -> None:
         worker = load_worker()

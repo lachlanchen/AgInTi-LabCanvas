@@ -51,6 +51,12 @@ MAIN_ACTIVITY = "com.tencent.mm/.ui.LauncherUI"
 WECOM_PACKAGE = "com.tencent.wework"
 WECOM_MAIN_ACTIVITY = "com.tencent.wework/.launch.LaunchSplashActivity"
 SHARE_ACTIVITY = "com.tencent.mm/.ui.tools.ShareImgUI"
+SHARE_FLOW_ACTIVITY_SUFFIXES = (
+    "ShareImgUI",
+    "MsgRetransmitUI",
+    "MvvmContactListUI",
+    "HalfScreenTransparentActivity",
+)
 REMOTE_STAGING = "/sdcard/Download"
 WEBWX_DEVICE_ACTIVITY_SUFFIX = ".plugin.webwx.ui.WebWXLogoutUI"
 
@@ -557,6 +563,11 @@ class AndroidWechatSender:
         return text_matches_alias(enhanced_header_text(shot), self.aliases)
 
     def ensure_exact_chat(self) -> Path:
+        # Callers other than ``send()`` use this navigator for read-only
+        # source recovery.  Always establish the app surface here as well so a
+        # previous WeCom poll or Android Home transition cannot turn Back into
+        # repeated launcher navigation.
+        self.wake_and_launch()
         current = self.screenshot("current")
         if self.current_chat_matches(current):
             return current
@@ -566,10 +577,22 @@ class AndroidWechatSender:
                 return self.screenshot("target-open")
             self.keyevent(4, check=False)
             time.sleep(0.7)
+            if self.current_package() != PACKAGE:
+                self.launch_wechat_main()
+                time.sleep(1.0)
             current = self.screenshot("back-to-chat-list")
+            if self.current_chat_matches(current):
+                return current
+        if bool(self.target.get("allow_search")):
+            searched = self.search_and_open_chat(current)
+            if searched is not None:
+                return searched
         self.swipe(540, 500, 540, 1750, 450, check=False)
         time.sleep(0.7)
         for page in range(self.max_list_pages):
+            if self.current_package() != PACKAGE:
+                self.launch_wechat_main()
+                time.sleep(1.0)
             current = self.screenshot(f"chat-list-{page}")
             match = self.find_target_line(current)
             if match is not None and self.open_target_line(match):
@@ -579,6 +602,67 @@ class AndroidWechatSender:
         raise AndroidWechatError(
             f"ANDROID_WECHAT_TITLE_GUARD: exact target {self.chat!r} was not found"
         )
+
+    def search_and_open_chat(self, screenshot: Path) -> Path | None:
+        """Use WeChat's own search while retaining the exact title guard."""
+
+        width, height = image_size(screenshot)
+        self.tap(int(width * 0.79), int(height * 0.062), check=False)
+        time.sleep(0.7)
+        for query_index, query in enumerate(self.search_queries()):
+            if query_index:
+                # Search aliases independently. WeChat may retain an old local
+                # target name after a group rename, while its own search index
+                # only accepts the current visible title.
+                self.tap(int(width * 0.86), int(height * 0.074), check=False)
+                time.sleep(0.35)
+            self.paste_text(query)
+            time.sleep(1.0)
+            results = self.screenshot(f"chat-search-results-{query_index}")
+            minimum_top = int(height * 0.13)
+            candidates = [
+                line
+                for line in matching_target_lines(ocr_lines(results), self.aliases)
+                if line.top >= minimum_top
+            ]
+            if not candidates:
+                candidates = [
+                    line
+                    for line in matching_target_lines(
+                        enhanced_ocr_lines(results), self.aliases
+                    )
+                    if line.top >= minimum_top
+                ]
+            candidates.sort(
+                key=lambda line: (
+                    -max(
+                        alias_match_length(line.text, alias)
+                        for alias in self.aliases
+                    ),
+                    line.top,
+                )
+            )
+            for candidate in candidates[:4]:
+                if self.open_target_line(candidate):
+                    return self.screenshot("chat-search-target-open")
+        self.keyevent(4, check=False)
+        time.sleep(0.5)
+        return None
+
+    def search_queries(self) -> tuple[str, ...]:
+        """Return distinct allowlisted search terms from specific to broad."""
+
+        values = [self.target.get("query"), *self.aliases]
+        queries: list[str] = []
+        normalized: set[str] = set()
+        for value in values:
+            query = " ".join(str(value or "").split())
+            key = normalize_text(query)
+            if not key or key in normalized:
+                continue
+            normalized.add(key)
+            queries.append(query)
+        return tuple(queries)
 
     def find_target_line(self, screenshot: Path) -> OcrLine | None:
         raw_lines = ocr_lines(screenshot)
@@ -723,7 +807,7 @@ class AndroidWechatSender:
             timeout=30,
             check=False,
         )
-        mime = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        mime = outbound_share_mime(path)
         uri = self.media_store_uri(remote_name)
         self.shell(
             [
@@ -744,8 +828,7 @@ class AndroidWechatSender:
             ],
             timeout=45,
         )
-        time.sleep(1.3)
-        chooser = self.screenshot("file-share-targets")
+        chooser = self.wait_for_share_picker()
         target_line = self.find_share_target_line(chooser)
         if target_line is None:
             target_line = self.search_share_target(chooser)
@@ -777,8 +860,7 @@ class AndroidWechatSender:
                 assert action is not None
                 self.tap(action.right - 5, action.center_y)
             committed = True
-            time.sleep(2.5)
-            after = self.screenshot("file-shared")
+            after = self.wait_for_file_share_commit(component)
             text = ocr_plain(after, psm="11")
             if any(marker in text for marker in ("发送失败", "傳送失敗", "分享失败", "Share failed")):
                 raise AndroidWechatError("WeChat reported a native file-share failure")
@@ -796,6 +878,44 @@ class AndroidWechatSender:
                 {"filename": path.name, "error": f"{type(exc).__name__}: {str(exc)[:400]}"},
             )
             raise
+
+    def wait_for_file_share_commit(self, component: dict[str, Any]) -> Path:
+        """Require ShareImgUI to close and the exact target chat to reappear."""
+
+        size_bytes = int(
+            (component.get("file_identity") or {}).get("size_bytes") or 0
+        )
+        configured = float(
+            os.environ.get("WECHAT_ANDROID_FILE_COMMIT_TIMEOUT_SECONDS", "120")
+        )
+        # Large videos may be prepared by WeChat before the share sheet closes.
+        timeout_seconds = max(configured, min(240.0, 20.0 + size_bytes / 750_000.0))
+        deadline = time.monotonic() + timeout_seconds
+        while time.monotonic() < deadline:
+            package, activity = self.current_component()
+            share_flow_active = any(
+                activity.endswith(suffix)
+                for suffix in SHARE_FLOW_ACTIVITY_SUFFIXES
+            )
+            if package == PACKAGE and not share_flow_active:
+                after = self.screenshot("file-shared")
+                text = ocr_plain(after, psm="11")
+                if any(
+                    marker in text
+                    for marker in ("发送失败", "傳送失敗", "分享失败", "Share failed")
+                ):
+                    raise AndroidWechatError("WeChat reported a native file-share failure")
+                if self.current_chat_matches(after):
+                    return after
+            time.sleep(0.8)
+        final = self.screenshot("file-share-commit-timeout")
+        if self.share_confirmation_matches_target(final):
+            raise AndroidWechatError(
+                "WeChat share confirmation remained open; delivery was not verified"
+            )
+        raise AndroidWechatError(
+            "WeChat did not return to the exact target chat after file sharing"
+        )
 
     def share_confirmation_matches_target(self, screenshot: Path) -> bool:
         """Verify the selected recipient using full-screen and focused OCR."""
@@ -881,18 +1001,59 @@ class AndroidWechatSender:
 
         self.tap(line.center_x, line.center_y)
 
+    def share_picker_visible(self, screenshot: Path) -> bool:
+        """Recognize WeChat's recipient picker before interacting with it."""
+
+        text = normalize_text(ocr_plain(screenshot, psm="11"))
+        return any(
+            normalize_text(marker) in text
+            for marker in ("选择聊天", "選擇聊天", "Select chat")
+        )
+
+    def wait_for_share_picker(self, timeout_seconds: float = 10.0) -> Path:
+        """Wait for ShareImgUI instead of treating the previous chat as the picker."""
+
+        deadline = time.monotonic() + timeout_seconds
+        attempt = 0
+        latest = self.screenshot("file-share-targets")
+        while not self.share_picker_visible(latest) and time.monotonic() < deadline:
+            time.sleep(0.5)
+            attempt += 1
+            latest = self.screenshot(f"file-share-targets-wait-{attempt}")
+        if not self.share_picker_visible(latest):
+            raise AndroidWechatError("WeChat share recipient picker did not become visible")
+        return latest
+
     def search_share_target(self, screenshot: Path) -> OcrLine | None:
+        width, height = image_size(screenshot)
         lines = ocr_lines(screenshot)
         search = find_action_line(lines, ("搜索", "搜尋", "Search"))
-        if search is not None:
-            self.tap(search.right - 5, search.center_y)
+        if search is not None or self.share_picker_visible(screenshot):
+            # The search placeholder is deliberately low contrast and may be
+            # absent from OCR. Its field has a stable location in ShareImgUI,
+            # but we only use the geometric fallback after verifying the exact
+            # recipient-picker surface.
+            if search is not None:
+                self.tap(search.right - 5, search.center_y)
+            else:
+                self.tap(int(width * 0.50), int(height * 0.13))
             time.sleep(0.5)
-            self.paste_text(str(self.target.get("query") or self.aliases[0]))
-            time.sleep(0.8)
-            return self.find_share_target_line(
-                self.screenshot("file-share-search"),
-                search_results=True,
-            )
+            for query_index, query in enumerate(self.search_queries()):
+                if query_index:
+                    # Clear WeChat's search box before trying the next
+                    # allowlisted alias. This handles renamed groups whose
+                    # local search index no longer accepts the old title.
+                    self.tap(int(width * 0.91), int(height * 0.13), check=False)
+                    time.sleep(0.3)
+                self.paste_text(query)
+                time.sleep(0.8)
+                result = self.find_share_target_line(
+                    self.screenshot(f"file-share-search-{query_index}"),
+                    search_results=True,
+                )
+                if result is not None:
+                    return result
+            return None
         for page in range(3):
             self.swipe(540, 1750, 540, 550, 400, check=False)
             time.sleep(0.7)
@@ -1027,6 +1188,15 @@ def readable_android_filename(value: str) -> str:
         stem = stem[: max(16, max_chars - len(suffix) - 1)].rstrip("._-")
         name = f"{stem}{suffix}"
     return name
+
+
+def outbound_share_mime(path: Path) -> str:
+    """Use WeChat's reliable document lane for returned video artifacts."""
+
+    guessed = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+    if guessed.startswith("video/"):
+        return "application/octet-stream"
+    return guessed
 
 
 def parse_ocr_tsv(value: str, *, coordinate_scale: float = 1.0) -> list[OcrLine]:

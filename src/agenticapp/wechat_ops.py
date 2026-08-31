@@ -1225,6 +1225,7 @@ def selftest_contract_for_suite(suite: str) -> list[str]:
             "generated-video LazyEdit commands prefer worker-created correction context and metadata brief files",
             "generated-video LazyEdit context appends generated story/script and prompt material before publish",
             "mp.weixin read-only recovery extracts article content and reuses the private cache without GUI verification",
+            "Android article fallback opens the exact same-chat card, copies its canonical link, and verifies the recovered title",
             "group voice transcripts cross the private queue boundary without raw voice secrets",
             "encoded WeChat card types still enter exact same-chat media resolution",
             "ordinary group audio/video becomes agent-readable transcript context before the resumed Codex turn",
@@ -1237,6 +1238,7 @@ def selftest_contract_for_suite(suite: str) -> list[str]:
             "Shipinhao acquisition failure writes agent context and cannot alias to verified silence",
             "Shipinhao native fallback binds a play control only to source identity in the same card",
             "Shipinhao native fallback can bind the exact cached cover on the received side",
+            "Android Shipinhao fallback returns to the exact chat after audio-helper prewarm before opening or capturing a card",
             "read-only source tasks cannot enter waiting_confirmation for a verification page",
             "ZIP, RAR, 7z, Word, PDF, and text attachments are safely extracted into agent-readable task context",
             "successful outbound files cannot re-enter the same chat as self-authored attachment tasks",
@@ -1535,6 +1537,10 @@ def transport_resume_selftest_checks() -> list[dict[str, str]]:
             "test": "tests.test_wechat_source_recovery.WeChatSourceRecoveryTests.test_recover_article_uses_wechat_fetch_and_private_cache",
         },
         {
+            "id": "android_mp_weixin_exact_card_recovery",
+            "test": "tests.test_wechat_android_source_recovery.WechatAndroidSourceRecoveryTests.test_article_recovery_uses_copied_canonical_link_and_exact_title",
+        },
+        {
             "id": "group_voice_queue_context",
             "test": direct_prefix + "test_voice_queue_fields_preserve_transcript_without_private_payload",
         },
@@ -1601,6 +1607,10 @@ def transport_resume_selftest_checks() -> list[dict[str, str]]:
         {
             "id": "shipinhao_exact_cover_identity_binding",
             "test": "tests.test_shipinhao_gui_audio_capture.ShipinhaoGuiAudioCaptureTests.test_exact_cover_match_returns_source_scoped_click_target",
+        },
+        {
+            "id": "android_shipinhao_exact_chat_after_audio_prewarm",
+            "test": "tests.test_wechat_android_source_recovery.WechatAndroidSourceRecoveryTests.test_shipinhao_reenters_exact_chat_after_audio_helper_prewarm",
         },
         {
             "id": "read_only_source_never_waits_for_verification",

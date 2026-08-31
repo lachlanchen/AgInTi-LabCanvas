@@ -71,6 +71,15 @@ class WechatAndroidSendTests(unittest.TestCase):
             "每日研究_类器官与成像.pdf",
         )
 
+    def test_video_artifacts_use_reliable_generic_file_share_lane(self):
+        module = load_sender()
+
+        self.assertEqual(
+            module.outbound_share_mime(Path("巴塔哥尼亚.mp4")),
+            "application/octet-stream",
+        )
+        self.assertEqual(module.outbound_share_mime(Path("report.pdf")), "application/pdf")
+
     def test_component_state_prevents_duplicate_delivery(self):
         module = load_sender()
         with tempfile.TemporaryDirectory() as tmp:
@@ -149,7 +158,9 @@ class WechatAndroidSendTests(unittest.TestCase):
                 sender, "current_chat_matches", side_effect=[False, True]
             ), mock.patch.object(sender, "find_target_line", return_value=match), mock.patch.object(
                 sender, "shell"
-            ) as shell, mock.patch.object(sender_module_time(module), "sleep"):
+            ) as shell, mock.patch.object(
+                sender, "wake_and_launch"
+            ), mock.patch.object(sender_module_time(module), "sleep"):
                 result = sender.ensure_exact_chat()
 
             self.assertEqual(result, screen)
@@ -157,6 +168,124 @@ class WechatAndroidSendTests(unittest.TestCase):
                 ["input", "touchscreen", "-d", "0", "tap", "500", str(match.center_y)],
                 check=True,
             )
+
+    def test_ensure_exact_chat_relaunches_after_back_reaches_launcher(self):
+        module = load_sender()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            sender = module.AndroidWechatSender(
+                adb="adb",
+                serial="device",
+                target={
+                    "name": "Shares鏈接",
+                    "expected_title": "Shares鏈接",
+                    "expected_title_aliases": ["Shares"],
+                },
+                task_id="task-relaunch",
+                state_db=root / "state.sqlite",
+                output_dir=root / "output",
+            )
+            first = root / "chat.png"
+            second = root / "list.png"
+            match = module.OcrLine("Shares", 150, 620, 430, 700)
+            with mock.patch.object(sender, "wake_and_launch"), mock.patch.object(
+                sender, "screenshot", side_effect=[first, second, second]
+            ), mock.patch.object(
+                sender, "current_chat_matches", side_effect=[False, False, True]
+            ), mock.patch.object(
+                sender, "find_target_line", side_effect=[None, match]
+            ), mock.patch.object(
+                sender, "open_target_line", return_value=True
+            ), mock.patch.object(
+                sender, "keyevent"
+            ), mock.patch.object(
+                sender, "current_package", return_value="com.miui.home"
+            ), mock.patch.object(
+                sender, "launch_wechat_main"
+            ) as launch, mock.patch.object(sender_module_time(module), "sleep"):
+                result = sender.ensure_exact_chat()
+
+            self.assertEqual(result, second)
+            launch.assert_called_once()
+
+    def test_search_and_open_chat_ignores_query_field_and_verifies_result(self):
+        module = load_sender()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            sender = module.AndroidWechatSender(
+                adb="adb",
+                serial="device",
+                target={
+                    "name": "Shares鏈接",
+                    "query": "Shares鏈接",
+                    "expected_title": "Shares鏈接",
+                    "expected_title_aliases": ["Shares"],
+                    "allow_search": True,
+                },
+                task_id="task-search",
+                state_db=root / "state.sqlite",
+                output_dir=root / "output",
+            )
+            screen = root / "screen.png"
+            query = module.OcrLine("Shares鏈接", 140, 80, 500, 145)
+            result = module.OcrLine("Shares", 180, 430, 430, 500)
+            with mock.patch.object(module, "image_size", return_value=(1080, 2160)), mock.patch.object(
+                sender, "tap"
+            ), mock.patch.object(sender, "paste_text") as paste, mock.patch.object(
+                sender, "screenshot", return_value=screen
+            ), mock.patch.object(
+                module, "ocr_lines", return_value=[query, result]
+            ), mock.patch.object(
+                sender, "open_target_line", return_value=True
+            ) as opened, mock.patch.object(sender_module_time(module), "sleep"):
+                found = sender.search_and_open_chat(screen)
+
+            self.assertEqual(found, screen)
+            paste.assert_called_once_with("Shares鏈接")
+            opened.assert_called_once_with(result)
+
+    def test_search_and_open_chat_retries_current_alias_after_old_query_misses(self):
+        module = load_sender()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            sender = module.AndroidWechatSender(
+                adb="adb",
+                serial="device",
+                target={
+                    "name": "Shares鏈接",
+                    "query": "Shares鏈接",
+                    "expected_title": "Shares鏈接",
+                    "expected_title_aliases": ["Shares"],
+                    "allow_search": True,
+                },
+                task_id="task-search-renamed",
+                state_db=root / "state.sqlite",
+                output_dir=root / "output",
+            )
+            screen = root / "screen.png"
+            result = module.OcrLine("Shares", 180, 430, 430, 500)
+            with mock.patch.object(
+                module, "image_size", return_value=(1080, 2160)
+            ), mock.patch.object(sender, "tap") as tap, mock.patch.object(
+                sender, "paste_text"
+            ) as paste, mock.patch.object(
+                sender, "screenshot", return_value=screen
+            ), mock.patch.object(
+                module, "ocr_lines", side_effect=[[], [result]]
+            ), mock.patch.object(
+                module, "enhanced_ocr_lines", return_value=[]
+            ), mock.patch.object(
+                sender, "open_target_line", return_value=True
+            ) as opened, mock.patch.object(sender_module_time(module), "sleep"):
+                found = sender.search_and_open_chat(screen)
+
+            self.assertEqual(found, screen)
+            self.assertEqual(
+                paste.call_args_list,
+                [mock.call("Shares鏈接"), mock.call("Shares")],
+            )
+            self.assertIn(mock.call(928, 159, check=False), tap.call_args_list)
+            opened.assert_called_once_with(result)
 
     def test_open_target_relocates_row_after_transient_wrong_chat(self):
         module = load_sender()
@@ -324,6 +453,139 @@ class WechatAndroidSendTests(unittest.TestCase):
             self.assertEqual(result["restore_error"], "")
             self.assertEqual(ensure.call_count, 1)
             restore.assert_called_once_with()
+
+    def test_share_picker_waits_for_transition_from_open_chat(self):
+        module = load_sender()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            sender = module.AndroidWechatSender(
+                adb="adb",
+                serial="device",
+                target={"name": "Shares鏈接", "expected_title": "Shares鏈接"},
+                task_id="task-share-wait",
+                state_db=root / "state.sqlite",
+                output_dir=root / "output",
+            )
+            chat = root / "chat.png"
+            picker = root / "picker.png"
+            with mock.patch.object(
+                sender, "screenshot", side_effect=[chat, picker]
+            ), mock.patch.object(
+                sender, "share_picker_visible", side_effect=[False, True, True]
+            ), mock.patch.object(sender_module_time(module), "sleep"):
+                result = sender.wait_for_share_picker(timeout_seconds=1.0)
+
+            self.assertEqual(result, picker)
+
+    def test_share_target_search_retries_allowlisted_aliases(self):
+        module = load_sender()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            sender = module.AndroidWechatSender(
+                adb="adb",
+                serial="device",
+                target={
+                    "name": "Shares鏈接",
+                    "query": "Shares鏈接",
+                    "expected_title": "Shares鏈接",
+                    "expected_title_aliases": ["Shares", "鏈接"],
+                },
+                task_id="task-share-alias",
+                state_db=root / "state.sqlite",
+                output_dir=root / "output",
+            )
+            picker = root / "picker.png"
+            result_screen = root / "result.png"
+            match = module.OcrLine("Shares", 180, 300, 430, 360)
+            with mock.patch.object(
+                module, "image_size", return_value=(1080, 2160)
+            ), mock.patch.object(
+                module, "ocr_lines", return_value=[]
+            ), mock.patch.object(
+                module, "find_action_line", return_value=None
+            ), mock.patch.object(
+                sender, "share_picker_visible", return_value=True
+            ), mock.patch.object(sender, "tap"), mock.patch.object(
+                sender, "paste_text"
+            ) as paste, mock.patch.object(
+                sender, "screenshot", return_value=result_screen
+            ), mock.patch.object(
+                sender, "find_share_target_line", side_effect=[None, match]
+            ), mock.patch.object(sender_module_time(module), "sleep"):
+                result = sender.search_share_target(picker)
+
+            self.assertEqual(result, match)
+            self.assertEqual(
+                [call.args[0] for call in paste.call_args_list],
+                ["Shares鏈接", "Shares"],
+            )
+
+    def test_file_share_commit_waits_until_exact_chat_reappears(self):
+        module = load_sender()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            sender = module.AndroidWechatSender(
+                adb="adb",
+                serial="device",
+                target={"name": "Shares鏈接", "expected_title": "Shares鏈接"},
+                task_id="task-file-commit",
+                state_db=root / "state.sqlite",
+                output_dir=root / "output",
+            )
+            after = root / "after.png"
+            component = {"file_identity": {"size_bytes": 1024}}
+            with mock.patch.object(
+                sender,
+                "current_component",
+                side_effect=[
+                    (
+                        module.PACKAGE,
+                        "com.tencent.mm.ui.halfscreen.HalfScreenTransparentActivity",
+                    ),
+                    (module.PACKAGE, "com.tencent.mm.ui.LauncherUI"),
+                ],
+            ), mock.patch.object(
+                sender, "screenshot", return_value=after
+            ), mock.patch.object(
+                module, "ocr_plain", return_value="Shares鏈接"
+            ), mock.patch.object(
+                sender, "current_chat_matches", return_value=True
+            ), mock.patch.object(sender_module_time(module), "sleep"):
+                result = sender.wait_for_file_share_commit(component)
+
+            self.assertEqual(result, after)
+
+    def test_file_share_commit_does_not_accept_open_confirmation_sheet(self):
+        module = load_sender()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            sender = module.AndroidWechatSender(
+                adb="adb",
+                serial="device",
+                target={"name": "Shares鏈接", "expected_title": "Shares鏈接"},
+                task_id="task-file-timeout",
+                state_db=root / "state.sqlite",
+                output_dir=root / "output",
+            )
+            final = root / "confirmation.png"
+            component = {"file_identity": {"size_bytes": 1024}}
+            clock = mock.Mock(side_effect=[0.0, 0.0, 999.0])
+            with mock.patch.dict(
+                module.os.environ,
+                {"WECHAT_ANDROID_FILE_COMMIT_TIMEOUT_SECONDS": "0.1"},
+            ), mock.patch.object(
+                sender, "current_component", return_value=(module.PACKAGE, "ShareImgUI")
+            ), mock.patch.object(
+                sender, "screenshot", return_value=final
+            ), mock.patch.object(
+                sender, "share_confirmation_matches_target", return_value=True
+            ), mock.patch.object(
+                sender_module_time(module), "monotonic", clock
+            ), mock.patch.object(sender_module_time(module), "sleep"):
+                with self.assertRaisesRegex(
+                    module.AndroidWechatError, "confirmation remained open"
+                ):
+                    sender.wait_for_file_share_commit(component)
 
     def test_failed_wechat_send_still_restores_wecom(self):
         module = load_sender()

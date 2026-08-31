@@ -251,6 +251,33 @@ class WechatAndroidScreenIngressTests(unittest.TestCase):
             ):
                 self.assertTrue(scanner.preemption_due())
 
+    def test_busy_screen_reader_catches_up_cooperatively_without_priority_claim(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            scanner = self.scanner(Path(tmp))
+            navigator = mock.Mock()
+            navigator.device_lock_path.return_value = Path(tmp) / "android.lock"
+            scanner.set_meta(
+                "last_success_at",
+                (datetime.now(timezone.utc) - timedelta(seconds=31)).isoformat(),
+            )
+            with mock.patch.object(
+                scanner, "sender_for", return_value=navigator
+            ), mock.patch.object(
+                self.module,
+                "passive_android_control",
+                side_effect=self.module.AndroidControlBusy("busy"),
+            ), mock.patch.object(
+                self.module,
+                "cooperative_android_control",
+                return_value=__import__("contextlib").nullcontext(),
+            ) as cooperative, mock.patch.object(
+                scanner, "run_with_restore", return_value={"ok": True}
+            ):
+                result = scanner.run_once()
+
+            self.assertTrue(result["ok"])
+            cooperative.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -87,6 +87,13 @@ SHIPINHAO_COMMENT_INTEL_SCRIPT = ROOT / "agentic_tools" / "wechat_gui_agent" / "
 SHIPINHAO_MEDIA_TRANSCRIBE_SCRIPT = ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "shipinhao_media_transcribe.py"
 SHIPINHAO_GUI_AUDIO_CAPTURE_SCRIPT = ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "shipinhao_gui_audio_capture.py"
 SHIPINHAO_NATIVE_CAPTURE_SCRIPT = ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "shipinhao_native_capture.py"
+WECHAT_ANDROID_SOURCE_RECOVERY_SCRIPT = (
+    ROOT
+    / "agentic_tools"
+    / "wechat_gui_agent"
+    / "scripts"
+    / "wechat_android_source_recovery.py"
+)
 WECHAT_AUDIO_INTAKE_SCRIPT = ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wechat_audio_intake.py"
 WECHAT_SOURCE_RECOVERY_SCRIPT = ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wechat_source_recovery.py"
 WECHAT_ANDROID_SEND_SCRIPT = ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wechat_android_send.py"
@@ -133,6 +140,7 @@ DEFAULT_VERIFIED_PUBLISH_SEND_MAX_RETRIES = 3
 DEFAULT_SEND_FAILURE_HISTORY_LIMIT = 20
 DEFAULT_CHAT_MESSAGE_PART_CHARS = 1200
 DEFAULT_CHAT_MESSAGE_MAX_PARTS = 3
+DEFAULT_SHIPINHAO_DELIVERY_MAX_BYTES = 25 * 1024 * 1024
 DEFAULT_GENERATED_VIDEO_POLL_BACKOFF_SECONDS = 5 * 60
 DEFAULT_GENERATED_VIDEO_WATCH_POLLS_PER_CYCLE = 1
 DEFAULT_GENERATED_VIDEO_LAZYEDIT_TIMEOUT_SECONDS = 6 * 60 * 60
@@ -1004,6 +1012,7 @@ def reprocess_task(
         for index, task in enumerate(tasks):
             if str(task.get("id") or "") != str(task_id):
                 continue
+            previous_generation = task_execution_generation(task)
             preserved_pdf_rejections = task_pdf_quality_rejections(
                 task,
                 rediscover=True,
@@ -1053,6 +1062,10 @@ def reprocess_task(
                 task["expires_at"] = queue_deadline_iso(DEFAULT_PENDING_TASK_TTL_SECONDS)
             task["reprocess_requested_at"] = now_text
             task["reprocess_reason"] = reason or "manual_reprocess"
+            # Invalidate every older in-memory worker snapshot. A worker that
+            # was already running may still finish model or tool work, but it
+            # must not overwrite this reset row or enter the delivery lane.
+            task["execution_generation"] = previous_generation + 1
             if not artifact_recovery_only:
                 apply_reprocess_reason_contract(task, reason)
             if invalid_generated_video_reprocess_requested(task, reason):
@@ -1486,7 +1499,17 @@ def process_one(queue: Path, chat: str, *, send: bool, send_targets: Path = DEFA
     # expensive worker or losing its exact artifact list.
     task["result"] = result
     task["worker_result_ready_at"] = datetime.now().isoformat(timespec="seconds")
-    persist_task_progress(task)
+    persisted = persist_task_progress(task)
+    if requeue_if_task_interrupted_during_run(queue, task):
+        log_worker_event("stale-result-suppressed-for-late-interruption", task)
+        return True
+    if not persisted or not task_claim_is_current(queue, task):
+        # A manual repair/reprocess or a successor claim invalidated this
+        # snapshot while its model/tool turn was running. The work may remain
+        # in its artifact directory for diagnosis, but stale text/files must
+        # never reach the chat transport.
+        log_worker_event("stale-generation-delivery-suppressed", task)
+        return True
     target_chat = str(task.get("chat") or chat)
     has_delivery_content = worker_result_has_delivery_content(result)
     required_artifact_missing = required_artifact_missing_from_result(task, result)
@@ -5988,6 +6011,7 @@ def claim_next_pending(path: Path) -> dict[str, Any] | None:
                 }
             )
         task["status"] = CLAIMED_STATUS
+        task["execution_generation"] = task_execution_generation(task) + 1
         task["worker_id"] = worker_id
         task["claimed_at"] = now_text
         task.pop("send_errors", None)
@@ -6629,6 +6653,7 @@ def claim_next_deferred_send(path: Path, chat_filter: str | None = None) -> dict
             index = candidates[0]
             task = tasks[index]
             task["status"] = SEND_RETRYING_STATUS
+            task["execution_generation"] = task_execution_generation(task) + 1
             task["worker_id"] = worker_id
             task["send_retry_claimed_at"] = now_text
             task["send_retry_count"] = int(task.get("send_retry_count") or 0) + 1
@@ -7306,6 +7331,44 @@ def worker_identity() -> str:
     return f"pid:{os.getpid()}"
 
 
+def task_execution_generation(task: dict[str, Any] | None) -> int:
+    """Return the monotonic execution generation for one durable queue row."""
+
+    if not isinstance(task, dict):
+        return 0
+    try:
+        return max(0, int(task.get("execution_generation") or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def task_claim_is_current(path: Path, claimed: dict[str, Any]) -> bool:
+    """Prove this worker still owns the exact row generation before delivery."""
+
+    task_id = str(claimed.get("id") or "")
+    if not task_id:
+        return False
+    lock_path = path.with_suffix(path.suffix + ".lock")
+    with lock_path.open("w", encoding="utf-8") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        current = next(
+            (
+                item
+                for item in read_tasks(path)
+                if str(item.get("id") or "") == task_id
+            ),
+            None,
+        )
+    if not isinstance(current, dict):
+        return False
+    return bool(
+        task_execution_generation(current) == task_execution_generation(claimed)
+        and str(current.get("worker_id") or "")
+        == str(claimed.get("worker_id") or "")
+        and str(current.get("status") or "") == CLAIMED_STATUS
+    )
+
+
 def merge_concurrent_task_interruptions(current: dict[str, Any], updated: dict[str, Any]) -> dict[str, Any]:
     """Preserve monitor-owned interruptions when a worker saves an older snapshot."""
 
@@ -7379,30 +7442,48 @@ def merge_concurrent_task_interruptions(current: dict[str, Any], updated: dict[s
     return merged
 
 
-def rewrite_task(path: Path, updated: dict[str, Any]) -> None:
+def rewrite_task(path: Path, updated: dict[str, Any]) -> bool:
     lock_path = path.with_suffix(path.suffix + ".lock")
     with lock_path.open("w", encoding="utf-8") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         tasks = read_tasks(path)
         for index, task in enumerate(tasks):
             if task.get("id") == updated.get("id"):
+                current_generation = task_execution_generation(task)
+                updated_generation = task_execution_generation(updated)
+                if current_generation != updated_generation:
+                    rejections = task.setdefault("stale_write_rejections", [])
+                    rejections.append(
+                        {
+                            "at": datetime.now().isoformat(timespec="seconds"),
+                            "current_generation": current_generation,
+                            "rejected_generation": updated_generation,
+                            "rejected_worker_id": str(updated.get("worker_id") or ""),
+                        }
+                    )
+                    if len(rejections) > 5:
+                        del rejections[:-5]
+                    tasks[index] = task
+                    write_tasks(path, tasks)
+                    return False
                 tasks[index] = merge_concurrent_task_interruptions(task, updated)
-                break
-        write_tasks(path, tasks)
+                write_tasks(path, tasks)
+                return True
+        return False
 
 
-def persist_task_progress(task: dict[str, Any]) -> None:
+def persist_task_progress(task: dict[str, Any]) -> bool:
     queue_path = str(task.get("queue_path") or "")
     if not queue_path:
-        return
+        return True
     try:
         path = Path(queue_path)
     except (TypeError, ValueError):
-        return
+        return False
     if not path.exists():
-        return
+        return False
     try:
-        rewrite_task(path, task)
+        return rewrite_task(path, task)
     except Exception as exc:
         task.setdefault("progress_persist_errors", []).append(
             {
@@ -7411,6 +7492,7 @@ def persist_task_progress(task: dict[str, Any]) -> None:
                 "message": str(exc)[:300],
             }
         )
+        return False
 
 
 def write_tasks(path: Path, tasks: list[dict[str, Any]]) -> None:
@@ -7835,7 +7917,7 @@ def enforce_current_task_route_safety(task: dict[str, Any]) -> bool:
             task["route_repair_reason"] = "explicit_existing_video_publish"
         return changed
 
-    profile = extract_shipinhao_media_profile(source_recovery_task_text(task))
+    profile = shipinhao_profile_for_task(task)
     exact_finder_source = bool(
         "weixin.qq.com/sph/" in current_request.casefold()
         or (profile.get("detected") and profile.get("object_id"))
@@ -10392,6 +10474,8 @@ def prepare_wechat_source_recovery_preflight(task: dict[str, Any], artifact_dir:
         timeout = max(4.0, float(os.environ.get("WECHAT_SOURCE_RECOVERY_TIMEOUT_SECONDS", "18") or 18))
         recovery_task = task
         native = prepare_wecom_native_article_recovery(task, output_dir)
+        if not native:
+            native = prepare_wechat_android_article_recovery(task, output_dir)
         native_url = str(native.get("url") or "") if native.get("ok") else ""
         if native_url:
             recovery_task = dict(task)
@@ -10401,7 +10485,12 @@ def prepare_wechat_source_recovery_preflight(task: dict[str, Any], artifact_dir:
             )
         result = recover_task_sources(recovery_task, output_dir, timeout=timeout)
         if native:
-            result["native_wecom_article"] = {
+            native_key = (
+                "native_wechat_article"
+                if str(native.get("transport") or "") == "wechat_android"
+                else "native_wecom_article"
+            )
+            result[native_key] = {
                 key: value
                 for key, value in native.items()
                 if key not in {"url"}
@@ -10481,6 +10570,88 @@ def prepare_wecom_native_article_recovery(
     return payload
 
 
+def prepare_wechat_android_article_recovery(
+    task: dict[str, Any],
+    output_dir: Path,
+) -> dict[str, Any]:
+    if not android_native_source_task(task) or not WECHAT_ANDROID_SOURCE_RECOVERY_SCRIPT.is_file():
+        return {}
+    source_text = task_focus_text(task)
+    if "mp.weixin.qq.com" in source_text.casefold():
+        return {}
+    profile = extract_article_card_profile(source_text)
+    title = str(profile.get("title") or "").strip()
+    if not title:
+        title = native_article_title(source_text)
+    lowered = source_text.casefold()
+    if not title or not any(
+        marker in lowered
+        for marker in ("公众号", "公眾號", "wechat article", "wechat link", "mp.weixin")
+    ):
+        return {}
+    source = task.get("source") if isinstance(task.get("source"), dict) else {}
+    route = task.get("route") if isinstance(task.get("route"), dict) else {}
+    target = str(route.get("send_target_name") or task.get("chat") or "").strip()
+    source_id = str(source.get("server_id") or source.get("local_id") or task.get("id") or "")
+    if not target or not source_id:
+        return {}
+    command = [
+        sys.executable,
+        str(WECHAT_ANDROID_SOURCE_RECOVERY_SCRIPT),
+        "--kind",
+        "article",
+        "--target",
+        target,
+        "--targets-file",
+        str(DEFAULT_SEND_TARGETS),
+        "--task-id",
+        str(task.get("id") or "wechat-article"),
+        "--source-id",
+        source_id,
+        "--title",
+        title,
+        "--output-dir",
+        str(output_dir / "native_wechat_android"),
+        "--json",
+    ]
+    try:
+        process = subprocess.run(
+            command,
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=max(45, int(os.environ.get("WECHAT_NATIVE_ARTICLE_TIMEOUT_SECONDS", "180"))),
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {
+            "ok": False,
+            "status": "failed",
+            "error": f"{type(exc).__name__}: {str(exc)[:300]}",
+        }
+    try:
+        payload = json.loads(process.stdout)
+    except json.JSONDecodeError:
+        payload = {"ok": False, "error": "native WeChat article resolver returned invalid JSON"}
+    if not isinstance(payload, dict):
+        payload = {"ok": False, "error": "native WeChat article resolver returned invalid JSON"}
+    if process.returncode != 0 and payload.get("ok"):
+        payload["ok"] = False
+    return payload
+
+
+def native_article_title(source_text: str) -> str:
+    for pattern in (
+        r"(?:^|\s)title\s*[:：]\s*(.+?)(?=(?:\s+(?:author|account|description)\s*[:：])|$)",
+        r"(?:^|\n)title\s*[:：]\s*([^\n]{2,300})",
+        r"\[\s*(?:公众号|公眾號|wechat\s+article|wechat\s+link)\s*\]\s*([^\n]{2,300})",
+    ):
+        match = re.search(pattern, str(source_text or ""), flags=re.I)
+        if match:
+            return collapse_context_text(match.group(1), max_len=300)
+    return ""
+
+
 def should_prepare_shipinhao_comment_intel(task: dict[str, Any]) -> bool:
     if not task_is_research_summary(task):
         return False
@@ -10505,15 +10676,107 @@ def should_prepare_shipinhao_comment_intel(task: dict[str, Any]) -> bool:
 def should_prepare_shipinhao_media_transcript(task: dict[str, Any]) -> bool:
     if not (task_is_research_summary(task) or shipinhao_download_delivery_requested(task)):
         return False
-    profile = extract_shipinhao_media_profile(source_recovery_task_text(task))
+    profile = shipinhao_profile_for_task(task)
     return bool(profile.get("detected") and profile.get("object_id"))
+
+
+def android_native_source_task(task: dict[str, Any] | None) -> bool:
+    if not isinstance(task, dict):
+        return False
+    source = task.get("source") if isinstance(task.get("source"), dict) else {}
+    server_id = str(source.get("server_id") or "")
+    return bool(
+        server_id.startswith("android-")
+        or str(source.get("message_db") or "") == "message_999999.db"
+        or str(source.get("transport") or "").casefold() == "wechat_android"
+    )
+
+
+def native_shipinhao_profile(task: dict[str, Any]) -> dict[str, Any]:
+    """Bind a phone-visible card to its exact inbound message when XML is absent."""
+
+    focus = task_focus_text(task)
+    if not re.search(r"(?:\[\s*(?:视频号|視頻號|wechat\s+video\s+channel)\s*\]|视频号|視頻號)", focus, flags=re.I):
+        return {}
+    if not android_native_source_task(task):
+        return {}
+    author = ""
+    for pattern in (
+        r"\[\s*(?:视频号|視頻號|wechat\s+video\s+channel)\s*\]\s*([^\n]{1,100}?)(?:的(?:视频|視頻)|\s+video\b|$)",
+        r"(?:channel|作者|账号|帳號)\s*[:：]\s*([^\n]{1,100})",
+    ):
+        match = re.search(pattern, focus, flags=re.I)
+        if match:
+            author = collapse_context_text(match.group(1), max_len=100).strip(" ：:")
+            if author:
+                break
+    source = task.get("source") if isinstance(task.get("source"), dict) else {}
+    source_id = str(
+        source.get("server_id")
+        or source.get("local_id")
+        or task.get("id")
+        or "native-card"
+    )
+    digest = hashlib.sha256(
+        "|".join(
+            (
+                str(task.get("chat") or ""),
+                source_id,
+                str(source.get("create_time") or ""),
+                focus,
+            )
+        ).encode("utf-8")
+    ).hexdigest()[:24]
+    title = collapse_context_text(focus.splitlines()[0], max_len=180)
+    return {
+        "detected": True,
+        "source_kind": "android_native_message_card",
+        "object_id": f"android-{digest}",
+        "identity_key": f"android-{digest}",
+        "title": title,
+        "author": author,
+        "duration_seconds": 0.0,
+        "media_urls": [],
+        "cover_urls": [],
+        "source_message_id": source_id,
+        "exact_message_identity": True,
+    }
+
+
+def shipinhao_profile_for_task(task: dict[str, Any]) -> dict[str, Any]:
+    # Current source text is authoritative. Parsing the full historical packet
+    # first can accidentally select an older Finder XML row from the same chat.
+    focused = task_focus_text(task)
+    profile = extract_shipinhao_media_profile(focused)
+    if profile.get("detected") and profile.get("object_id"):
+        return profile
+    native = native_shipinhao_profile(task)
+    if native:
+        return native
+    return extract_shipinhao_media_profile(source_recovery_task_text(task))
+
+
+def shipinhao_source_text_for_task(task: dict[str, Any], profile: dict[str, Any]) -> str:
+    source_text = task_focus_text(task) or source_recovery_task_text(task)
+    if str(profile.get("source_kind") or "") != "android_native_message_card":
+        return source_text
+    synthetic = "".join(
+        (
+            "<finderFeed>",
+            f"<objectId>{html.escape(str(profile.get('object_id') or ''))}</objectId>",
+            f"<nickname>{html.escape(str(profile.get('author') or ''))}</nickname>",
+            f"<desc>{html.escape(str(profile.get('title') or ''))}</desc>",
+            "</finderFeed>",
+        )
+    )
+    return f"{source_text}\n\n{synthetic}"
 
 
 def shipinhao_download_delivery_requested(task: dict[str, Any] | None) -> bool:
     if not isinstance(task, dict):
         return False
     route = task_route_decision(task)
-    profile = extract_shipinhao_media_profile(source_recovery_task_text(task))
+    profile = shipinhao_profile_for_task(task)
     if not (profile.get("detected") and profile.get("object_id")):
         return False
     route_kind = str(route.get("route_kind") or "")
@@ -10553,13 +10816,24 @@ def promote_shipinhao_download_for_delivery(
         return result
     if str(result.get("status") or "") not in {"transcribed", "cached", "no_audio"}:
         return result
-    if str(result.get("input_kind") or "") not in {"card_media_url", "exact_sph_share_link"}:
+    input_kind = str(result.get("input_kind") or "")
+    allowed_inputs = {
+        "card_media_url",
+        "exact_sph_share_link",
+        "verified_gui_audio_capture",
+    }
+    if input_kind not in allowed_inputs:
         result["download_delivery"] = {
             "status": "source_not_exact_binary",
             "verified": False,
         }
         return result
-    source = Path(str(result.get("media_path") or "")).expanduser()
+    source_value = (
+        result.get("capture_video_path")
+        if input_kind == "verified_gui_audio_capture"
+        else result.get("media_path")
+    )
+    source = Path(str(source_value or "")).expanduser()
     if not source.is_file() or source.suffix.lower() not in VIDEO_SUFFIXES:
         result["download_delivery"] = {
             "status": "verified_media_missing",
@@ -10572,15 +10846,15 @@ def promote_shipinhao_download_for_delivery(
         result.get("profile") if isinstance(result.get("profile"), dict) else {},
         source.suffix.lower(),
     )
-    if source.resolve() != destination.resolve():
-        shutil.copy2(source, destination)
+    delivery_video = prepare_shipinhao_delivery_video(source, destination)
     result["delivery_media_path"] = str(destination.resolve())
     result["download_delivery"] = {
         "status": "ready",
         "verified": destination.is_file() and destination.stat().st_size > 0,
         "path": str(destination.resolve()),
         "size_bytes": destination.stat().st_size if destination.is_file() else 0,
-        "source_kind": str(result.get("input_kind") or "exact_finder_card_media_url"),
+        "source_kind": input_kind or "exact_finder_card_media_url",
+        **delivery_video,
     }
     transcript_path = write_shipinhao_delivery_transcript(result, delivery_dir)
     if transcript_path is not None:
@@ -10592,6 +10866,164 @@ def promote_shipinhao_download_for_delivery(
             "size_bytes": transcript_path.stat().st_size if transcript_path.is_file() else 0,
         }
     return result
+
+
+def prepare_shipinhao_delivery_video(source: Path, destination: Path) -> dict[str, Any]:
+    """Keep full verified capture private and make a bounded chat-safe copy."""
+
+    source = source.expanduser().resolve()
+    destination = destination.expanduser().resolve()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    maximum = max(
+        1,
+        int(
+            os.environ.get(
+                "WECHAT_SHIPINHAO_DELIVERY_MAX_BYTES",
+                DEFAULT_SHIPINHAO_DELIVERY_MAX_BYTES,
+            )
+        ),
+    )
+    if source.stat().st_size <= maximum:
+        if source != destination:
+            shutil.copy2(source, destination)
+        return {
+            "delivery_copy": "source_preserving_copy",
+            "source_size_bytes": source.stat().st_size,
+        }
+
+    temporary = destination.with_name(f".{destination.stem}.delivery.tmp.mp4")
+    temporary.unlink(missing_ok=True)
+    command = [
+        "ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-i",
+        str(source),
+        "-map",
+        "0:v:0",
+        "-map",
+        "0:a?",
+        "-vf",
+        "scale='if(gte(iw,ih),min(1280,iw),-2)':'if(gte(iw,ih),-2,min(1440,ih))'",
+        "-r",
+        "30",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "medium",
+        "-crf",
+        "24",
+        "-pix_fmt",
+        "yuv420p",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "128k",
+        "-movflags",
+        "+faststart",
+        str(temporary),
+    ]
+    try:
+        if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
+            raise RuntimeError("ffmpeg/ffprobe unavailable")
+        process = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=max(
+                180,
+                int(os.environ.get("WECHAT_SHIPINHAO_DELIVERY_TRANSCODE_TIMEOUT", "900")),
+            ),
+            check=False,
+        )
+        if process.returncode != 0 or not temporary.is_file() or temporary.stat().st_size <= 0:
+            detail = collapse_context_text(process.stderr, max_len=400)
+            raise RuntimeError(detail or "ffmpeg did not create a delivery copy")
+        source_probe = probe_shipinhao_delivery_media(source)
+        delivery_probe = probe_shipinhao_delivery_media(temporary)
+        validate_shipinhao_delivery_copy(source_probe, delivery_probe)
+        temporary.replace(destination)
+        return {
+            "delivery_copy": "bounded_h264_aac",
+            "source_size_bytes": source.stat().st_size,
+            "delivery_width": delivery_probe.get("width", 0),
+            "delivery_height": delivery_probe.get("height", 0),
+            "delivery_duration_seconds": delivery_probe.get("duration_seconds", 0.0),
+        }
+    except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
+        temporary.unlink(missing_ok=True)
+        if source != destination:
+            shutil.copy2(source, destination)
+        return {
+            "delivery_copy": "source_preserving_fallback",
+            "source_size_bytes": source.stat().st_size,
+            "transcode_warning": f"{type(exc).__name__}: {str(exc)[:300]}",
+        }
+
+
+def probe_shipinhao_delivery_media(path: Path) -> dict[str, Any]:
+    process = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration:stream=codec_type,width,height",
+            "-of",
+            "json",
+            str(path),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    if process.returncode != 0:
+        raise RuntimeError("ffprobe rejected the delivery video")
+    try:
+        payload = json.loads(process.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("ffprobe returned invalid JSON") from exc
+    streams = payload.get("streams") if isinstance(payload, dict) else []
+    streams = streams if isinstance(streams, list) else []
+    video = next(
+        (
+            item
+            for item in streams
+            if isinstance(item, dict) and item.get("codec_type") == "video"
+        ),
+        {},
+    )
+    return {
+        "has_video": bool(video),
+        "has_audio": any(
+            isinstance(item, dict) and item.get("codec_type") == "audio"
+            for item in streams
+        ),
+        "width": int(video.get("width") or 0),
+        "height": int(video.get("height") or 0),
+        "duration_seconds": float(
+            (payload.get("format") if isinstance(payload, dict) else {}).get("duration")
+            or 0.0
+        ),
+    }
+
+
+def validate_shipinhao_delivery_copy(
+    source_probe: dict[str, Any],
+    delivery_probe: dict[str, Any],
+) -> None:
+    if not delivery_probe.get("has_video") or float(delivery_probe.get("duration_seconds") or 0) <= 0:
+        raise RuntimeError("bounded delivery copy has no readable video")
+    if source_probe.get("has_audio") and not delivery_probe.get("has_audio"):
+        raise RuntimeError("bounded delivery copy lost its audio stream")
+    source_duration = float(source_probe.get("duration_seconds") or 0)
+    delivery_duration = float(delivery_probe.get("duration_seconds") or 0)
+    tolerance = max(1.5, source_duration * 0.03)
+    if source_duration > 0 and abs(source_duration - delivery_duration) > tolerance:
+        raise RuntimeError("bounded delivery copy duration does not match the verified source")
 
 
 def write_shipinhao_delivery_transcript(
@@ -10662,13 +11094,21 @@ def verified_shipinhao_delivery_record(task: dict[str, Any] | None) -> dict[str,
         profile.get("object_id")
         and (
             input_kind == "card_media_url"
+            or (
+                input_kind == "verified_gui_audio_capture"
+                and finder.get("visual_identity_verified") is True
+            )
             or bool(finder.get("content_identity_verified"))
             or bool(profile.get("content_identity_verified"))
         )
     )
     if (
         status not in {"transcribed", "cached", "no_audio"}
-        or input_kind not in {"card_media_url", "exact_sph_share_link"}
+        or input_kind not in {
+            "card_media_url",
+            "exact_sph_share_link",
+            "verified_gui_audio_capture",
+        }
         or not exact_identity
         or delivery.get("verified") is not True
         or not media_path.is_file()
@@ -10902,8 +11342,8 @@ def verified_shipinhao_delivery_result_complete(
 def prepare_shipinhao_media_transcript_preflight(task: dict[str, Any], artifact_dir: Path) -> dict[str, Any]:
     output_dir = artifact_dir / "shipinhao_media_transcript"
     output_dir.mkdir(parents=True, exist_ok=True)
-    source_text = source_recovery_task_text(task)
-    profile = extract_shipinhao_media_profile(source_text)
+    profile = shipinhao_profile_for_task(task)
+    source_text = shipinhao_source_text_for_task(task, profile)
     public_profile = {key: value for key, value in profile.items() if key not in {"media_urls", "cover_urls"}}
     if not SHIPINHAO_MEDIA_TRANSCRIBE_SCRIPT.is_file():
         result = {
@@ -11012,6 +11452,16 @@ def native_shipinhao_capture_needed(result: dict[str, Any], profile: dict[str, A
 
 
 def run_automatic_shipinhao_gui_capture(task: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any]:
+    if android_native_source_task(task) and WECHAT_ANDROID_SOURCE_RECOVERY_SCRIPT.is_file():
+        mobile = run_automatic_shipinhao_android_capture(task, profile)
+        if str(mobile.get("status") or "") == "verified":
+            return mobile
+        # Preserve the established desktop route as a second independent
+        # transport. A phone-origin source normally succeeds above, but a
+        # transient mobile-control failure must not remove the older fallback.
+        mobile_failure = safe_shipinhao_capture_result(mobile)
+    else:
+        mobile_failure = {}
     chat = str(task.get("chat") or "").strip()
     if not chat:
         return {"status": "failed", "error_code": "missing_source_chat"}
@@ -11056,6 +11506,97 @@ def run_automatic_shipinhao_gui_capture(task: dict[str, Any], profile: dict[str,
     if not isinstance(payload, dict):
         payload = {"status": "failed", "error_code": "native_capture_invalid_result"}
     payload["returncode"] = proc.returncode
+    if mobile_failure:
+        payload["android_capture_fallback"] = mobile_failure
+    return payload
+
+
+def run_automatic_shipinhao_android_capture(
+    task: dict[str, Any],
+    profile: dict[str, Any],
+) -> dict[str, Any]:
+    source = task.get("source") if isinstance(task.get("source"), dict) else {}
+    route = task.get("route") if isinstance(task.get("route"), dict) else {}
+    response_policy = (
+        task.get("response_policy")
+        if isinstance(task.get("response_policy"), dict)
+        else {}
+    )
+    capability_profile = (
+        response_policy.get("capability_profile")
+        if isinstance(response_policy.get("capability_profile"), dict)
+        else {}
+    )
+    target = str(
+        route.get("send_target_name")
+        or capability_profile.get("display_name")
+        or task.get("chat")
+        or ""
+    ).strip()
+    source_id = str(source.get("server_id") or source.get("local_id") or task.get("id") or "")
+    if not target or not source_id:
+        return {"status": "failed", "error_code": "missing_android_source_identity"}
+    duration = max(0.0, float_or_none(profile.get("duration_seconds")) or 0.0)
+    capture_limit = min(180.0, max(45.0, duration + 12.0)) if duration else max(
+        45.0,
+        min(180.0, float(os.environ.get("WECHAT_ANDROID_SHIPINHAO_CAPTURE_SECONDS", "120"))),
+    )
+    output_dir = worker_artifact_dir(task) / "shipinhao_android_source"
+    command = [
+        sys.executable,
+        str(WECHAT_ANDROID_SOURCE_RECOVERY_SCRIPT),
+        "--kind",
+        "shipinhao",
+        "--target",
+        target,
+        "--targets-file",
+        str(DEFAULT_SEND_TARGETS),
+        "--task-id",
+        str(task.get("id") or "shipinhao-native"),
+        "--source-id",
+        source_id,
+        "--object-id",
+        str(profile.get("object_id") or ""),
+        "--title",
+        str(profile.get("title") or ""),
+        "--author",
+        str(profile.get("author") or ""),
+        "--output-dir",
+        str(output_dir),
+        "--max-seconds",
+        f"{capture_limit:.3f}",
+        "--expected-duration-seconds",
+        f"{duration:.3f}",
+    ]
+    for term in unique_strings(
+        [
+            str(profile.get("author") or ""),
+            str(profile.get("title") or ""),
+        ]
+    )[:3]:
+        command.extend(["--identity-term", term])
+    command.append("--json")
+    try:
+        proc = subprocess.run(
+            command,
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=int(capture_limit + 420),
+        )
+    except subprocess.TimeoutExpired:
+        return {"status": "failed", "error_code": "android_native_capture_timeout"}
+    except OSError:
+        return {"status": "failed", "error_code": "android_native_capture_start_failed"}
+    try:
+        payload = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        payload = {"status": "failed", "error_code": "android_native_capture_invalid_result"}
+    if not isinstance(payload, dict):
+        payload = {"status": "failed", "error_code": "android_native_capture_invalid_result"}
+    payload["returncode"] = proc.returncode
+    payload["transport"] = "wechat_android"
     return payload
 
 
@@ -11070,6 +11611,7 @@ def safe_shipinhao_capture_result(result: dict[str, Any]) -> dict[str, Any]:
             "error_code",
             "failure_stage",
             "source_card_found",
+            "transport",
         )
         if result.get(key) not in {None, ""}
     }

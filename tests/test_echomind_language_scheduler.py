@@ -380,6 +380,45 @@ Romaji: Nodo ga itai node, ashita no gozen ni isha no yoyaku o shitai desu.
         )
         self.assertNotIn("Constrain the exercise.", feedback["regression_checks"])
 
+    def test_daily_pdf_repair_rejects_new_deterministic_defects(self) -> None:
+        current = (
+            r"\section*{Japanese 日本語} \ruby{予約}{よやく}をします。 "
+            "Romaji: yoyaku o shimasu. "
+            + ("Substantial trilingual teaching content. " * 300)
+        )
+        candidate = current.replace("Romaji: yoyaku o shimasu.", "")
+
+        regressions = scheduler.daily_pdf_repair_regressions(current, candidate)
+
+        self.assertIn("missing_romaji", regressions)
+
+    def test_daily_pdf_repair_accepts_candidate_without_new_contract_defects(self) -> None:
+        current = (
+            r"\section*{Japanese 日本語} \ruby{予約}{よやく}をします。 "
+            "Romaji: yoyaku o shimasu. "
+            + ("Substantial trilingual teaching content. " * 300)
+        )
+        candidate = current.replace("Substantial", "Useful", 1)
+
+        self.assertEqual(
+            scheduler.daily_pdf_repair_regressions(current, candidate),
+            [],
+        )
+
+    def test_daily_pdf_immediate_invocation_does_not_queue_behind_active_run(self) -> None:
+        with mock.patch.object(
+            scheduler.fcntl,
+            "flock",
+            side_effect=BlockingIOError,
+        ), mock.patch.object(scheduler.direct, "load_config") as load_config:
+            result = scheduler.run_daily_pdf_if_due(
+                force=True,
+                skip_if_busy=True,
+            )
+
+        self.assertEqual(result["status"], "in_progress")
+        load_config.assert_not_called()
+
     def test_daily_pdf_contract_rejects_body_level_title_commands(self) -> None:
         body = r"\maketitle \section{Chinese 中文} Pinyin: yùyuē. English. Japanese 日本語. Grammar 语法 Vocabulary 词汇 Common mistakes 易错 Practice 练习 Romaji. \ruby{予約}{よやく}."
         body += " Substantial teaching content." * 300
@@ -1053,7 +1092,7 @@ Reading detail with corrected pinyin and romaji. Reading detail with corrected p
                 mock.patch.object(
                     scheduler,
                     "run_agent_session",
-                    side_effect=RuntimeError("regeneration started"),
+                    side_effect=RuntimeError("agent must not run without source"),
                 ),
                 mock.patch.object(
                     scheduler,
@@ -1066,16 +1105,17 @@ Reading detail with corrected pinyin and romaji. Reading detail with corrected p
                     return_value="",
                 ),
             ):
-                with self.assertRaisesRegex(RuntimeError, "regeneration started"):
-                    scheduler.run_daily_pdf(
-                        {"chat_name": "EchoMind", "agent_fallbacks": {}},
-                        state,
-                        now=datetime(2026, 7, 23, 6, 5, tzinfo=scheduler.LOCAL_TZ),
-                        force=True,
-                    )
+                result = scheduler.run_daily_pdf(
+                    {"chat_name": "EchoMind", "agent_fallbacks": {}},
+                    state,
+                    now=datetime(2026, 7, 23, 6, 5, tzinfo=scheduler.LOCAL_TZ),
+                    force=True,
+                )
                 stored = scheduler.load_state()
 
         send.assert_not_called()
+        self.assertEqual(result["status"], "skipped_no_source")
+        self.assertEqual(stored["last_daily_pdf_date"], "2026-07-22")
         self.assertNotIn("pending_daily_pdf", stored)
         self.assertIn(
             "pending_pdf_quality_not_accepted",
