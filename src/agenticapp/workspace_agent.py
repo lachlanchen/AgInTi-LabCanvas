@@ -1564,14 +1564,20 @@ def _parse_aginti_machine_result(
     message = str(payload.get("result") or "").strip()
     stopped = bool(payload.get("stopped"))
     failed = bool(payload.get("failed"))
+    unresolved_tool_protocol = _aginti_unresolved_tool_protocol(message)
     ok = (
         bool(payload.get("ok"))
         and bool(message)
         and not stopped
         and not failed
+        and not unresolved_tool_protocol
         and int(result.get("returncode") or 0) == 0
     )
-    reason = str(payload.get("reason") or ("" if ok else "empty_result"))
+    reason = (
+        "unresolved_tool_protocol"
+        if unresolved_tool_protocol
+        else str(payload.get("reason") or ("" if ok else "empty_result"))
+    )
     return {
         **result,
         "ok": ok,
@@ -1584,6 +1590,27 @@ def _parse_aginti_machine_result(
         "failed": failed,
         "resumed": False,
     }
+
+
+def _aginti_unresolved_tool_protocol(value: Any) -> bool:
+    """Reject a provider tool envelope that escaped AgInTi's tool loop."""
+
+    text = str(value or "").lstrip()
+    if not text:
+        return False
+    return bool(
+        re.match(
+            r"(?:"
+            r"<[^>\r\n]{0,120}\bDSML\b[^>\r\n]{0,120}\btool_calls?\b[^>]*>"
+            r"|<\|?tool_calls?\|?>"
+            r"|<tool_call\b"
+            r"|\[TOOL_CALLS\]"
+            r"|TOOL_CALLS\s*:"
+            r")",
+            text,
+            flags=re.IGNORECASE,
+        )
+    )
 
 
 def _aginti_provider_chain(settings: dict[str, Any], *, policy: dict[str, Any] | None = None) -> list[str]:
@@ -1612,7 +1639,13 @@ def _aginti_provider_retry_safe(result: dict[str, Any]) -> bool:
     if result.get("ok") or returncode == 127:
         return False
     reason = str(result.get("reason") or "").casefold()
-    if reason in {"empty_model_response", "invalid_machine_json", "model_timeout", "provider_unavailable"}:
+    if reason in {
+        "empty_model_response",
+        "invalid_machine_json",
+        "model_timeout",
+        "provider_unavailable",
+        "unresolved_tool_protocol",
+    }:
         return bool(result.get("thread_id"))
     if returncode == 124:
         return bool(result.get("thread_id"))

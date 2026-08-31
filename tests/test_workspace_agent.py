@@ -28,6 +28,33 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class WorkspaceAgentTests(unittest.TestCase):
+    def test_aginti_unresolved_dsml_tool_call_is_not_accepted_as_success(self):
+        parsed = _parse_aginti_machine_result(
+            {
+                "ok": True,
+                "returncode": 0,
+                "message": json.dumps(
+                    {
+                        "ok": True,
+                        "sessionId": "tool-session",
+                        "result": (
+                            '<｜｜DSML｜｜tool_calls>\n'
+                            '<｜｜DSML｜｜invoke name="read_file">\n'
+                            '<｜｜DSML｜｜parameter name="file">README.md'
+                            '</｜｜DSML｜｜parameter>\n'
+                            '</｜｜DSML｜｜invoke>\n'
+                            '</｜｜DSML｜｜tool_calls>'
+                        ),
+                    }
+                ),
+            },
+            fallback_session_id="fallback-session",
+        )
+
+        self.assertFalse(parsed["ok"])
+        self.assertEqual(parsed["message"], "")
+        self.assertEqual(parsed["reason"], "unresolved_tool_protocol")
+
     def test_aginti_stopped_machine_result_is_not_accepted_as_success(self):
         parsed = _parse_aginti_machine_result(
             {

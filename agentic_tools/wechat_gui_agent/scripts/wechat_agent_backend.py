@@ -795,6 +795,27 @@ def user_facing_backend_message(value: Any) -> str:
     return text
 
 
+def unresolved_agent_tool_protocol(value: Any) -> bool:
+    """Detect an unexecuted provider tool envelope at the agent boundary."""
+
+    text = str(value or "").lstrip()
+    if not text:
+        return False
+    return bool(
+        re.match(
+            r"(?:"
+            r"<[^>\r\n]{0,120}\bDSML\b[^>\r\n]{0,120}\btool_calls?\b[^>]*>"
+            r"|<\|?tool_calls?\|?>"
+            r"|<tool_call\b"
+            r"|\[TOOL_CALLS\]"
+            r"|TOOL_CALLS\s*:"
+            r")",
+            text,
+            flags=re.IGNORECASE,
+        )
+    )
+
+
 def is_generic_execution_evidence_refusal(value: Any) -> bool:
     """Detect AgInTi's task-execution guard leaking into conversational roles."""
 
@@ -1307,6 +1328,7 @@ def aginti_provider_retry_mode(result: dict[str, Any]) -> str:
             "model_timeout",
             "provider_unavailable",
             "tool_contract_violation",
+            "unresolved_tool_protocol",
         )
     ):
         return "resume_durable_state" if result.get("thread_id") else ""
@@ -1787,6 +1809,8 @@ def aginti_result_contract_error(message: str, *, expected_prompt: str) -> str:
     text = str(message or "").strip()
     if not text:
         return "empty_machine_result"
+    if unresolved_agent_tool_protocol(text):
+        return "unresolved_tool_protocol"
     if AGINTI_INTERNAL_REPORT_RE.search(text):
         return "internal_runtime_report_rejected"
     if AGINTI_INTERNAL_OUTPUT_LINE_RE.search(text):

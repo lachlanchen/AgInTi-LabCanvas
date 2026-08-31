@@ -28,6 +28,13 @@ def load_bridge():
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
+    # A live personal-WeChat ingress process may advertise a cooperative turn
+    # on this shared workstation. Synthetic bridge instances must not inherit
+    # that external runtime marker unless a test supplies its own path.
+    module.DEFAULT_CONTROL_PRIORITY = (
+        Path(tempfile.gettempdir())
+        / f"labcanvas-wecom-test-priority-{os.getpid()}-{time.monotonic_ns()}.json"
+    )
     return module
 
 

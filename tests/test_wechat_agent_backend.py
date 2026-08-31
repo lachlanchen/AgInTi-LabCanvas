@@ -1680,6 +1680,23 @@ class WeChatAgentBackendTests(unittest.TestCase):
         )
         self.assertEqual(tool_reason, "internal_tool_output_rejected")
 
+    def test_aginti_contract_rejects_unexecuted_dsml_tool_envelope(self) -> None:
+        backend = load_backend()
+
+        reason = backend.aginti_result_contract_error(
+            (
+                '<｜｜DSML｜｜tool_calls>\n'
+                '<｜｜DSML｜｜invoke name="read_file">\n'
+                '<｜｜DSML｜｜parameter name="file">README.md'
+                '</｜｜DSML｜｜parameter>\n'
+                '</｜｜DSML｜｜invoke>\n'
+                '</｜｜DSML｜｜tool_calls>'
+            ),
+            expected_prompt="Read the project and answer the current question.",
+        )
+
+        self.assertEqual(reason, "unresolved_tool_protocol")
+
     def test_aginti_strict_json_contract_normalizes_fenced_object(self) -> None:
         backend = load_backend()
         prompt = "Return one strict JSON object and no prose."

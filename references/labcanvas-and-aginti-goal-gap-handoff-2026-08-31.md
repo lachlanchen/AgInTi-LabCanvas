@@ -149,7 +149,7 @@ The current scoped validation passed:
 
 The final guarded startup suite passed all 97 checks after adding the two
 Android-native source checks. The complete LabCanvas repository suite passed
-all 1,730 tests.
+all 1,741 tests after the phone-only transport and AgInTi boundary checkpoints.
 
 AgInTiFlow `0.20.295` also passed its syntax, safe-chat, deep-research,
 truthful-completion, and persistent-session smoke suites. After the recorded
@@ -212,6 +212,25 @@ decrypt-only Python environment without Pillow, so the Android sender could not
 detect the visible green Send button. Android sender subprocesses now use a
 GUI-capable Python interpreter selected by an import probe.
 
+### AgInTi Boundary Acceptance
+
+A bounded read-only LabCanvas task against AgInTi `0.20.295` and DeepSeek
+exposed a provider-protocol defect. DeepSeek returned a textual DSML tool
+envelope for `read_file`, but AgInTi treated that envelope as a successful final
+answer instead of executing the tool. The exact before/after task evidence is
+kept locally under:
+
+- `output/webapp/agent/tasks/b6c98c3e77f547d78c60e55ae2b43e02/` - false
+  completion before the boundary guard;
+- `output/webapp/agent/tasks/a86c75e239eb42a4b6b09c7dadc2438f/` - truthful
+  `unresolved_tool_protocol` failure after the guard.
+
+LabCanvas and the WeChat backend now reject unresolved tool envelopes instead
+of forwarding them to users or marking the task complete. This is a boundary
+guard, not a replacement tool loop. The general AgInTi runtime owns the proper
+fix: normalize the DeepSeek DSML envelope and its safe `file` to `path` alias
+into a native validated tool call, execute it, and continue the same session.
+
 ## Remaining Gaps
 
 ### Completed: Unified Personal-WeChat Availability
@@ -234,12 +253,16 @@ detailed desktop diagnostic intentionally remains available for troubleshooting
 and may still show zero desktop-ready groups while the compact operational view
 is healthy.
 
-### P1: Android Gongzhonghao Live Acceptance
+### Completed: Read-Only Gongzhonghao Recovery
 
-The canonical-link and title-identity route is implemented and unit-tested, but
-still needs one harmless live native article-card acceptance test. It must open
-the exact same-chat card, copy its canonical URL, read the body, and send one
-concise summary without browser verification or cross-chat selection.
+An exact prior Shares article URL was recovered as a full `#js_content` article
+through the mobile-compatible request and private-cache route. It required no
+external browser, no verification request, and no chat delivery. The accepted
+body is retained locally at
+`output/acceptance/wechat-gongzhonghao-20260831/article-1/article.md`.
+
+A later exact native-card test remains useful for the Android card-to-URL
+acquisition step, but full-text source recovery itself is accepted.
 
 ### P1: Burst And Interrupt Live Acceptance
 
@@ -262,21 +285,26 @@ for ordinary chat, research, files, schedules, CAD, publication supervision,
 and recovery. Compare raw provider output, AgInTi output, and routine evidence
 before deciding where to fix a failure.
 
+The current highest-priority core defect is DeepSeek DSML tool-call
+normalization. Until the AgInTi fix is validated and installed, LabCanvas must
+fail closed or hand off through a permitted provider; it must never deliver the
+raw envelope as an answer.
+
 Do not start LocalLLM inference during an active maintenance fence. The current
 maintenance workflow now records completion, so normal provider handoff is
 permitted again; any future fence must be honored in the same way.
 
 ## Next Acceptance Order
 
-1. Prove one live Android text round trip while desktop WeChat is unavailable.
-2. Prove one Android Gongzhonghao full-text round trip.
-3. Prove a live consecutive-message interruption turn.
-4. Prove deferred schedule delivery across a transport outage.
-5. Prove the next source-bearing EchoMind day compiles and delivers one accepted
+1. Validate and install AgInTi's DSML tool-call normalization, then repeat the
+   bounded exact-file task successfully.
+2. Prove a live consecutive-message interruption turn.
+3. Prove deferred schedule delivery across a transport outage.
+4. Prove the next source-bearing EchoMind day compiles and delivers one accepted
    PDF, while a source-empty day remains a quiet terminal skip.
-6. Run one bounded DeepSeek/AgInTi task through the normal LabCanvas queue and
-   attribute any quality loss to the correct layer.
-7. Commit and push only scoped source, tests, and documentation; keep private
+5. Continue bounded task-family acceptance and attribute every failure to
+   LabCanvas transport, AgInTi runtime, provider quality, or an owning routine.
+6. Commit and push only scoped source, tests, and documentation; keep private
    captures, raw chat state, credentials, and runtime artifacts ignored.
 
 ## Definition Of Done
