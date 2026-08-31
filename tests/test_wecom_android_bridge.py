@@ -4349,6 +4349,36 @@ Display #19 (activities from top to bottom):
         open_chat_list.assert_not_called()
         snapshot.assert_not_called()
 
+    def test_passive_poll_yields_one_turn_to_cooperative_reader(self) -> None:
+        bridge = load_bridge()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent", "AgentTest"],
+                    "state_db": str(root / "state.sqlite"),
+                    "staging_dir": str(root / "staging"),
+                    "control_priority_path": str(root / "priority.json"),
+                }
+            )
+            with mock.patch.object(
+                runtime, "external_control_priority", return_value=None
+            ), mock.patch.object(
+                runtime,
+                "cooperative_control_waiter",
+                return_value={"purpose": "personal_wechat_screen_ingress", "pid": 1234},
+            ), mock.patch.object(runtime, "open_chat_list") as open_chat_list, mock.patch.object(
+                runtime, "snapshot"
+            ) as snapshot:
+                result = runtime.poll_cycle()
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["deferred_for_outbound"])
+        self.assertEqual(result["deferred_reason"], "personal_wechat_screen_ingress")
+        open_chat_list.assert_not_called()
+        snapshot.assert_not_called()
+
     def test_passive_gui_operation_is_preempted_at_next_adb_boundary(self) -> None:
         bridge = load_bridge()
         with tempfile.TemporaryDirectory() as tmp:

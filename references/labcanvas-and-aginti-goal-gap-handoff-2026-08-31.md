@@ -193,9 +193,28 @@ both six-route phone-ingress lanes are fresh and reach the agent, while the
 desktop issue remains visible. The desktop path is preserved for later login
 and review.
 
+The first phone-only exact text round trip is now accepted while desktop WeChat
+remains at `login_required`:
+
+- one long self-authored marker was copied from the exact native green bubble;
+- `Select all` plus native `Copy` recovered the complete marker instead of the
+  short visible fragment;
+- the exact per-chat monitor generated the requested reply;
+- a first native send failure was preserved as one durable deferred result;
+- the retry reused the stored result, did not rerun the backend, cleared the
+  stale composer draft, and produced one verified `text-sent` proof;
+- the final reply appeared once in `My devices`;
+- compact health reports both phone-ingress lanes fresh and agent-reachable,
+  with all six monitor heartbeats healthy and desktop degradation still visible.
+
+The send failure was not an LLM or routing defect. The direct monitor runs in a
+decrypt-only Python environment without Pillow, so the Android sender could not
+detect the visible green Send button. Android sender subprocesses now use a
+GUI-capable Python interpreter selected by an import probe.
+
 ## Remaining Gaps
 
-### P0: Unified Personal-WeChat Availability
+### Completed: Unified Personal-WeChat Availability
 
 Compact health now separates operational phone ingress from the degraded
 desktop path, while the detailed desktop-centered view still returns a false
@@ -209,9 +228,11 @@ same lane-aware semantics:
   proven usable;
 - desktop recovery must not interrupt healthy Android work, and vice versa.
 
-Acceptance: one new exact Android text message is ingested, routed, answered,
-and verified once while desktop WeChat remains logged out; health reports the
-usable Android lane and the degraded desktop lane separately.
+Acceptance passed on 2026-08-31. The compact authoritative health surface now
+reports the usable Android lanes and the degraded desktop lane separately. The
+detailed desktop diagnostic intentionally remains available for troubleshooting
+and may still show zero desktop-ready groups while the compact operational view
+is healthy.
 
 ### P1: Android Gongzhonghao Live Acceptance
 

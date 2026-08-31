@@ -888,11 +888,22 @@ The stable interface and recovery commands are documented in
   screenshot pixel changes alone are not proof because focus and cursor blink
   can change an otherwise empty window. Keep every attempt's screenshot prefix
   unique so failed evidence cannot be overwritten by a later retry.
+- Native personal-WeChat text delivery must find one connected green Send
+  control or an exact OCR action below the composer. Do not use a fixed screen
+  coordinate. After tapping, require the green action to clear and retain the
+  post-send screenshot. Run the Android sender with a Python interpreter that
+  can import Pillow even when the direct monitor itself runs in a decrypt-only
+  virtual environment.
+- A native Android pre-commit failure and a recorded post-commit uncertainty
+  both preserve the exact generated reply in the durable outbox. The retry must
+  not rerun the agent. It selects and clears any stale composer draft before
+  pasting, then relies on the sender's component ledger to prevent a duplicate.
 - Fast chat replies and organizer acknowledgements use bounded durability. If
   the GUI is locked, the serialized sender is busy, or the sender times out,
   enqueue at most a short-lived `send_deferred_locked` outbox item. Preserve
   `send_deferred_reason` as `wechat_locked`, `gui_send_busy`,
-  `gui_send_timeout`, `wechat_entry_required`, or `title_guard_blank`. Ordinary
+  `gui_send_timeout`, `wechat_entry_required`, `title_guard_blank`, or
+  `android_send_failed`. Ordinary
   deferred sends expire after 10 minutes by default and retries are globally
   spaced by 30 seconds, so a restart cannot dump a stale burst into WeChat.
 - Immediate invocation is part of every routine contract: enabling or changing

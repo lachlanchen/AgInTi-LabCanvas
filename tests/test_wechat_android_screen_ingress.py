@@ -231,6 +231,48 @@ class WechatAndroidScreenIngressTests(unittest.TestCase):
             self.assertTrue(scanner.recorded_outbound_echo(route, text))
             self.assertFalse(scanner.recorded_outbound_echo(route, text))
 
+    def test_copy_bubble_selects_all_before_copying_selected_text(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            scanner = self.scanner(Path(tmp))
+            sender = mock.Mock()
+            first_menu = Path(tmp) / "first.png"
+            selected_menu = Path(tmp) / "selected.png"
+            sender.screenshot.side_effect = [first_menu, selected_menu]
+            select_all = self.module.OcrLine("全选", 400, 800, 500, 860)
+            copy = self.module.OcrLine("复制", 250, 800, 350, 860)
+            with mock.patch.object(
+                self.module,
+                "serialized_android_clipboard",
+                return_value=__import__("contextlib").nullcontext(),
+            ), mock.patch.object(self.module, "set_x_clipboard"), mock.patch.object(
+                self.module, "dark_menu_box", return_value=(200, 700, 800, 1000)
+            ), mock.patch.object(
+                self.module, "menu_action", return_value=select_all
+            ) as menu_action, mock.patch.object(
+                self.module, "copy_action", return_value=copy
+            ), mock.patch.object(
+                self.module, "get_x_clipboard", return_value="full exact message"
+            ), mock.patch.object(self.module.time, "sleep"):
+                result = scanner.copy_bubble(
+                    sender,
+                    (100, 200, 900, 500, 4000),
+                    probe_id="selected",
+                )
+
+            self.assertEqual(result, "full exact message")
+            menu_action.assert_called_once_with(
+                first_menu,
+                (200, 700, 800, 1000),
+                self.module.SELECT_ALL_LABELS,
+            )
+            self.assertEqual(
+                sender.tap.call_args_list,
+                [
+                    mock.call(select_all.center_x, select_all.center_y),
+                    mock.call(copy.center_x, copy.center_y),
+                ],
+            )
+
     def test_busy_screen_reader_preempts_only_after_bounded_gap(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             scanner = self.scanner(Path(tmp))
@@ -277,6 +319,21 @@ class WechatAndroidScreenIngressTests(unittest.TestCase):
 
             self.assertTrue(result["ok"])
             cooperative.assert_called_once()
+
+    def test_status_rejects_fresh_poll_with_stale_success(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            scanner = self.scanner(Path(tmp))
+            scanner.set_meta("last_poll_at", datetime.now(timezone.utc).isoformat())
+            scanner.set_meta(
+                "last_success_at",
+                (datetime.now(timezone.utc) - timedelta(seconds=120)).isoformat(),
+            )
+
+            status = scanner.status()
+
+            self.assertFalse(status["ok"])
+            self.assertTrue(status["catchup_overdue"])
+            self.assertGreater(status["last_success_age_seconds"], 90)
 
 
 if __name__ == "__main__":

@@ -1523,6 +1523,18 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
             "title_guard_blank",
         )
         self.assertEqual(direct_chatops.deferred_send_status(RuntimeError("WECHAT_SEND_BUSY")), "send-deferred-busy")
+        android_error = RuntimeError(
+            "WECHAT_ANDROID_SEND_FAILED: native sender exited 1: composer action was not visible"
+        )
+        self.assertTrue(direct_chatops.is_deferable_send_error(android_error))
+        self.assertEqual(
+            direct_chatops.deferred_send_status(android_error),
+            "send-deferred-android",
+        )
+        self.assertEqual(
+            direct_chatops.deferred_send_reason(android_error),
+            "android_send_failed",
+        )
         self.assertFalse(direct_chatops.is_wechat_locked_error(RuntimeError("title guard failed")))
         self.assertFalse(direct_chatops.is_deferable_send_error(RuntimeError("title guard failed")))
         self.assertFalse(direct_chatops.is_deferable_send_error(RuntimeError("Opened chat title guard failed for EchoMind: OCR='OtherChat'.")))
@@ -3271,7 +3283,57 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertEqual(result["state"]["responded_server_ids"], ["1"])
         self.assertEqual(queued[0]["status"], "send_deferred_locked")
         self.assertEqual(queued[0]["send_deferred_reason"], "gui_send_busy")
+
+    def test_android_send_failure_preserves_fast_reply_for_worker_flush(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            mirror_db = Path(tmp) / "mirror.sqlite"
+            config = self.base_config()
+            config["immediate_ack_enabled"] = False
+            config["worker_queue"] = str(queue)
+            config["mirror_db"] = str(mirror_db)
+            config["send_target"] = {
+                "name": "EchoMind",
+                "query": "EchoMind",
+                "expected_title": "EchoMind",
+            }
+            state: dict[str, object] = {"last_local_id": 0}
+            row = self.row("今日はいい天気です", server_id="1", local_id=1)
+            original_read_new = direct_chatops.read_new_messages
+            original_history = direct_chatops.read_recent_history
+            original_run_codex = direct_chatops.run_codex
+            original_send = direct_chatops.send_gui_message
+            try:
+                direct_chatops.read_new_messages = lambda *_args, **_kwargs: [row]  # type: ignore[assignment]
+                direct_chatops.read_recent_history = lambda *_args, **_kwargs: [row]  # type: ignore[assignment]
+                direct_chatops.run_codex = lambda *_args, **_kwargs: "CHAT: reply"  # type: ignore[assignment]
+
+                def fail_android(_config: object, _message: str) -> str:
+                    raise RuntimeError(
+                        "WECHAT_ANDROID_SEND_FAILED: native sender exited 1"
+                    )
+
+                direct_chatops.send_gui_message = fail_android  # type: ignore[assignment]
+                result = direct_chatops.run_once(
+                    config,
+                    state,
+                    send=True,
+                    no_decrypt=True,
+                )
+            finally:
+                direct_chatops.read_new_messages = original_read_new  # type: ignore[assignment]
+                direct_chatops.read_recent_history = original_history  # type: ignore[assignment]
+                direct_chatops.run_codex = original_run_codex  # type: ignore[assignment]
+                direct_chatops.send_gui_message = original_send  # type: ignore[assignment]
+
+            queued = direct_chatops.read_worker_queue_tasks(queue)
+
+        self.assertEqual(result["responses_sent"], 0)
+        self.assertEqual(result["tasks_enqueued"], 1)
+        self.assertEqual(len(queued), 1)
         self.assertEqual(queued[0]["result"]["message"], "reply")
+        self.assertEqual(queued[0]["status"], "send_deferred_locked")
+        self.assertEqual(queued[0]["send_deferred_reason"], "android_send_failed")
 
     def test_research_immediate_route_keeps_all_focus_rows(self) -> None:
         config = {
@@ -4318,6 +4380,53 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertEqual(screenshot, str(proof))
         desktop.assert_called_once_with(config, "hi")
         android.assert_called_once_with(config, "hi")
+
+    def test_android_sender_uses_gui_capable_python_not_monitor_interpreter(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            proof = Path(tmp) / "android-sent.png"
+            proof.write_bytes(b"png")
+            calls: list[list[str]] = []
+
+            def fake_run(
+                command: list[str],
+                **_kwargs: object,
+            ) -> subprocess.CompletedProcess[str]:
+                calls.append(command)
+                payload = {
+                    "ok": True,
+                    "components": [
+                        {"kind": "text", "status": "sent", "after": str(proof)}
+                    ],
+                }
+                return subprocess.CompletedProcess(
+                    command,
+                    0,
+                    json.dumps(payload),
+                    "",
+                )
+
+            config = {
+                "chat_name": "EchoMind",
+                "send_target": {
+                    "name": "EchoMind",
+                    "expected_title": "EchoMind",
+                },
+                "_android_task_id": "direct-reply-source-8",
+            }
+            with mock.patch.object(
+                direct_chatops,
+                "android_send_python",
+                return_value="/opt/labcanvas-gui-python",
+            ), mock.patch.object(
+                direct_chatops,
+                "run_subprocess_group",
+                side_effect=fake_run,
+            ):
+                result = direct_chatops.send_android_message_once(config, "hello")
+
+        self.assertEqual(result, str(proof))
+        self.assertEqual(calls[0][0], "/opt/labcanvas-gui-python")
+        self.assertIn(str(direct_chatops.ANDROID_SEND_SCRIPT), calls[0])
 
     def test_direct_android_task_id_is_bound_to_exact_source(self) -> None:
         config = {"config_id": "echomind-direct-chatops.local.json"}

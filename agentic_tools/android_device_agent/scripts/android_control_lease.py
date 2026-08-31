@@ -95,6 +95,25 @@ def remove_priority(path: Path, *, token: str) -> None:
         path.unlink(missing_ok=True)
 
 
+def cooperative_waiter_path(priority_path: Path) -> Path:
+    """Keep fairness requests separate from explicit-action priority."""
+    suffix = priority_path.suffix or ".json"
+    return priority_path.with_name(f"{priority_path.stem}.cooperative{suffix}")
+
+
+def read_active_cooperative_waiter(
+    priority_path: Path,
+    *,
+    exclude_pid: int | None = None,
+    now: float | None = None,
+) -> dict[str, Any] | None:
+    return read_active_priority(
+        cooperative_waiter_path(priority_path),
+        exclude_pid=exclude_pid,
+        now=now,
+    )
+
+
 @contextmanager
 def priority_android_control(
     *,
@@ -178,42 +197,55 @@ def cooperative_android_control(
     purpose: str,
     timeout_seconds: float = 8.0,
 ) -> Iterator[dict[str, Any]]:
-    """Wait briefly for the background GUI lane without outranking user work.
+    """Wait fairly for the background GUI lane without outranking user work.
 
-    This is for recurring readers that must eventually get a turn but must not
-    publish a priority claim. It closes the starvation gap left by a purely
-    nonblocking passive probe while continuing to yield to explicit sends.
+    A separate cooperative marker asks other passive pollers to yield at their
+    next safe boundary. Explicit sends still use the distinct priority marker
+    and always win. This closes flock reacquisition starvation without treating
+    a recurring reader as a user-requested action.
     """
     timeout = max(0.1, float(timeout_seconds))
     deadline = time.monotonic() + timeout
+    token = secrets.token_hex(12)
+    waiter_path = cooperative_waiter_path(priority_path)
+    waiter = write_priority(
+        waiter_path,
+        token=token,
+        purpose=str(purpose or "cooperative_android_control")[:160],
+        lease_seconds=timeout + 15.0,
+    )
+    waiter["kind"] = "cooperative"
     lock_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    with lock_path.open("a+", encoding="utf-8") as handle:
-        while True:
-            active = read_active_priority(priority_path, exclude_pid=os.getpid())
-            if active is not None:
-                raise AndroidControlBusy(
-                    f"ANDROID_CONTROL_PRIORITY: "
-                    f"{active.get('purpose') or 'explicit request'}"
-                )
-            try:
-                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                break
-            except BlockingIOError as exc:
-                if time.monotonic() >= deadline:
+    try:
+        with lock_path.open("a+", encoding="utf-8") as handle:
+            while True:
+                active = read_active_priority(priority_path, exclude_pid=os.getpid())
+                if active is not None:
                     raise AndroidControlBusy(
-                        f"ANDROID_CONTROL_BUSY: shared GUI lane exceeded {timeout:.1f}s"
-                    ) from exc
-                time.sleep(0.1)
-        try:
-            active = read_active_priority(priority_path, exclude_pid=os.getpid())
-            if active is not None:
-                raise AndroidControlBusy(
-                    f"ANDROID_CONTROL_PRIORITY: "
-                    f"{active.get('purpose') or 'explicit request'}"
-                )
-            yield {"purpose": str(purpose or "cooperative_android_control")[:160]}
-        finally:
-            fcntl.flock(handle, fcntl.LOCK_UN)
+                        f"ANDROID_CONTROL_PRIORITY: "
+                        f"{active.get('purpose') or 'explicit request'}"
+                    )
+                try:
+                    fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError as exc:
+                    if time.monotonic() >= deadline:
+                        raise AndroidControlBusy(
+                            f"ANDROID_CONTROL_BUSY: shared GUI lane exceeded {timeout:.1f}s"
+                        ) from exc
+                    time.sleep(0.1)
+            try:
+                active = read_active_priority(priority_path, exclude_pid=os.getpid())
+                if active is not None:
+                    raise AndroidControlBusy(
+                        f"ANDROID_CONTROL_PRIORITY: "
+                        f"{active.get('purpose') or 'explicit request'}"
+                    )
+                yield waiter
+            finally:
+                fcntl.flock(handle, fcntl.LOCK_UN)
+    finally:
+        remove_priority(waiter_path, token=token)
 
 
 @contextmanager

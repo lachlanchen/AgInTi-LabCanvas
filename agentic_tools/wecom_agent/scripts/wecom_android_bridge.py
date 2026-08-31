@@ -45,7 +45,11 @@ ANDROID_CONTROL_SCRIPTS = ROOT / "agentic_tools" / "android_device_agent" / "scr
 if str(ANDROID_CONTROL_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(ANDROID_CONTROL_SCRIPTS))
 
-from android_control_lease import read_active_priority, serialized_android_clipboard
+from android_control_lease import (
+    read_active_cooperative_waiter,
+    read_active_priority,
+    serialized_android_clipboard,
+)
 
 DEFAULT_CONFIG = PRIVATE / "wecom_android_bridge.local.json"
 DEFAULT_STATE_DB = PRIVATE / "wecom_android_bridge.local.sqlite"
@@ -1772,12 +1776,22 @@ class AndroidBridge:
             exclude_pid=os.getpid(),
         )
 
+    def cooperative_control_waiter(self) -> dict[str, Any] | None:
+        """Let another passive reader obtain one bounded GUI turn."""
+        return read_active_cooperative_waiter(
+            self.control_priority_path,
+            exclude_pid=os.getpid(),
+        )
+
     def passive_control_deferred(self) -> tuple[bool, str]:
         if self.outbound_waiting():
             return True, "wecom_outbound"
         priority = self.external_control_priority()
         if priority is not None:
             return True, str(priority.get("purpose") or "external_android_control")
+        waiter = self.cooperative_control_waiter()
+        if waiter is not None:
+            return True, str(waiter.get("purpose") or "cooperative_android_control")
         return False, ""
 
     @contextmanager
@@ -1995,10 +2009,13 @@ class AndroidBridge:
         if self.outbound_waiting():
             raise BridgeError("WECOM_ANDROID_PREEMPTED: wecom_outbound")
         priority = self.external_control_priority()
-        if priority is None:
-            return
-        purpose = str(priority.get("purpose") or "external_android_control")
-        raise BridgeError(f"WECOM_ANDROID_PREEMPTED: {purpose}")
+        if priority is not None:
+            purpose = str(priority.get("purpose") or "external_android_control")
+            raise BridgeError(f"WECOM_ANDROID_PREEMPTED: {purpose}")
+        waiter = self.cooperative_control_waiter()
+        if waiter is not None:
+            purpose = str(waiter.get("purpose") or "cooperative_android_control")
+            raise BridgeError(f"WECOM_ANDROID_YIELD: {purpose}")
 
     def run(
         self,

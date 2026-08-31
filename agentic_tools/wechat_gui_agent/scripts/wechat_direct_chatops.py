@@ -7905,7 +7905,7 @@ def send_android_message_once(config: dict[str, Any], message: str) -> str:
         target_file = Path(handle.name)
         json.dump({target_name: target}, handle, ensure_ascii=False)
     command = [
-        sys.executable,
+        android_send_python(config),
         str(ANDROID_SEND_SCRIPT),
         "--targets-file",
         str(target_file),
@@ -7957,6 +7957,51 @@ def send_android_message_once(config: dict[str, Any], message: str) -> str:
     if not proof or not Path(proof).is_file():
         raise RuntimeError("WECHAT_ANDROID_SEND_FAILED: visual proof is missing")
     return proof
+
+
+def android_send_python(config: dict[str, Any]) -> str:
+    """Resolve a GUI-capable Python independently from the decrypt venv.
+
+    Direct monitors intentionally run in a small database-decryption virtual
+    environment. The native Android sender additionally needs Pillow for
+    visual action detection, so inheriting ``sys.executable`` can silently
+    remove the safety detector and strand a prepared reply in the composer.
+    """
+
+    requested = str(
+        config.get("android_send_python")
+        or os.environ.get("WECHAT_ANDROID_SEND_PYTHON")
+        or ""
+    ).strip()
+    candidates = [
+        requested,
+        shutil.which("python3") or "",
+        "/usr/bin/python3",
+        sys.executable,
+    ]
+    checked: list[str] = []
+    for raw in candidates:
+        if not raw:
+            continue
+        candidate = str(Path(raw).expanduser())
+        if candidate in checked or not Path(candidate).is_file():
+            continue
+        checked.append(candidate)
+        try:
+            probe = subprocess.run(
+                [candidate, "-c", "from PIL import Image"],
+                capture_output=True,
+                text=True,
+                timeout=8,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if probe.returncode == 0:
+            return candidate
+    raise RuntimeError(
+        "WECHAT_ANDROID_SEND_RUNTIME_UNAVAILABLE: no Python with Pillow is available"
+    )
 
 
 def send_gui_message(config: dict[str, Any], message: str) -> str:
@@ -8093,12 +8138,15 @@ def is_deferable_send_error(exc: Exception | str) -> bool:
         or is_gui_send_busy_error(exc)
         or is_gui_send_timeout_error(exc)
         or is_blank_title_guard_error(exc)
+        or is_android_send_error(exc)
     )
 
 
 def deferred_send_status(exc: Exception | str) -> str:
     if is_gui_send_busy_error(exc) or is_gui_send_timeout_error(exc):
         return "send-deferred-busy"
+    if is_android_send_error(exc):
+        return "send-deferred-android"
     return "send-deferred-locked"
 
 
@@ -8109,7 +8157,27 @@ def deferred_send_reason(exc: Exception | str) -> str:
         return "gui_send_timeout"
     if is_blank_title_guard_error(exc):
         return "title_guard_blank"
+    if is_android_send_error(exc):
+        return (
+            "android_delivery_uncertain"
+            if "android_wechat_uncertain" in str(exc).lower()
+            else "android_send_failed"
+        )
     return "wechat_locked"
+
+
+def is_android_send_error(exc: Exception | str) -> bool:
+    """Retain an already-generated reply when the native phone send fails.
+
+    The Android sender owns idempotency. Pre-commit failures are safe to retry,
+    while post-commit uncertainty remains recorded as ``uncertain`` and blocks
+    an automatic duplicate. In both cases the direct monitor must preserve the
+    exact reply in the durable delivery queue instead of advancing and losing
+    it.
+    """
+
+    text = str(exc).lower()
+    return "wechat_android_send_failed" in text or "android_wechat_uncertain" in text
 
 
 def gui_send_lock_busy(lock_path: Path = GUI_SEND_LOCK) -> bool:

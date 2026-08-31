@@ -210,6 +210,13 @@ both a chat-title line and a message preview containing the same alias, the
 exact title line wins. This prevents one renamed or temporarily hidden chat from
 poisoning all personal-WeChat intake.
 
+Long self-authored bubbles must be copied in full. After long-pressing the exact
+bubble, the screen ingress selects WeChat's native `Select all` action before
+`Copy` when that action is present. The native clipboard text, rather than a
+visible OCR fragment, is the source event. Health requires a recent successful
+route scan, not merely a recent polling heartbeat, so a loop that is alive but
+cannot obtain the phone GUI lane is reported as stale.
+
 The MIX 2S exposes WeChat on physical display 0 and WeCom on a virtual display,
 but Android 9 UIAutomator is not display-addressable. Consequently all phone
 GUI reads and writes share one serialized control lease and one clipboard lock.
@@ -220,7 +227,17 @@ display 0 explicitly. Direct personal-WeChat text first tries the guarded Linux
 desktop and falls back to the exact-title Android sender only when desktop
 preflight proves that WeChat is logged out, locked, or absent. The fallback is
 idempotent per exact inbound message and requires a post-send screenshot before
-reporting success.
+reporting success. Passive readers use a separate cooperative waiter marker so
+one reader eventually receives a bounded turn without outranking explicit
+outbound work.
+
+The direct monitor may run inside the small decrypt-only virtual environment,
+but native Android visual send detection requires Pillow. The monitor therefore
+resolves a GUI-capable Python interpreter for `wechat_android_send.py` instead
+of blindly inheriting `sys.executable`. A failed native send preserves the exact
+reply as a durable `send_deferred_locked` item. Its retry clears any matching
+stale composer draft before pasting, verifies that the connected green Send
+control disappeared, and records one `text-sent` proof before completion.
 
 WeCom follows the same Android limitation. Before an automated read, text send,
 or file send, the bridge temporarily moves WeCom to physical display 0 and uses

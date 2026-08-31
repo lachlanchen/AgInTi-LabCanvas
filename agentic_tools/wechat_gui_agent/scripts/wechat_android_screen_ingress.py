@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
+from contextlib import contextmanager
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -68,6 +69,7 @@ from wechat_android_send import (
 DEFAULT_OUTPUT = ROOT / "output" / "wechat_android_screen_ingress"
 OUTGOING_GREEN = (149, 236, 105)
 COPY_LABELS = ("复制", "複製", "Copy")
+SELECT_ALL_LABELS = ("全选", "全選", "Select all", "Select All")
 
 
 class AndroidScreenIngressError(RuntimeError):
@@ -141,7 +143,7 @@ class AndroidWechatScreenIngress:
 
     def init_db(self) -> None:
         self.db_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite_connection(self.db_path) as conn:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("CREATE TABLE IF NOT EXISTS Name2Id (user_name TEXT UNIQUE)")
             conn.execute(
@@ -176,7 +178,7 @@ class AndroidWechatScreenIngress:
         os.chmod(self.db_path, 0o600)
 
     def status(self) -> dict[str, Any]:
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite_connection(self.db_path) as conn:
             seeded = int(
                 conn.execute(
                     "SELECT COUNT(*) FROM AndroidScreenRoutes WHERE initialized = 1"
@@ -187,13 +189,27 @@ class AndroidWechatScreenIngress:
                     "SELECT COUNT(*) FROM AndroidIngressSeen WHERE status = 'screen_imported'"
                 ).fetchone()[0]
             )
+        last_success = self.meta("last_success_at")
+        success_age = timestamp_age_seconds(last_success)
+        health_max_gap = max(
+            30.0,
+            float(os.environ.get("WECHAT_ANDROID_SCREEN_HEALTH_MAX_GAP", "90")),
+        )
+        catchup_overdue = success_age is None or success_age > health_max_gap
         return {
-            "ok": bool(self.routes) and seeded == len(self.routes) and not self.meta("last_error"),
+            "ok": (
+                bool(self.routes)
+                and seeded == len(self.routes)
+                and not self.meta("last_error")
+                and not catchup_overdue
+            ),
             "routes": len(self.routes),
             "seeded_routes": seeded,
             "imported": imported,
             "last_poll_at": self.meta("last_poll_at"),
-            "last_success_at": self.meta("last_success_at"),
+            "last_success_at": last_success,
+            "last_success_age_seconds": success_age,
+            "catchup_overdue": catchup_overdue,
             "last_error": self.meta("last_error"),
             "deferred_routes": self.deferred_route_count(),
             "transport": "wechat_android_screen_self_text",
@@ -505,7 +521,7 @@ class AndroidWechatScreenIngress:
         self.set_meta(f"route_retry:{config_id}", "")
 
     def all_routes_seeded(self) -> bool:
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite_connection(self.db_path) as conn:
             count = int(
                 conn.execute(
                     "SELECT COUNT(*) FROM AndroidScreenRoutes WHERE initialized = 1"
@@ -550,6 +566,12 @@ class AndroidWechatScreenIngress:
             time.sleep(0.55)
             menu = sender.screenshot(f"copy-menu-{probe_id}")
             box = dark_menu_box(menu)
+            select_all = menu_action(menu, box, SELECT_ALL_LABELS)
+            if select_all is not None:
+                sender.tap(select_all.center_x, select_all.center_y)
+                time.sleep(0.35)
+                menu = sender.screenshot(f"copy-menu-selected-all-{probe_id}")
+                box = dark_menu_box(menu)
             action = copy_action(menu, box)
             if action is None:
                 sender.keyevent(4, check=False)
@@ -564,7 +586,7 @@ class AndroidWechatScreenIngress:
         return copied[:64000]
 
     def route_state(self, config_id: str) -> dict[str, Any]:
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite_connection(self.db_path) as conn:
             row = conn.execute(
                 "SELECT row_signature,snapshot_json,initialized FROM AndroidScreenRoutes "
                 "WHERE config_id = ?",
@@ -592,7 +614,7 @@ class AndroidWechatScreenIngress:
         snapshot: list[str],
         initialized: bool,
     ) -> None:
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite_connection(self.db_path) as conn:
             conn.execute(
                 "UPDATE AndroidScreenRoutes SET row_signature=?,snapshot_json=?,"
                 "initialized=?,updated_at=? WHERE config_id=?",
@@ -612,7 +634,7 @@ class AndroidWechatScreenIngress:
         preserve_processed_snapshot: bool = False,
     ) -> None:
         del preserve_processed_snapshot
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite_connection(self.db_path) as conn:
             for config_id, signature in signatures.items():
                 conn.execute(
                     "UPDATE AndroidScreenRoutes SET row_signature=?,updated_at=? "
@@ -637,7 +659,7 @@ class AndroidWechatScreenIngress:
         item_key = hashlib.sha256(identity.encode("utf-8")).hexdigest()
         sender = str(route.get("self_wxid") or "wechat-self")
         table = route["message_table"]
-        with sqlite3.connect(self.db_path, timeout=10) as conn:
+        with sqlite_connection(self.db_path, timeout=10) as conn:
             conn.execute("BEGIN IMMEDIATE")
             if conn.execute(
                 "SELECT 1 FROM AndroidIngressSeen WHERE item_key = ?", (item_key,)
@@ -678,7 +700,7 @@ class AndroidWechatScreenIngress:
             return False
         digest = hashlib.sha256(text.strip().encode("utf-8")).hexdigest()
         try:
-            with sqlite3.connect(self.send_state_db) as conn:
+            with sqlite_connection(self.send_state_db) as conn:
                 rows = conn.execute(
                     "SELECT component_key,chat FROM components "
                     "WHERE kind='text' AND status='sent' "
@@ -693,7 +715,7 @@ class AndroidWechatScreenIngress:
                 normalize_text(chat) == normalize_text(alias) for alias in aliases
             ):
                 continue
-            with sqlite3.connect(self.db_path) as conn:
+            with sqlite_connection(self.db_path) as conn:
                 before = conn.total_changes
                 conn.execute(
                     "INSERT OR IGNORE INTO AndroidScreenOutboundConsumed("
@@ -705,14 +727,14 @@ class AndroidWechatScreenIngress:
         return False
 
     def meta(self, key: str) -> str:
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite_connection(self.db_path) as conn:
             row = conn.execute(
                 "SELECT value FROM AndroidScreenMeta WHERE key=?", (key,)
             ).fetchone()
         return str(row[0]) if row else ""
 
     def set_meta(self, key: str, value: str) -> None:
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite_connection(self.db_path) as conn:
             conn.execute(
                 "INSERT INTO AndroidScreenMeta(key,value) VALUES(?,?) "
                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
@@ -891,6 +913,14 @@ def dark_menu_box(path: Path) -> tuple[int, int, int, int] | None:
 
 
 def copy_action(path: Path, box: tuple[int, int, int, int] | None) -> OcrLine | None:
+    return menu_action(path, box, COPY_LABELS)
+
+
+def menu_action(
+    path: Path,
+    box: tuple[int, int, int, int] | None,
+    labels: tuple[str, ...],
+) -> OcrLine | None:
     if box is None:
         return None
     left, top, right, bottom = box
@@ -899,7 +929,7 @@ def copy_action(path: Path, box: tuple[int, int, int, int] | None) -> OcrLine | 
         for line in ocr_lines(path)
         if left <= line.center_x <= right and top <= line.center_y <= bottom
     ]
-    return find_action_line(candidates, COPY_LABELS)
+    return find_action_line(candidates, labels)
 
 
 def set_x_clipboard(display: str, value: str) -> None:
@@ -946,6 +976,33 @@ def new_visible_messages(previous: list[str], current: list[str]) -> list[str]:
         else:
             new.append(text)
     return new
+
+
+@contextmanager
+def sqlite_connection(
+    path: Path,
+    *,
+    timeout: float = 5.0,
+) -> Any:
+    """Commit or roll back like sqlite's context manager, then really close."""
+    connection = sqlite3.connect(path, timeout=timeout)
+    try:
+        with connection:
+            yield connection
+    finally:
+        connection.close()
+
+
+def timestamp_age_seconds(value: str) -> float | None:
+    if not value:
+        return None
+    try:
+        observed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if observed.tzinfo is None:
+        observed = observed.replace(tzinfo=timezone.utc)
+    return max(0.0, (datetime.now(timezone.utc) - observed).total_seconds())
 
 
 def safe_result(**values: Any) -> dict[str, Any]:

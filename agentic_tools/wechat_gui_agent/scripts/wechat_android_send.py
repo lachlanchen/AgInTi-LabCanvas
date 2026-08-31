@@ -715,8 +715,13 @@ class AndroidWechatSender:
         self.paste_text(component["value"])
         time.sleep(0.7)
         typed = self.screenshot("text-typed")
-        action_point = green_action_center(typed, min_y_ratio=0.45)
+        action_box = green_action_box(typed, min_y_ratio=0.45)
+        action_point = box_center(action_box) if action_box is not None else None
         action = find_action_line(ocr_lines(typed), ("发送", "傳送", "Send"))
+        if action_point is None and (
+            action is None or action.center_y < int(height * 0.45)
+        ):
+            raise AndroidWechatError("Android text send action was not visible")
         self.mark_component(component, "sending", {"typed_screenshot": str(typed)})
         committed = False
         try:
@@ -724,8 +729,6 @@ class AndroidWechatSender:
                 self.tap(action_point[0], action_point[1])
             elif action is not None and action.center_y > int(height * 0.45):
                 self.tap(action.right - 5, action.center_y)
-            else:
-                self.tap(int(width * 0.91), int(height * 0.603))
             committed = True
             time.sleep(1.3)
             after = self.screenshot("text-sent")
@@ -733,6 +736,13 @@ class AndroidWechatSender:
                 raise AndroidWechatError("target title changed after Android text send")
             if image_difference_pixels(typed, after) < 200:
                 raise AndroidWechatError("Android text send produced no visible UI change")
+            if action_box is not None:
+                before_green = green_coverage(typed, action_box)
+                after_green = green_coverage(after, action_box)
+                if after_green >= max(0.08, before_green * 0.35):
+                    raise AndroidWechatError(
+                        "Android text send did not clear the composer action"
+                    )
             details = {"before": str(before), "typed": str(typed), "after": str(after)}
             self.mark_component(component, "sent", details)
             return {"key": component["key"], "kind": "text", "status": "sent", **details}
@@ -771,6 +781,23 @@ class AndroidWechatSender:
             clipboard.stdin.write(text.encode("utf-8"))
             clipboard.stdin.close()
             time.sleep(0.2)
+            # A previous delivery attempt may have failed after populating the
+            # composer. Replace that draft instead of appending a duplicate on
+            # the durable retry.
+            run_checked(
+                [
+                    "xdotool",
+                    "windowfocus",
+                    "--sync",
+                    windows[-1],
+                    "key",
+                    "--clearmodifiers",
+                    "ctrl+a",
+                    "BackSpace",
+                ],
+                env=env,
+                timeout=10,
+            )
             run_checked(
                 [
                     "xdotool",
@@ -1378,8 +1405,12 @@ def find_action_line(lines: list[OcrLine], labels: tuple[str, ...]) -> OcrLine |
     return max(candidates, key=lambda line: (line.right, line.bottom), default=None)
 
 
-def green_action_center(path: Path, *, min_y_ratio: float) -> tuple[int, int] | None:
-    """Find WeChat's lower-right green commit control, never a text heading."""
+def green_action_box(
+    path: Path,
+    *,
+    min_y_ratio: float,
+) -> tuple[int, int, int, int] | None:
+    """Find one connected green commit control without merging nearby UI."""
     try:
         from PIL import Image
     except ImportError:
@@ -1389,21 +1420,79 @@ def green_action_center(path: Path, *, min_y_ratio: float) -> tuple[int, int] | 
         width, height = image.size
         left = int(width * 0.45)
         top = int(height * min_y_ratio)
-        points: list[tuple[int, int]] = []
+        points: set[tuple[int, int]] = set()
         for y in range(top, int(height * 0.95), 4):
-            for x in range(left, int(width * 0.96), 4):
+            for x in range(left, int(width * 0.985), 4):
                 red, green, blue = image.getpixel((x, y))
                 if green >= 135 and green - red >= 35 and green - blue >= 25:
-                    points.append((x, y))
-    if len(points) < 120:
+                    points.add((x, y))
+
+    candidates: list[tuple[int, int, int, int, int]] = []
+    while points:
+        seed = points.pop()
+        stack = [seed]
+        xs = [seed[0]]
+        ys = [seed[1]]
+        while stack:
+            x, y = stack.pop()
+            for neighbor in ((x - 4, y), (x + 4, y), (x, y - 4), (x, y + 4)):
+                if neighbor not in points:
+                    continue
+                points.remove(neighbor)
+                stack.append(neighbor)
+                xs.append(neighbor[0])
+                ys.append(neighbor[1])
+        min_x, max_x = min(xs), max(xs)
+        min_y, max_y = min(ys), max(ys)
+        box_width = max_x - min_x + 4
+        box_height = max_y - min_y + 4
+        if (
+            len(xs) >= 80
+            and box_width >= width * 0.08
+            and box_width <= width * 0.40
+            and box_height >= height * 0.025
+            and box_height <= height * 0.15
+            and box_width >= box_height * 1.15
+            and max_x >= width * 0.72
+        ):
+            candidates.append((min_x, min_y, max_x + 4, max_y + 4, len(xs)))
+    if not candidates:
         return None
-    min_x = min(point[0] for point in points)
-    max_x = max(point[0] for point in points)
-    min_y = min(point[1] for point in points)
-    max_y = max(point[1] for point in points)
-    if max_x - min_x < width * 0.12 or max_y - min_y < height * 0.025:
-        return None
-    return int((min_x + max_x) / 2), int((min_y + max_y) / 2)
+    return max(candidates, key=lambda box: (box[2], box[4], box[3]))[:4]
+
+
+def box_center(box: tuple[int, int, int, int]) -> tuple[int, int]:
+    left, top, right, bottom = box
+    return int((left + right) / 2), int((top + bottom) / 2)
+
+
+def green_action_center(path: Path, *, min_y_ratio: float) -> tuple[int, int] | None:
+    """Return the center of WeChat's green commit control when proven."""
+    box = green_action_box(path, min_y_ratio=min_y_ratio)
+    return box_center(box) if box is not None else None
+
+
+def green_coverage(path: Path, box: tuple[int, int, int, int]) -> float:
+    """Measure green fill retained in an exact action box after a tap."""
+    try:
+        from PIL import Image
+    except ImportError:
+        return 0.0
+    with Image.open(path) as source:
+        image = source.convert("RGB")
+        left, top, right, bottom = box
+        left = max(0, min(image.width, left))
+        right = max(left, min(image.width, right))
+        top = max(0, min(image.height, top))
+        bottom = max(top, min(image.height, bottom))
+        total = max(1, (right - left) * (bottom - top))
+        green_pixels = 0
+        for y in range(top, bottom):
+            for x in range(left, right):
+                red, green, blue = image.getpixel((x, y))
+                if green >= 135 and green - red >= 35 and green - blue >= 25:
+                    green_pixels += 1
+    return green_pixels / total
 
 
 def run_checked(

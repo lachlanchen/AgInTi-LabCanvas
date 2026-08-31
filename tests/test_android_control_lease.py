@@ -118,7 +118,7 @@ class AndroidControlLeaseTests(unittest.TestCase):
                 self.assertFalse(marker.exists())
             self.assertFalse(marker.exists())
 
-    def test_cooperative_control_waits_without_creating_priority_claim(self):
+    def test_cooperative_control_uses_separate_fairness_marker(self):
         module = load_lease()
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -141,8 +141,34 @@ class AndroidControlLeaseTests(unittest.TestCase):
                 ) as claim:
                     self.assertEqual(claim["purpose"], "screen_ingress")
                     self.assertFalse(marker.exists())
+                    cooperative = module.cooperative_waiter_path(marker)
+                    self.assertTrue(cooperative.is_file())
+                    stored = json.loads(cooperative.read_text(encoding="utf-8"))
+                    self.assertEqual(stored["purpose"], "screen_ingress")
 
             self.assertFalse(marker.exists())
+            self.assertFalse(module.cooperative_waiter_path(marker).exists())
+
+    def test_live_cooperative_waiter_is_separate_from_explicit_priority(self):
+        module = load_lease()
+        with tempfile.TemporaryDirectory() as tmp:
+            marker = Path(tmp) / "priority.json"
+            cooperative = module.cooperative_waiter_path(marker)
+            cooperative.write_text(
+                json.dumps(
+                    {
+                        "token": "cooperative",
+                        "pid": 12345,
+                        "purpose": "screen_ingress",
+                        "expires_at": 20.0,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with mock.patch.object(module, "process_is_alive", return_value=True):
+                self.assertIsNone(module.read_active_priority(marker, now=10.0))
+                waiter = module.read_active_cooperative_waiter(marker, now=10.0)
+            self.assertEqual(waiter["purpose"], "screen_ingress")
 
     def test_cooperative_control_yields_to_explicit_priority(self):
         module = load_lease()

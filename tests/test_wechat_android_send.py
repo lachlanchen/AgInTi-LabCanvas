@@ -80,6 +80,45 @@ class WechatAndroidSendTests(unittest.TestCase):
         )
         self.assertEqual(module.outbound_share_mime(Path("report.pdf")), "application/pdf")
 
+    def test_paste_text_replaces_stale_composer_draft_before_pasting(self):
+        module = load_sender()
+        with tempfile.TemporaryDirectory() as tmp:
+            sender = module.AndroidWechatSender(
+                adb="adb",
+                serial="device",
+                target={"name": "EchoMind", "expected_title": "EchoMind"},
+                task_id="task-retry-draft",
+                state_db=Path(tmp) / "state.sqlite",
+                output_dir=Path(tmp) / "output",
+            )
+            search = mock.Mock(stdout="4242\n")
+            clipboard = mock.Mock()
+            clipboard.stdin = mock.Mock()
+            with mock.patch.object(
+                module,
+                "serialized_android_clipboard",
+                return_value=nullcontext(),
+            ), mock.patch.object(
+                module,
+                "run_checked",
+                side_effect=[search, mock.Mock(), mock.Mock()],
+            ) as run, mock.patch.object(
+                module.subprocess,
+                "Popen",
+                return_value=clipboard,
+            ), mock.patch.object(module.time, "sleep"):
+                sender.paste_text("replacement")
+
+        self.assertEqual(
+            run.call_args_list[1].args[0][-4:],
+            ["key", "--clearmodifiers", "ctrl+a", "BackSpace"],
+        )
+        self.assertEqual(
+            run.call_args_list[2].args[0][-2:],
+            ["--clearmodifiers", "ctrl+v"],
+        )
+        clipboard.stdin.write.assert_called_once_with(b"replacement")
+
     def test_component_state_prevents_duplicate_delivery(self):
         module = load_sender()
         with tempfile.TemporaryDirectory() as tmp:
@@ -1073,6 +1112,47 @@ Display #0 (activities from top to bottom):
         self.assertIsNotNone(point)
         self.assertTrue(650 <= point[0] <= 730)
         self.assertTrue(1760 <= point[1] <= 1800)
+
+    def test_green_action_center_does_not_merge_selection_handle_with_send_button(self):
+        module = load_sender()
+        try:
+            from PIL import Image, ImageDraw
+        except ImportError:
+            self.skipTest("Pillow unavailable")
+        with tempfile.TemporaryDirectory() as tmp:
+            image = Image.new("RGB", (1080, 2160), "white")
+            draw = ImageDraw.Draw(image)
+            draw.rectangle((480, 970, 910, 1060), fill=(149, 236, 105))
+            draw.ellipse((650, 1180, 710, 1260), fill=(7, 193, 96))
+            draw.rectangle((918, 1232, 1052, 1318), fill=(7, 193, 96))
+            path = Path(tmp) / "selected-text-and-send.png"
+            image.save(path)
+
+            box = module.green_action_box(path, min_y_ratio=0.45)
+            point = module.green_action_center(path, min_y_ratio=0.45)
+
+        self.assertEqual(box, (918, 1232, 1054, 1320))
+        self.assertEqual(point, (986, 1276))
+
+    def test_green_coverage_proves_composer_action_cleared(self):
+        module = load_sender()
+        try:
+            from PIL import Image, ImageDraw
+        except ImportError:
+            self.skipTest("Pillow unavailable")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            typed = Image.new("RGB", (1080, 2160), "white")
+            ImageDraw.Draw(typed).rectangle((918, 1232, 1052, 1318), fill=(7, 193, 96))
+            typed_path = root / "typed.png"
+            typed.save(typed_path)
+            sent_path = root / "sent.png"
+            Image.new("RGB", (1080, 2160), "white").save(sent_path)
+            box = module.green_action_box(typed_path, min_y_ratio=0.45)
+
+            self.assertIsNotNone(box)
+            self.assertGreater(module.green_coverage(typed_path, box), 0.90)
+            self.assertEqual(module.green_coverage(sent_path, box), 0.0)
 
 
 def sender_module_time(module):
