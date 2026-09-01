@@ -1439,6 +1439,60 @@ This hypothesis still needs validation.
         self.assertFalse(task["worker_result_exhausted"])
         self.assertIn("Weekly Research Briefing", result["message"])
 
+    def test_research_timeout_recovers_exact_task_tex_with_host_xelatex(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            report = root / "2026-09-02-organoid-imaging-briefing.tex"
+            report.write_text(
+                r"\documentclass{article}" "\n"
+                r"\title{类器官成像研究简报}" "\n"
+                r"\begin{document}\maketitle" "\n"
+                r"\section{关键证据}" "\n"
+                "Verified source https://example.org/source-one and "
+                "https://example.org/source-two.\n"
+                r"\section{方法与局限}" "\n"
+                + ("Evidence, methods, limits, and next experiments. " * 40)
+                + "\n"
+                r"\end{document}" "\n",
+                encoding="utf-8",
+            )
+            compiled_pdf = report.with_suffix(".pdf")
+
+            def fake_compile(source: Path, output: Path | None = None) -> Path:
+                self.assertEqual(source, report)
+                target = output or source.with_suffix(".pdf")
+                target.write_bytes(b"%PDF-1.4\nhost-xelatex")
+                return target
+
+            task = {
+                "id": "tex-host-recovery",
+                "artifact_dir": str(root),
+                "routine": {"id": "research_summary"},
+                "route_decision": {
+                    "route_kind": "research_or_summary",
+                    "require_file_delivery": True,
+                },
+                "request": "Prepare and send the organoid research briefing PDF.",
+            }
+            with (
+                mock.patch.object(worker, "render_latex_pdf", side_effect=fake_compile),
+                mock.patch.object(
+                    worker,
+                    "ensure_markdown_pdf_companion_for_language",
+                    side_effect=AssertionError("TeX must use host XeLaTeX"),
+                ),
+            ):
+                result = worker.recover_completed_research_artifacts(
+                    task,
+                    "Worker failed via aginti: xelatex unavailable",
+                )
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result["files"], [str(compiled_pdf)])
+        self.assertIn("类器官成像研究简报", result["message"])
+
     def test_research_artifact_recovery_rejects_routine_notes_and_nonresearch(self) -> None:
         worker = load_worker()
         with tempfile.TemporaryDirectory() as tmp:
@@ -14917,6 +14971,56 @@ NVQNIF+NotoSansCJKjp-Regular-Identity-H CID Type 0C       Identity-H       yes y
             str(worker.NATURE_REPORT_COMPACT_LATEX_HEADER),
             run.call_args_list[1].args[0],
         )
+
+    def test_latex_pdf_uses_two_host_xelatex_passes_and_atomic_output(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "unicode-report.tex"
+            output = root / "unicode-report.pdf"
+            source.write_text(
+                r"\documentclass{article}\begin{document}中文\end{document}",
+                encoding="utf-8",
+            )
+
+            def fake_compile(
+                command: list[str], **_kwargs: object
+            ) -> subprocess.CompletedProcess[str]:
+                build_dir = Path(str(_kwargs["cwd"])) / command[
+                    command.index("-output-directory") + 1
+                ]
+                (build_dir / "unicode-report.pdf").write_bytes(b"%PDF-1.7\nvalid")
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            with (
+                mock.patch.object(
+                    worker,
+                    "resolve_markdown_pdf_tool",
+                    return_value="/usr/bin/xelatex",
+                ),
+                mock.patch.object(worker.subprocess, "run", side_effect=fake_compile) as run,
+            ):
+                rendered = worker.render_latex_pdf(source, output)
+
+        self.assertEqual(rendered, output.resolve())
+        self.assertEqual(run.call_count, 2)
+        self.assertIn("-no-shell-escape", run.call_args.args[0])
+        self.assertEqual(run.call_args.kwargs["env"]["openin_any"], "p")
+        self.assertEqual(run.call_args.kwargs["env"]["openout_any"], "p")
+
+    def test_latex_pdf_rejects_host_file_read_primitives(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "unsafe-report.tex"
+            source.write_text(
+                r"\documentclass{article}\begin{document}\input{/etc/passwd}\end{document}",
+                encoding="utf-8",
+            )
+            with mock.patch.object(worker.subprocess, "run") as run:
+                rendered = worker.render_latex_pdf(source)
+
+        self.assertIsNone(rendered)
+        run.assert_not_called()
 
     def test_markdown_pdf_removes_failed_compact_retry(self) -> None:
         worker = load_worker()

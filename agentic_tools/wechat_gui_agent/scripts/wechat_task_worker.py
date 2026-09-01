@@ -4300,6 +4300,108 @@ def render_markdown_pdf(source: Path, output: Path) -> Path | None:
     return output
 
 
+LATEX_HOST_FORBIDDEN_SOURCE_RE = re.compile(
+    r"\\(?:input\b|include(?!graphics\b)\b|openin\b|openout\b|closein\b|"
+    r"closeout\b|newread\b|newwrite\b|read\b|write\b|write18\b|immediate\b|"
+    r"catcode\b|directlua\b|"
+    r"begin\s*\{\s*filecontents\*?\s*\}|usepackage\s*\{[^}]*shellesc)",
+    flags=re.I,
+)
+LATEX_INCLUDE_GRAPHICS_RE = re.compile(
+    r"\\includegraphics(?:\[[^]]*\])?\{([^}]+)\}",
+    flags=re.I,
+)
+
+
+def latex_source_is_host_safe(source: Path) -> bool:
+    """Reject model-authored TeX that could read or write outside its task."""
+
+    try:
+        text = source.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    if LATEX_HOST_FORBIDDEN_SOURCE_RE.search(text):
+        return False
+    for raw in LATEX_INCLUDE_GRAPHICS_RE.findall(text):
+        candidate = Path(raw.strip()).expanduser()
+        if candidate.is_absolute() or ".." in candidate.parts:
+            return False
+        resolved = (source.parent / candidate).resolve()
+        if not resolved.is_relative_to(source.parent.resolve()):
+            return False
+    return True
+
+
+def render_latex_pdf(source: Path, output: Path | None = None) -> Path | None:
+    """Compile one exact-task Unicode TeX source with the trusted host XeLaTeX."""
+
+    source = source.expanduser().resolve()
+    if source.suffix.casefold() != ".tex" or not source.is_file():
+        return None
+    if not latex_source_is_host_safe(source):
+        return None
+    destination = (
+        output.expanduser().resolve()
+        if output is not None
+        else source.with_suffix(".pdf")
+    )
+    xelatex = resolve_markdown_pdf_tool(
+        "WECHAT_LATEX_PDF_XELATEX",
+        "xelatex",
+        Path("/usr/bin/xelatex"),
+        Path("/usr/local/bin/xelatex"),
+    )
+    if not xelatex:
+        return None
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    timeout = int(os.environ.get("WECHAT_LATEX_PDF_TIMEOUT_SECONDS", "120"))
+    try:
+        with tempfile.TemporaryDirectory(
+            prefix=".labcanvas-xelatex-", dir=str(source.parent)
+        ) as build_dir_raw:
+            build_dir = Path(build_dir_raw).resolve()
+            command = [
+                xelatex,
+                "-no-shell-escape",
+                "-interaction=nonstopmode",
+                "-halt-on-error",
+                "-output-directory",
+                build_dir.name,
+                source.name,
+            ]
+            for _pass in range(2):
+                proc = subprocess.run(
+                    command,
+                    cwd=str(source.parent),
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout,
+                    check=False,
+                    env={
+                        **os.environ,
+                        "openin_any": "p",
+                        "openout_any": "p",
+                    },
+                )
+                if proc.returncode != 0:
+                    return None
+            compiled = build_dir / f"{source.stem}.pdf"
+            if not compiled.is_file() or compiled.stat().st_size <= 0:
+                return None
+            try:
+                if compiled.read_bytes()[:5] != b"%PDF-":
+                    return None
+            except OSError:
+                return None
+            tmp_output = destination.with_name(f"{destination.stem}.tmp.pdf")
+            tmp_output.unlink(missing_ok=True)
+            shutil.copy2(compiled, tmp_output)
+            tmp_output.replace(destination)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return destination
+
+
 TERMINAL_REPORT_NOTE_RE = re.compile(
     r"(?:\*\*)?(?:证据边界说明|證據邊界說明|证据说明|證據說明|"
     r"evidence\s+boundary|evidence\s+note|caveat|note)(?:\*\*)?\s*[:：]",
@@ -4561,7 +4663,7 @@ def recover_exact_task_pdf_without_markdown(
 
 
 def preferred_research_report_pdf(report: Path, language: str) -> Path | None:
-    """Reuse an agent-rendered PDF before invoking the generic compiler."""
+    """Reuse an agent-rendered PDF before invoking the matching host compiler."""
     exact_sibling = report.with_suffix(".pdf")
     try:
         if (
@@ -4578,11 +4680,17 @@ def preferred_research_report_pdf(report: Path, language: str) -> Path | None:
             layout_rebuild_required = bool(layout_audit.get("issues"))
             if not font_rebuild_required and not layout_rebuild_required:
                 return exact_sibling.resolve()
-            rebuilt = render_markdown_pdf(report, exact_sibling)
+            rebuilt = (
+                render_latex_pdf(report, exact_sibling)
+                if report.suffix.casefold() == ".tex"
+                else render_markdown_pdf(report, exact_sibling)
+            )
             if rebuilt is not None:
                 return rebuilt.resolve()
     except OSError:
         pass
+    if report.suffix.casefold() == ".tex":
+        return render_latex_pdf(report, exact_sibling)
     return ensure_markdown_pdf_companion_for_language(report, language)
 
 
@@ -4620,6 +4728,13 @@ def research_report_evidence_summary(text: str) -> dict[str, Any]:
             "verified facts",
             "evidence boundary",
             "证据边界",
+        )
+    ) or bool(
+        re.search(
+            r"\\(?:sub)*section\*?\{[^}]{0,32}(?:证据|證據|参考文献|參考文獻|"
+            r"evidence|references?|literature)[^}]*\}",
+            text,
+            flags=re.I,
         )
     )
     has_uncertainty = any(
@@ -4712,7 +4827,11 @@ def research_report_evidence_summary(text: str) -> dict[str, Any]:
 
 def select_substantive_research_report(artifact_dir: Path) -> Path | None:
     candidates: list[tuple[int, Path]] = []
-    for path in artifact_dir.rglob("*.md"):
+    source_paths = [
+        *artifact_dir.rglob("*.md"),
+        *artifact_dir.rglob("*.tex"),
+    ]
+    for path in source_paths:
         try:
             relative = path.relative_to(artifact_dir)
         except ValueError:
@@ -4725,7 +4844,12 @@ def select_substantive_research_report(artifact_dir: Path) -> Path | None:
         if any(marker in lowered for marker in ("contract", "cheat_sheet", "manifest", "preflight", "interruption")):
             continue
         text = read_text_prefix(path, limit=50000)
-        if len(text.strip()) < 500 or len(re.findall(r"^#{1,4}\s+", text, flags=re.MULTILINE)) < 2:
+        section_count = (
+            len(re.findall(r"^#{1,4}\s+", text, flags=re.MULTILINE))
+            if path.suffix.casefold() == ".md"
+            else len(re.findall(r"\\(?:sub)*section\*?\{", text))
+        )
+        if len(text.strip()) < 500 or section_count < 2:
             continue
         if PDF_BROKEN_TEXT_RE.search(text) or any(
             pattern.search(text) for pattern, _label in PDF_INTERNAL_TRANSPORT_PATTERNS
@@ -4749,6 +4873,28 @@ def select_substantive_research_report(artifact_dir: Path) -> Path | None:
 
 def research_report_chat_message(report: Path) -> str:
     text = report.read_text(encoding="utf-8", errors="ignore")
+    if report.suffix.casefold() == ".tex":
+        title_match = re.search(
+            r"\\title\{(.*?)\}\s*\\(?:hypersetup|author|date|begin)",
+            text,
+            flags=re.S,
+        )
+        abstract_match = re.search(
+            r"\\begin\{abstract\}(.*?)\\end\{abstract\}",
+            text,
+            flags=re.S,
+        )
+
+        def visible_tex(value: str) -> str:
+            value = re.sub(r"%[^\n]*", " ", value)
+            value = re.sub(r"\\(?:textit|textbf|emph)\{([^{}]*)\}", r"\1", value)
+            value = re.sub(r"\\[A-Za-z@]+\*?(?:\[[^]]*\])?", " ", value)
+            value = value.replace("{", " ").replace("}", " ").replace("\\\\", " ")
+            return collapse_context_text(value, max_len=650)
+
+        title = visible_tex(title_match.group(1)) if title_match else report.stem
+        block = visible_tex(abstract_match.group(1)) if abstract_match else "报告及证据已整理完成。"
+        return f"首份 #daily 研究简报已完成：{title}\n\n{block}"
     title = next(
         (re.sub(r"^#\s+", "", line).strip() for line in text.splitlines() if line.startswith("# ")),
         "研究简报",
@@ -8899,7 +9045,7 @@ LabCanvas already owns message intake, exact-chat isolation, scheduling, determi
 
 Treat the current request and later same-chat interruptions as authoritative. Keep every source and artifact scoped to this task and chat. Do not use nearby media or another group's context. Do not repeat completed stages. Never retry a payment, public publication, external send, destructive change, or other irreversible action without the packet's explicit gate and current authorization. Persist long work through the existing routine instead of holding a model call.
 Unless the current request explicitly requires deletion, never bundle `rm`, delete, clean, reset, or scratch-file cleanup into a research, build, render, copy, or validation command. Keep prior task artifacts as evidence, write a new versioned path when needed, and run remaining read-only validation separately.
-For research artifacts: Never invent a DOI, venue, volume, page range, metric, or paper title; omit or qualify claims that lack exact source evidence. For CJK or other Unicode LaTeX, use `xelatex -interaction=nonstopmode -halt-on-error` or leave valid source for the host compiler. After an unsupported-Unicode error, do not repeatedly invoke `pdflatex`.
+For research artifacts: Never invent a DOI, venue, volume, page range, metric, or paper title; omit or qualify claims that lack exact source evidence. For CJK or other Unicode LaTeX, use `xelatex -interaction=nonstopmode -halt-on-error` when it is offered and available. If XeLaTeX is unavailable in the agent sandbox, stop trying alternate compilers or package installation: write the complete valid task-scoped `.tex` source and finish so LabCanvas can compile it with the trusted host XeLaTeX recovery stage. After an unsupported-Unicode error, do not repeatedly invoke `pdflatex`.
 
 `message_ledger` is the backend-independent source contract created before model selection. Read every numbered item and cover each `item_id`; you may combine related items into one natural response, but may not replace an earlier item with only the latest one. Codex, AgInTi/DeepSeek, and LocalLLM receive the same ledger, so backend choice changes quality rather than message scope.
 
@@ -19680,7 +19826,7 @@ Link/read-later summary reports:
 
 Artifact return contract:
 - Include files in JSON `files` only when the user requested them, the routine requires delivery, or the artifact is genuinely useful to send back. Saving a local note is not enough reason to attach it to WeChat.
-- When the user requests a research report or PDF, produce an actual LaTeX source and compile a polished scholarly PDF rather than renaming Markdown or returning plain text alone. Use restrained Nature-style typography, a clear information hierarchy, source-grounded citations/DOIs/links, embedded fonts, and sensible page geometry. Never invent a DOI, venue, volume, page range, metric, or paper title as a placeholder; omit or explicitly qualify a claim when the exact source evidence is unavailable. For Chinese, Japanese, Korean, ruby, or other Unicode text, use the established XeLaTeX path (`xelatex -interaction=nonstopmode -halt-on-error`) or leave a valid `.tex` source for the host compiler; do not repeatedly invoke `pdflatex` after an unsupported-Unicode error. Render and inspect every compiled page for missing glyphs, blank pages, clipping, overflow, unreadably dense text, and a short note stranded alone on the final page. Move such a note into the preceding section and rebuild before listing the PDF for delivery.
+- When the user requests a research report or PDF, produce an actual LaTeX source and compile a polished scholarly PDF rather than renaming Markdown or returning plain text alone. Use restrained Nature-style typography, a clear information hierarchy, source-grounded citations/DOIs/links, embedded fonts, and sensible page geometry. Never invent a DOI, venue, volume, page range, metric, or paper title as a placeholder; omit or explicitly qualify a claim when the exact source evidence is unavailable. For Chinese, Japanese, Korean, ruby, or other Unicode text, use the established XeLaTeX path (`xelatex -interaction=nonstopmode -halt-on-error`) when available. If XeLaTeX is unavailable in the agent sandbox, stop trying alternate compilers or installs, write the complete valid task-scoped `.tex`, and finish so the trusted host recovery stage can compile it; do not repeatedly invoke `pdflatex` after an unsupported-Unicode error. Render and inspect every compiled page for missing glyphs, blank pages, clipping, overflow, unreadably dense text, and a short note stranded alone on the final page. Move such a note into the preceding section and rebuild before listing the PDF for delivery.
 - For generated videos, CAD/PCB/renders, requested downloads, requested PDFs, requested source files, and publish outputs, return artifacts as files when safe: story Markdown, LaTeX/source files, compiled PDFs, image previews, renders, CAD/PCB exports, manifests, archives, video/audio, and any requested downloadable file.
 - For ordinary link summaries, avoid listing Markdown, PDF, or image files by default. Do not send a low-quality image/thumbnail just because one was scraped; only send an image when the user asked for it or it is a high-value figure/screenshot that you actually inspected and need to discuss.
 - Prefer PNG/JPG/SVG/PDF/MD/TEX/MP4/MOV/audio/STEP/STL/3MF/DXF/ZIP/SCAD/Blend/KiCad/Gerber files. Do not include decrypted WeChat DBs, private config, cookies, tokens, browser profiles, or chat logs.
