@@ -821,6 +821,89 @@ class WorkspaceAgentTests(unittest.TestCase):
         self.assertFalse(result["resumed"])
         self.assertTrue(result["fallback_continued_same_session"])
 
+    def test_aginti_recoverable_failure_preserves_durable_session_for_resume(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            storage = root / "output" / "webapp"
+            commands = []
+
+            def fake_process(command, **kwargs):
+                commands.append(command)
+                if command[1] == "run":
+                    session_id = command[command.index("--session-id") + 1]
+                    pointer = root / ".aginti-sessions" / session_id / "session.json"
+                    pointer.parent.mkdir(parents=True, exist_ok=True)
+                    pointer.write_text(
+                        json.dumps({"sessionId": session_id}),
+                        encoding="utf-8",
+                    )
+                    return {
+                        "ok": False,
+                        "backend": "aginti",
+                        "returncode": 1,
+                        "message": json.dumps(
+                            {
+                                "ok": False,
+                                "sessionId": session_id,
+                                "failed": True,
+                                "reason": "max_steps_reached",
+                            }
+                        ),
+                        "stderr_tail": "",
+                    }
+                return {
+                    "ok": True,
+                    "backend": "aginti",
+                    "returncode": 0,
+                    "message": json.dumps(
+                        {
+                            "ok": True,
+                            "sessionId": command[2],
+                            "result": "resumed and completed",
+                        }
+                    ),
+                    "stderr_tail": "",
+                }
+
+            with (
+                patch("agenticapp.workspace_agent.aginti_supports_stdin_run", return_value=True),
+                patch("agenticapp.workspace_agent._communicate_process", side_effect=fake_process),
+            ):
+                failed = run_aginti_turn(
+                    "Create and verify the report",
+                    policy={"timeout_seconds": 30},
+                    conversation_id="durable-failure-chat",
+                    task_dir=storage / "agent" / "tasks" / "first",
+                    storage_dir=storage,
+                    root=root,
+                    pid_callback=None,
+                )
+                registry = json.loads(
+                    (storage / "agent" / "sessions" / "aginti-sessions.json")
+                    .read_text(encoding="utf-8")
+                )
+                resumed = run_aginti_turn(
+                    "Continue the same report",
+                    policy={"timeout_seconds": 30},
+                    conversation_id="durable-failure-chat",
+                    task_dir=storage / "agent" / "tasks" / "second",
+                    storage_dir=storage,
+                    root=root,
+                    pid_callback=None,
+                )
+
+        session_id = commands[0][commands[0].index("--session-id") + 1]
+        self.assertFalse(failed["ok"])
+        self.assertEqual(registry["durable-failure-chat"]["session_id"], session_id)
+        self.assertEqual(registry["durable-failure-chat"]["last_status"], "failed")
+        self.assertEqual(
+            registry["durable-failure-chat"]["last_reason"],
+            "max_steps_reached",
+        )
+        self.assertEqual(commands[1][0:3], ["aginti", "resume", session_id])
+        self.assertTrue(resumed["ok"])
+        self.assertEqual(resumed["invocation"], "machine-resume")
+
     def test_aginti_provider_environment_override_precedes_policy_settings(self):
         settings = {"provider_chain": ["deepseek", "localllm"]}
 

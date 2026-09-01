@@ -1401,14 +1401,18 @@ def run_aginti_turn(
             )
             result["fallback_started"] = True
             result["stale_session_recovered"] = True
-        if result.get("ok") and result.get("thread_id"):
+        session_id = str(result.get("thread_id") or "")
+        durable_session = _aginti_session_pointer_exists(workspace, session_id)
+        if session_id and (result.get("ok") or durable_session):
             registry[key] = {
-                "session_id": result["thread_id"],
+                "session_id": session_id,
                 "conversation_id": conversation_id,
                 "provider": result.get("provider"),
                 "created_at": previous.get("created_at") or utc_now(),
                 "last_used_at": utc_now(),
                 "turn_count": int(previous.get("turn_count") or 0) + 1,
+                "last_status": "completed" if result.get("ok") else "failed",
+                "last_reason": str(result.get("reason") or ""),
             }
             _write_json_atomic(registry_path, registry)
         result["invocation"] = "machine-resume" if previous_id else "machine-run"
@@ -1752,6 +1756,15 @@ def _aginti_missing_session(result: dict[str, Any]) -> bool:
         for key in ("stderr_tail", "stdout_tail", "reason")
     ).casefold()
     return "no saved session found" in text
+
+
+def _aginti_session_pointer_exists(workspace: Path, session_id: str) -> bool:
+    session_id = str(session_id or "").strip()
+    if not session_id or safe_id(session_id) != session_id:
+        return False
+    pointer = workspace / ".aginti-sessions" / session_id / "session.json"
+    payload = _load_json_dict(pointer)
+    return pointer.is_file() and str(payload.get("sessionId") or "") == session_id
 
 
 def aginti_supports_stdin_run(executable: str) -> bool:
