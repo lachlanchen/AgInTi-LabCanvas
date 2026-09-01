@@ -1123,6 +1123,7 @@ Requirements:
                 "quota_fallback_reasoning_effort": "low",
                 "fallback_to_aginti": True,
                 "fallback_on_timeout": True,
+                "fallback_after_readonly_tool_activity": True,
             }
         },
         "agent_bridge_mode": True,

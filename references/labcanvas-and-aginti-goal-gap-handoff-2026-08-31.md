@@ -65,6 +65,14 @@ Current authoritative state:
 - The pre-existing MIX 2S ADB key was recovered from the still-running ADB
   server, validated, and restored after an operator probe accidentally replaced
   its on-disk copy. No key regeneration should be used as a diagnostic again.
+- A 14:00 LabAgent inspiration turn exposed a distinct failover gap: Codex lost
+  its network connection after read-only tool activity, but the generic
+  duplicate-side-effect guard prevented the configured AgInTi fallback. The
+  worker now marks only `system_safe_read_only` tasks as replay-safe across that
+  boundary. Ordinary, public, paid, destructive, and otherwise side-effecting
+  tasks retain the no-replay guard. Backend attempt evidence now records whether
+  execution and tool activity began so future attribution does not depend on
+  inference from truncated logs.
 
 The next external gate is one physical acceptance of the restored computer key
 on the unlocked MIX 2S: enable `Always allow from this computer`, then choose

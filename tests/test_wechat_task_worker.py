@@ -4030,6 +4030,46 @@ stderr: noisy internal trace
         self.assertEqual(config["package_install_policy"], "allow")
         self.assertFalse(config["allow_host_workspace"])
 
+    def test_worker_backend_config_allows_replay_only_for_system_readonly_task(self) -> None:
+        worker = load_worker()
+        safe_task = {
+            "id": "safe-schedule",
+            "request": "Find one useful research connection.",
+            "agent_backend_config": {
+                "agent_fallbacks": {
+                    "fallback_to_aginti": True,
+                    "fallback_on_timeout": True,
+                }
+            },
+            "source": {"authorization_role": "system_safe_read_only"},
+            "route_decision": {"public_publish_allowed": False},
+        }
+        ordinary_task = {
+            "id": "ordinary-task",
+            "request": "Run the requested tool.",
+            "agent_backend_config": {
+                "agent_fallbacks": {
+                    "fallback_to_aginti": True,
+                    "fallback_on_timeout": True,
+                }
+            },
+            "source": {"authorization_role": "human"},
+            "route_decision": {"public_publish_allowed": False},
+        }
+
+        safe_config = worker.worker_backend_config(safe_task, "codex")
+        ordinary_config = worker.worker_backend_config(ordinary_task, "codex")
+
+        self.assertTrue(
+            safe_config["agent_fallbacks"][
+                "fallback_after_readonly_tool_activity"
+            ]
+        )
+        self.assertNotIn(
+            "fallback_after_readonly_tool_activity",
+            ordinary_config["agent_fallbacks"],
+        )
+
     def test_worker_backend_config_can_explicitly_enable_aginti_host_workspace(self) -> None:
         worker = load_worker()
         with mock.patch.dict(os.environ, {"WECHAT_AGINTI_HOST_WORKSPACE": "1"}):

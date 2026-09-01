@@ -9476,6 +9476,8 @@ def safe_agent_attempts(value: Any) -> list[dict[str, Any]]:
         "ok",
         "failure_kind",
         "returncode",
+        "execution_started",
+        "tool_activity",
         "provider",
         "retry_safe",
         "retry_mode",
@@ -10269,6 +10271,23 @@ def worker_backend_config(task: dict[str, Any], backend: str) -> dict[str, Any]:
     else:
         raw = task.get(backend)
         config = dict(raw) if isinstance(raw, dict) else {}
+    source = task.get("source") if isinstance(task.get("source"), dict) else {}
+    route = (
+        task.get("route_decision")
+        if isinstance(task.get("route_decision"), dict)
+        else {}
+    )
+    if (
+        str(source.get("authorization_role") or "") == "system_safe_read_only"
+        and not bool(route.get("public_publish_allowed"))
+    ):
+        fallbacks = (
+            dict(config.get("agent_fallbacks"))
+            if isinstance(config.get("agent_fallbacks"), dict)
+            else {}
+        )
+        fallbacks.setdefault("fallback_after_readonly_tool_activity", True)
+        config["agent_fallbacks"] = fallbacks
     if backend != "aginti":
         return config
     retry_context = (

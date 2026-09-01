@@ -1324,6 +1324,11 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertEqual(len(captured), 1)
         self.assertTrue(captured[0]["route_decision"]["scheduled_group_inspiration"])
         self.assertEqual(captured[0]["agent_backend"], "codex")
+        self.assertTrue(
+            captured[0]["agent_backend_config"]["agent_fallbacks"][
+                "fallback_after_readonly_tool_activity"
+            ]
+        )
         self.assertEqual(
             captured[0]["session_scope"],
             f"{chat}::scheduled-group-inspiration",

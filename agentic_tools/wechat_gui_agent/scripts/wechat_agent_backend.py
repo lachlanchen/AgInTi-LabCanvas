@@ -603,7 +603,9 @@ def next_backend_attempt(
         return None
     # A backend switch after a tool started can repeat an unknown side effect.
     # Keep the exact task resumable instead of replaying it on another model.
-    if result.get("tool_activity"):
+    if result.get("tool_activity") and not fallback_after_readonly_tool_activity_enabled(
+        backend_config
+    ):
         return None
     backend = normalize_backend(str(attempt.get("backend") or "codex"))
     if backend == "codex" and failure_kind == "model_unavailable":
@@ -688,6 +690,13 @@ def fallback_on_timeout_enabled(config: dict[str, Any]) -> bool:
             fallback_config.get("fallback_on_timeout", False),
         )
     )
+
+
+def fallback_after_readonly_tool_activity_enabled(config: dict[str, Any]) -> bool:
+    """Allow replay only when the caller has proved the task is read-only."""
+
+    fallback_config = fallback_config_dict(config)
+    return bool(fallback_config.get("fallback_after_readonly_tool_activity", False))
 
 
 def codex_credit_retry_enabled(config: dict[str, Any]) -> bool:
@@ -832,6 +841,8 @@ def summarize_attempt(attempt: dict[str, Any], result: dict[str, Any]) -> dict[s
         "ok": bool(result.get("ok")),
         "failure_kind": classify_backend_failure(result),
         "returncode": result.get("returncode"),
+        "execution_started": bool(result.get("execution_started")),
+        "tool_activity": bool(result.get("tool_activity")),
         "stderr_tail": str(result.get("stderr_tail") or "")[-500:],
     }
 

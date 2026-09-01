@@ -511,6 +511,41 @@ class WeChatAgentBackendTests(unittest.TestCase):
             )
         )
 
+    def test_safe_readonly_tool_activity_can_fall_back_after_timeout(self) -> None:
+        backend = load_backend()
+        attempt = {
+            "backend": "codex",
+            "model": "gpt-5.6-sol",
+            "reasoning_effort": "medium",
+            "sandbox": "danger-full-access",
+            "timeout_seconds": 60,
+            "role": "worker",
+        }
+        result = {
+            "ok": False,
+            "message": "",
+            "returncode": 124,
+            "stderr_tail": "failed to connect to websocket",
+            "execution_started": True,
+            "tool_activity": True,
+        }
+
+        next_attempt = backend.next_backend_attempt(
+            attempt,
+            result,
+            backend_config={
+                "agent_fallbacks": {
+                    "fallback_to_aginti": True,
+                    "fallback_on_timeout": True,
+                    "fallback_after_readonly_tool_activity": True,
+                }
+            },
+        )
+
+        self.assertIsNotNone(next_attempt)
+        self.assertEqual(next_attempt["backend"], "aginti")
+        self.assertEqual(next_attempt["fallback_reason"], "codex_timeout")
+
     def test_codex_timeout_falls_back_to_aginti_when_enabled(self) -> None:
         backend = load_backend()
         codex_calls: list[dict[str, object]] = []
