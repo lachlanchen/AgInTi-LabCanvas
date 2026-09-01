@@ -4444,6 +4444,8 @@ stderr: noisy internal trace
         self.assertIn("new-request-19", prompt)
         self.assertIn("Create the requested PDF", prompt)
         self.assertIn("Do not redesign those systems", prompt)
+        self.assertIn("never bundle `rm`, delete, clean, reset", prompt)
+        self.assertIn("run remaining read-only validation separately", prompt)
         self.assertIn("short meaningful basename", prompt)
         self.assertIn("2026-08-22-organoid-imaging-review.pdf", prompt)
         self.assertIn('"artifact_root":"/tmp/exact-task/artifacts"', prompt)

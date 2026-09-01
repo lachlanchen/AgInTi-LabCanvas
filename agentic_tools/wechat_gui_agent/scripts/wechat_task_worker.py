@@ -8897,6 +8897,7 @@ LabCanvas already owns message intake, exact-chat isolation, scheduling, determi
 {matched_routine_note}
 
 Treat the current request and later same-chat interruptions as authoritative. Keep every source and artifact scoped to this task and chat. Do not use nearby media or another group's context. Do not repeat completed stages. Never retry a payment, public publication, external send, destructive change, or other irreversible action without the packet's explicit gate and current authorization. Persist long work through the existing routine instead of holding a model call.
+Unless the current request explicitly requires deletion, never bundle `rm`, delete, clean, reset, or scratch-file cleanup into a research, build, render, copy, or validation command. Keep prior task artifacts as evidence, write a new versioned path when needed, and run remaining read-only validation separately.
 
 `message_ledger` is the backend-independent source contract created before model selection. Read every numbered item and cover each `item_id`; you may combine related items into one natural response, but may not replace an earlier item with only the latest one. Codex, AgInTi/DeepSeek, and LocalLLM receive the same ledger, so backend choice changes quality rather than message scope.
 
