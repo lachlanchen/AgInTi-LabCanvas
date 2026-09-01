@@ -117,7 +117,7 @@ target, so a worker send that appears mid-cycle stops further dry-open actions.
 
 | Script | Main use |
 | --- | --- |
-| `wechat_virtual_desktop.sh` | Launch WeChat on display `:97`, VNC, noVNC, and X11 keep-awake; recover a stale background-only client when no large mapped WeChat window remains. |
+| `wechat_virtual_desktop.sh` | Launch WeChat on display `:97`, VNC, noVNC, and X11 keep-awake; preserve visible QR/entry windows, bound X11 probes, and recover only the exact stale display/client processes when no real window remains. |
 | `wechat_gui_send.py` | Search/open target chat, verify native popup title or OCR title, paste/send text, record screenshots. |
 | `wechat_chatops_bridge.py` | Legacy visible-chat OCR monitor and direct visible message/file send path. |
 | `wechat_direct_backend.py` | Install/probe/decrypt wrapper for optional `ylytdeng/wechat-decrypt`. |

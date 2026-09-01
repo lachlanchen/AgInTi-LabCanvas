@@ -12,6 +12,8 @@ KEEP_AWAKE_INTERVAL="${VIRTUAL_DESKTOP_KEEP_AWAKE_INTERVAL:-55}"
 OPEN_BROWSER="0"
 APP_MATCH=""
 APP_COMMAND=()
+RECOVER_STALE_DISPLAY="0"
+PROBE_TIMEOUT_SECONDS="${VIRTUAL_DESKTOP_PROBE_TIMEOUT_SECONDS:-3}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 USER_NAME="${USER:-$(id -un)}"
 
@@ -28,6 +30,9 @@ Options:
   --novnc-port PORT    localhost noVNC/websockify port. Default: 6099
   --log-dir DIR        Log directory. Default: output/virtual_desktop/YYYY-MM-DD
   --app-match TEXT     Do not relaunch app if a matching process is already running.
+  --recover-stale-display
+                       Restart only the selected Xvfb/x11vnc pair when its
+                       display exists but does not answer bounded X11 probes.
   --no-keep-awake      Do not disable X11 blanking/DPMS.
   --keep-awake-interval SECONDS
                        Refresh X11 keep-awake state on this interval. Default: 55
@@ -48,6 +53,7 @@ while [[ $# -gt 0 ]]; do
     --novnc-port) NOVNC_PORT="$2"; shift 2 ;;
     --log-dir) LOG_DIR="$2"; shift 2 ;;
     --app-match) APP_MATCH="$2"; shift 2 ;;
+    --recover-stale-display) RECOVER_STALE_DISPLAY="1"; shift ;;
     --no-keep-awake) KEEP_AWAKE="0"; shift ;;
     --keep-awake-interval) KEEP_AWAKE_INTERVAL="$2"; shift 2 ;;
     --open-browser) OPEN_BROWSER="1"; shift ;;
@@ -77,12 +83,59 @@ display_number="${DISPLAY_ID#:}"
 display_number="${display_number%%.*}"
 socket_path="/tmp/.X11-unix/X$display_number"
 lock_path="/tmp/.X$display_number-lock"
+escaped_display="${DISPLAY_ID//./\\.}"
 
 display_ready() {
-  timeout 3s env DISPLAY="$DISPLAY_ID" XAUTHORITY= xdpyinfo >/dev/null 2>&1
+  timeout "${PROBE_TIMEOUT_SECONDS}s" env DISPLAY="$DISPLAY_ID" XAUTHORITY= xdpyinfo >/dev/null 2>&1
+}
+
+matching_pids() {
+  local pattern="$1"
+  pgrep -u "$USER_NAME" -f "$pattern" 2>/dev/null || true
+}
+
+stop_exact_processes() {
+  local label="$1"
+  shift
+  local deadline pid
+  local -a pids=("$@")
+  ((${#pids[@]} > 0)) || return 0
+  echo "Stopping stale $label process(es): ${pids[*]}"
+  for pid in "${pids[@]}"; do
+    kill -TERM "$pid" 2>/dev/null || true
+  done
+  deadline=$((SECONDS + 8))
+  while (( SECONDS < deadline )); do
+    local alive="0"
+    for pid in "${pids[@]}"; do
+      if kill -0 "$pid" 2>/dev/null; then
+        alive="1"
+        break
+      fi
+    done
+    [[ "$alive" == "0" ]] && return 0
+    sleep 1
+  done
+  echo "Refusing to replace $label because its old process did not exit." >&2
+  return 1
+}
+
+recover_stale_display() {
+  local xvfb_pattern x11vnc_pattern
+  local -a xvfb_pids=() x11vnc_pids=()
+  xvfb_pattern="^([^[:space:]]*/)?Xvfb[[:space:]]+${escaped_display}([[:space:]]|$)"
+  mapfile -t xvfb_pids < <(matching_pids "$xvfb_pattern")
+  ((${#xvfb_pids[@]} > 0)) || return 0
+  x11vnc_pattern="^([^[:space:]]*/)?x11vnc[[:space:]].*-display[[:space:]]+${escaped_display}([[:space:]].*)?-rfbport[[:space:]]+${VNC_PORT}([[:space:]]|$)"
+  mapfile -t x11vnc_pids < <(matching_pids "$x11vnc_pattern")
+  stop_exact_processes "x11vnc relay for $DISPLAY_ID" "${x11vnc_pids[@]}"
+  stop_exact_processes "Xvfb display $DISPLAY_ID" "${xvfb_pids[@]}"
 }
 
 if ! display_ready; then
+  if [[ "$RECOVER_STALE_DISPLAY" == "1" ]]; then
+    recover_stale_display
+  fi
   if [[ -S "$socket_path" ]] && ! pgrep -u "$USER_NAME" -f "Xvfb $DISPLAY_ID( |$)" >/dev/null 2>&1; then
     rm -f "$socket_path"
   fi
@@ -152,11 +205,15 @@ fi
 echo
 echo "Virtual desktop ready"
 echo "  display: $DISPLAY_ID"
-echo "  screen:  $(DISPLAY="$DISPLAY_ID" XAUTHORITY= xdpyinfo | awk -F: '/dimensions|depth of root window/ {gsub(/^ +/, "", $2); print $1 ":" $2}' | paste -sd ', ' -)"
+screen_summary="$(timeout "${PROBE_TIMEOUT_SECONDS}s" env DISPLAY="$DISPLAY_ID" XAUTHORITY= xdpyinfo 2>/dev/null \
+  | awk -F: '/dimensions|depth of root window/ {gsub(/^ +/, "", $2); print $1 ":" $2}' \
+  | paste -sd ', ' - || true)"
+echo "  screen:  ${screen_summary:-unavailable}"
 echo "  vnc:     127.0.0.1:$VNC_PORT"
 echo "  noVNC:   $NOVNC_URL"
 echo "  awake:   $KEEP_AWAKE"
 echo "  logs:    $LOG_DIR"
 echo
 echo "Windows:"
-DISPLAY="$DISPLAY_ID" XAUTHORITY= xwininfo -root -tree | sed -n '1,40p'
+timeout "${PROBE_TIMEOUT_SECONDS}s" env DISPLAY="$DISPLAY_ID" XAUTHORITY= xwininfo -root -tree 2>/dev/null \
+  | sed -n '1,40p' || echo "  window probe unavailable"

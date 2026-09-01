@@ -1871,8 +1871,8 @@ Do not diagnose one through the other URL.
 If noVNC `6107` connects but shows a completely black canvas, check:
 
 ```bash
-DISPLAY=:97 XAUTHORITY= xwininfo -root -tree
-DISPLAY=:97 XAUTHORITY= xdotool search --onlyvisible --class wechat getwindowgeometry --shell
+timeout 3s env DISPLAY=:97 XAUTHORITY= xwininfo -root -tree
+timeout 3s env DISPLAY=:97 XAUTHORITY= xdotool search --onlyvisible --class wechat getwindowgeometry --shell
 ```
 
 Healthy WeChat has a mapped window substantially larger than a helper window,
@@ -1881,11 +1881,20 @@ normally around `1020 x 739`. A `1 x 1` unmapped `wechat` window or an unmapped
 will correctly transmit the black X root because there is no chat UI to show.
 
 `wechat_virtual_desktop.sh` now treats this as a stale background-only client.
-It first invokes WeChat normally to request activation. If no large mapped
-window appears within the bounded startup wait, it gracefully restarts only the
-`/usr/bin/wechat` process whose environment matches `DISPLAY=:97`, preserving
-Xvfb, x11vnc, websockify, the profile, queue, and monitors. Set
+It preserves any real visible entry/login window, including the smaller QR
+window, and first invokes WeChat normally only when no visible client window
+exists. If no window appears within the bounded startup wait, it gracefully
+restarts only the `/usr/bin/wechat` process whose environment matches
+`DISPLAY=:97`, preserving the profile, queue, and monitors. Set
 `WECHAT_AUTO_RECOVER_UNMAPPED=0` to disable this fallback while debugging.
+
+All `xdpyinfo`, `xwininfo`, and `xdotool` lifecycle probes have bounded
+timeouts. When the selected X display process exists but no longer answers,
+the wrapper opts into the shared launcher's `--recover-stale-display` path.
+That path terminates only the exact Xvfb display and matching x11vnc relay; it
+does not use broad process kills or touch another project's GUI. The wrapper
+also closes its lifecycle-lock file descriptor before invoking the shared
+launcher, so Xvfb and x11vnc cannot inherit and retain the lock after startup.
 
 ## Recovery Playbooks
 

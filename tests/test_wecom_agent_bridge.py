@@ -3067,7 +3067,11 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertIn("/vnc.html?", source)
         self.assertIn("resize=scale", source)
         self.assertIn("display_ready()", source)
-        self.assertIn("timeout 3s env DISPLAY=", source)
+        self.assertIn(
+            'PROBE_TIMEOUT_SECONDS="${VIRTUAL_DESKTOP_PROBE_TIMEOUT_SECONDS:-3}"',
+            source,
+        )
+        self.assertIn('timeout "${PROBE_TIMEOUT_SECONDS}s" env DISPLAY=', source)
         self.assertNotIn("vnc_lite.html", source)
         self.assertIn("/vnc.html?", android_source)
         self.assertIn("resize=scale", android_source)

@@ -15,6 +15,7 @@ MIN_WINDOW_HEIGHT="${WECHAT_MIN_WINDOW_HEIGHT:-480}"
 START_WAIT_SECONDS="${WECHAT_START_WAIT_SECONDS:-12}"
 RESTART_WAIT_SECONDS="${WECHAT_RESTART_WAIT_SECONDS:-12}"
 AUTO_RECOVER_UNMAPPED="${WECHAT_AUTO_RECOVER_UNMAPPED:-1}"
+X11_PROBE_TIMEOUT_SECONDS="${WECHAT_X11_PROBE_TIMEOUT_SECONDS:-3}"
 mkdir -p "$LOG_DIR"
 mkdir -p "$PRIVATE_DIR"
 LAUNCH_LOG="$LOG_DIR/wechat_virtual_desktop_launch.log"
@@ -32,7 +33,8 @@ wechat_main_window() {
   local window_id geometry width height
   while IFS= read -r window_id; do
     [[ -n "$window_id" ]] || continue
-    geometry="$(DISPLAY="$DISPLAY_ID" XAUTHORITY= xdotool getwindowgeometry --shell "$window_id" 2>/dev/null || true)"
+    geometry="$(timeout "${X11_PROBE_TIMEOUT_SECONDS}s" env DISPLAY="$DISPLAY_ID" XAUTHORITY= \
+      xdotool getwindowgeometry --shell "$window_id" 2>/dev/null || true)"
     width="$(awk -F= '$1 == "WIDTH" {print $2}' <<<"$geometry")"
     height="$(awk -F= '$1 == "HEIGHT" {print $2}' <<<"$geometry")"
     if [[ "$width" =~ ^[0-9]+$ && "$height" =~ ^[0-9]+$ ]] \
@@ -40,7 +42,26 @@ wechat_main_window() {
       printf '%s\n' "$window_id"
       return 0
     fi
-  done < <(DISPLAY="$DISPLAY_ID" XAUTHORITY= xdotool search --onlyvisible --class wechat 2>/dev/null || true)
+  done < <(timeout "${X11_PROBE_TIMEOUT_SECONDS}s" env DISPLAY="$DISPLAY_ID" XAUTHORITY= \
+    xdotool search --onlyvisible --class wechat 2>/dev/null || true)
+  return 1
+}
+
+wechat_visible_window() {
+  local window_id geometry width height
+  while IFS= read -r window_id; do
+    [[ -n "$window_id" ]] || continue
+    geometry="$(timeout "${X11_PROBE_TIMEOUT_SECONDS}s" env DISPLAY="$DISPLAY_ID" XAUTHORITY= \
+      xdotool getwindowgeometry --shell "$window_id" 2>/dev/null || true)"
+    width="$(awk -F= '$1 == "WIDTH" {print $2}' <<<"$geometry")"
+    height="$(awk -F= '$1 == "HEIGHT" {print $2}' <<<"$geometry")"
+    if [[ "$width" =~ ^[0-9]+$ && "$height" =~ ^[0-9]+$ ]] \
+      && (( width >= 120 && height >= 120 )); then
+      printf '%s\n' "$window_id"
+      return 0
+    fi
+  done < <(timeout "${X11_PROBE_TIMEOUT_SECONDS}s" env DISPLAY="$DISPLAY_ID" XAUTHORITY= \
+    xdotool search --onlyvisible --class wechat 2>/dev/null || true)
   return 1
 }
 
@@ -94,23 +115,33 @@ stop_stale_wechat() {
   return 1
 }
 
-"$ROOT/agentic_tools/virtual_desktop/launch_virtual_desktop.sh" \
-  --name wechat \
-  --display "$DISPLAY_ID" \
-  --screen 1920x1080x24 \
-  --vnc-port "$VNC_PORT" \
-  --novnc-port "$NOVNC_PORT" \
-  --keep-awake-interval "$KEEP_AWAKE_INTERVAL" \
-  --log-dir "$LOG_DIR" \
-  -- /bin/true >"$LAUNCH_LOG"
-
 exec 9>"$CLIENT_LOCK"
 if ! flock -w "${WECHAT_CLIENT_LIFECYCLE_LOCK_WAIT_SECONDS:-20}" 9; then
   echo "WeChat client lifecycle operation is already active; leaving the persisted client untouched." >&2
   exit 75
 fi
 
+if ! timeout "${X11_PROBE_TIMEOUT_SECONDS}s" env DISPLAY="$DISPLAY_ID" XAUTHORITY= xdpyinfo >/dev/null 2>&1; then
+  echo "WeChat display $DISPLAY_ID is stale; stopping only its display-bound client before recovery." >>"$APP_LOG"
+  if ! stop_stale_wechat; then
+    echo "WeChat did not exit before stale-display recovery; refusing to continue." >&2
+    exit 1
+  fi
+fi
+
+"$ROOT/agentic_tools/virtual_desktop/launch_virtual_desktop.sh" \
+  --name wechat \
+  --display "$DISPLAY_ID" \
+  --screen 1920x1080x24 \
+  --vnc-port "$VNC_PORT" \
+  --novnc-port "$NOVNC_PORT" \
+  --recover-stale-display \
+  --keep-awake-interval "$KEEP_AWAKE_INTERVAL" \
+  --log-dir "$LOG_DIR" \
+  -- /bin/true 9>&- >"$LAUNCH_LOG"
+
 main_window=""
+visible_window=""
 if [[ "$ACTION" == "restart-client" ]]; then
   echo "Gracefully restarting the input-stalled WeChat client on $DISPLAY_ID while preserving its profile." >>"$APP_LOG"
   if ! stop_stale_wechat; then
@@ -119,22 +150,26 @@ if [[ "$ACTION" == "restart-client" ]]; then
   fi
   launch_wechat
   main_window="$(wait_for_main_window "$START_WAIT_SECONDS" || true)"
+  visible_window="$(wechat_visible_window || true)"
 else
   main_window="$(wechat_main_window || true)"
-  if [[ -z "$main_window" ]]; then
-    echo "No large mapped WeChat window on $DISPLAY_ID; requesting normal activation." >>"$APP_LOG"
+  visible_window="$(wechat_visible_window || true)"
+  if [[ -z "$main_window" && -z "$visible_window" ]]; then
+    echo "No visible WeChat window on $DISPLAY_ID; requesting normal activation." >>"$APP_LOG"
     launch_wechat
     main_window="$(wait_for_main_window "$START_WAIT_SECONDS" || true)"
+    visible_window="$(wechat_visible_window || true)"
   fi
 fi
 
-if [[ -z "$main_window" && "$AUTO_RECOVER_UNMAPPED" == "1" ]]; then
+if [[ -z "$main_window" && -z "$visible_window" && "$AUTO_RECOVER_UNMAPPED" == "1" ]]; then
   mapfile -t stale_pids < <(wechat_pids_on_display)
   if ((${#stale_pids[@]} > 0)); then
     echo "WeChat stayed background-only on $DISPLAY_ID; gracefully restarting stale PID(s): ${stale_pids[*]}" >>"$APP_LOG"
     if stop_stale_wechat; then
       launch_wechat
       main_window="$(wait_for_main_window "$START_WAIT_SECONDS" || true)"
+      visible_window="$(wechat_visible_window || true)"
     else
       echo "Stale WeChat process did not exit within ${RESTART_WAIT_SECONDS}s; leaving it untouched." >>"$APP_LOG"
     fi
@@ -143,8 +178,10 @@ fi
 
 if [[ -n "$main_window" ]]; then
   echo "WeChat main window healthy on $DISPLAY_ID: $main_window" >>"$APP_LOG"
+elif [[ -n "$visible_window" ]]; then
+  echo "WeChat entry/login window healthy on $DISPLAY_ID: $visible_window" >>"$APP_LOG"
 else
-  echo "WARNING: no large mapped WeChat window on $DISPLAY_ID; noVNC will show only the X root background." >>"$APP_LOG"
+  echo "WARNING: no visible WeChat window on $DISPLAY_ID; noVNC will show only the X root background." >>"$APP_LOG"
 fi
 
 cat "$LAUNCH_LOG"
