@@ -1525,6 +1525,36 @@ class WeChatTransportStallGuardTests(unittest.TestCase):
         self.assertEqual(result, [])
         repair.assert_not_called()
 
+    def test_live_android_relay_is_not_restarted_while_adb_is_unauthorized(self) -> None:
+        snapshot = {
+            "issues": [
+                {
+                    "code": "android_poll_stalled",
+                    "severity": "degraded",
+                    "detail": "surface=unavailable, failures=54",
+                }
+            ],
+            "android": {
+                "endpoint_reachable": True,
+                "device_authorized": False,
+                "poll_stale": False,
+                "poll_in_progress": False,
+                "last_poll_error": "BridgeError: command failed (adb): error: device unauthorized",
+            },
+        }
+        state = {"fault_counts": {"android_poll_stalled": 54}}
+        with mock.patch.object(guard, "run_repair") as repair:
+            result = guard.perform_repairs(
+                snapshot,
+                state,
+                consecutive_failures=2,
+                cooldown_seconds=300,
+                max_sender_seconds=180,
+            )
+
+        self.assertEqual(result, [])
+        repair.assert_not_called()
+
     def test_live_android_relay_is_not_restarted_for_low_storage(self) -> None:
         snapshot = {
             "issues": [
@@ -1703,6 +1733,47 @@ class WeChatTransportStallGuardTests(unittest.TestCase):
             now=now,
         )
         self.assertFalse(due_again)
+
+    def test_repair_agent_skips_login_and_unauthorized_adb_gates(self) -> None:
+        now = datetime(2026, 7, 22, 12, 0, tzinfo=timezone.utc)
+        snapshot = {
+            "ok": False,
+            "issues": [
+                {
+                    "code": "wechat_login_required",
+                    "severity": "degraded",
+                    "detail": "official WeChat client state is entry_required",
+                },
+                {
+                    "code": "android_poll_stalled",
+                    "severity": "degraded",
+                    "detail": "surface=unavailable, failures=54",
+                },
+            ],
+            "android": {
+                "endpoint_reachable": True,
+                "device_authorized": False,
+                "last_poll_error": "BridgeError: command failed (adb): error: device unauthorized",
+            },
+        }
+        state = {
+            "fault_counts": {
+                "wechat_login_required": 54,
+                "android_poll_stalled": 54,
+            }
+        }
+
+        due, signature, codes = guard.repair_agent_due(
+            snapshot,
+            state,
+            consecutive_failures=4,
+            cooldown_seconds=3600,
+            now=now,
+        )
+
+        self.assertFalse(due)
+        self.assertEqual(signature, "")
+        self.assertEqual(codes, [])
 
     def test_repair_agent_escalates_only_on_explicit_marker(self) -> None:
         with mock.patch.object(

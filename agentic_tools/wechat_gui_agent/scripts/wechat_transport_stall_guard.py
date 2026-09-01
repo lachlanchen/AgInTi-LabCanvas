@@ -1580,6 +1580,8 @@ def recover_personal_wechat_outbox_after_reconnect(
 
 def android_poll_stall_requires_relay_restart(android: dict[str, Any]) -> bool:
     """Keep a live relay when only its bounded native-app recovery failed."""
+    if android.get("endpoint_reachable") and not android.get("device_authorized"):
+        return False
     error_text = str(android.get("last_poll_error") or "").casefold()
     native_surface_blocked = any(
         marker in error_text
@@ -1595,6 +1597,31 @@ def android_poll_stall_requires_relay_restart(android: dict[str, Any]) -> bool:
         and native_surface_blocked
         and not android.get("poll_stale")
         and not android.get("poll_in_progress")
+    )
+
+
+def repair_requires_human_action(snapshot: dict[str, Any], code: str) -> bool:
+    """Keep authentication gates visible without assigning them to an agent."""
+
+    if code == "wechat_login_required":
+        return True
+    if code != "android_poll_stalled":
+        return False
+    android = snapshot.get("android")
+    if not isinstance(android, dict):
+        return False
+    if android.get("endpoint_reachable") and not android.get("device_authorized"):
+        return True
+    error_text = str(android.get("last_poll_error") or "").casefold()
+    return any(
+        marker in error_text
+        for marker in (
+            "device unauthorized",
+            "adb_vendor_keys",
+            "confirmation dialog",
+            "keyguard is locked",
+            "authentication is in progress",
+        )
     )
 
 
@@ -1777,6 +1804,10 @@ def repair_agent_issue_codes(
                 or str(issue.get("code") or "") in ALERTABLE_DEGRADED_CODES
             )
             and int(counts.get(str(issue.get("code") or ""), 0)) >= consecutive_failures
+            and not repair_requires_human_action(
+                snapshot,
+                str(issue.get("code") or ""),
+            )
         }
     )
 

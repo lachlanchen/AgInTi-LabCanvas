@@ -341,7 +341,7 @@ labcanvas wechat install-user-scripts
 ```
 
 `stack start` keeps the WeChat supervisor and the LabCanvas browser control
-panel alive together. The default web session is `labcanvas-web-wechat` on port
+panel alive together. The default web session is `labcanvas-web` on port
 `19474`; if that port is busy, the web app uses the next free port and prints
 the actual URL.
 `labcanvas wechat stack restart` preserves the WeChat GUI and reloads only

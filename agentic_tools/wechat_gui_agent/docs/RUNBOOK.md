@@ -38,7 +38,7 @@ The wrapper starts or reuses:
 | Session | Role |
 | --- | --- |
 | `labcanvas-wechat` | WeChat GUI, decrypt refresh, per-chat monitors, worker loops, media sync, unlock watchdog, and chat sync. |
-| `labcanvas-web-wechat` | Local LabCanvas control panel, default `http://127.0.0.1:19474`. |
+| `labcanvas-web` | Local LabCanvas control panel, default `http://127.0.0.1:19474`. |
 | `labcanvas-career-daily` | Daily `gpt-5.5`/`xhigh` self-analysis report to `lachlanchan`. |
 
 The desktop launcher disables X11 blanking and disables DPMS when available. If

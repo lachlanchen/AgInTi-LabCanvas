@@ -173,7 +173,7 @@ def add_wechat_parser(subparsers: argparse._SubParsersAction) -> None:
     stack = nested.add_parser("stack", help="Control the WeChat supervisor plus LabCanvas web control panel. Normal restart preserves WeChat GUI.")
     stack.add_argument("action", choices=["start", "stop", "restart", "restart-all", "status"], nargs="?", default="start")
     stack.add_argument("--web-port", type=int, default=19474)
-    stack.add_argument("--web-session", default="labcanvas-web-wechat")
+    stack.add_argument("--web-session", default="labcanvas-web")
     stack.add_argument("--career-session", default="labcanvas-career-daily")
     stack.add_argument("--career-send-chat", default="lachlanchan")
     stack.add_argument("--career-morning-time", default="08:30")
@@ -2486,7 +2486,7 @@ def cmd_install_user_scripts(args: argparse.Namespace) -> int:
         "set -euo pipefail\n"
         "cd " + shlex.quote(str(PACKAGE_ROOT)) + "\n"
         "export WECHAT_SUPERVISOR_SESSION=${WECHAT_SUPERVISOR_SESSION:-labcanvas-wechat}\n"
-        "export WECHAT_WEB_SESSION=${WECHAT_WEB_SESSION:-labcanvas-web-wechat}\n"
+        "export WECHAT_WEB_SESSION=${WECHAT_WEB_SESSION:-labcanvas-web}\n"
         "export WECHAT_WEB_PORT=${WECHAT_WEB_PORT:-19474}\n"
         "export WECHAT_CAREER_SESSION=${WECHAT_CAREER_SESSION:-labcanvas-career-daily}\n"
         "export WECHAT_CAREER_SEND_CHAT=${WECHAT_CAREER_SEND_CHAT:-lachlanchan}\n"
@@ -2513,7 +2513,7 @@ def cmd_install_user_scripts(args: argparse.Namespace) -> int:
         "set -euo pipefail\n"
         "cd " + shlex.quote(str(PACKAGE_ROOT)) + "\n"
         "export WECHAT_SUPERVISOR_SESSION=${WECHAT_SUPERVISOR_SESSION:-labcanvas-wechat}\n"
-        "export WECHAT_WEB_SESSION=${WECHAT_WEB_SESSION:-labcanvas-web-wechat}\n"
+        "export WECHAT_WEB_SESSION=${WECHAT_WEB_SESSION:-labcanvas-web}\n"
         "export WECHAT_WEB_PORT=${WECHAT_WEB_PORT:-19474}\n"
         "export WECHAT_CAREER_SESSION=${WECHAT_CAREER_SESSION:-labcanvas-career-daily}\n"
         "export WECHAT_CAREER_SEND_CHAT=${WECHAT_CAREER_SEND_CHAT:-lachlanchan}\n"

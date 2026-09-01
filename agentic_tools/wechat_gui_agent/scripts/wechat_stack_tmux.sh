@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd -P)"
-WEB_SESSION="${WECHAT_WEB_SESSION:-labcanvas-web-wechat}"
+WEB_SESSION="${WECHAT_WEB_SESSION:-labcanvas-web}"
 WEB_HOST="${WECHAT_WEB_HOST:-127.0.0.1}"
 WEB_PORT="${WECHAT_WEB_PORT:-19474}"
 CAREER_ENABLED="${WECHAT_STACK_START_CAREER:-1}"
@@ -23,7 +23,7 @@ Usage:
 
 Starts or stops the complete reusable WeChat chatops stack:
   - labcanvas-wechat tmux supervisor for WeChat desktop, fast monitor, worker, and media sync
-  - labcanvas-web-wechat tmux web app session for the browser control panel
+  - labcanvas-web tmux web app session for the browser control panel
   - labcanvas-career-daily tmux session for daily career/self-analysis reports
   - labcanvas-echomind-language tmux session for restart-safe six-hour lessons
 
@@ -33,7 +33,7 @@ or stop then start, only when you intentionally want to restart the WeChat
 client.
 
 Environment:
-  WECHAT_WEB_SESSION          tmux session name for web app, default labcanvas-web-wechat
+  WECHAT_WEB_SESSION          tmux session name for web app, default labcanvas-web
   WECHAT_WEB_HOST             web app host, default 127.0.0.1
   WECHAT_WEB_PORT             web app port, default 19474
   WECHAT_STACK_START_CAREER   set 0 to leave daily scheduler unmanaged

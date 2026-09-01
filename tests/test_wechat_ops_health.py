@@ -772,6 +772,8 @@ class WeChatOpsUserScriptTests(unittest.TestCase):
             reboot_text = reboot_wrapper.read_text(encoding="utf-8")
             stack_text = stack_wrapper.read_text(encoding="utf-8")
             self.assertIn("wechat stack \"$ACTION\"", reboot_text)
+            self.assertIn("WECHAT_WEB_SESSION=${WECHAT_WEB_SESSION:-labcanvas-web}", reboot_text)
+            self.assertIn("WECHAT_WEB_SESSION=${WECHAT_WEB_SESSION:-labcanvas-web}", stack_text)
             self.assertIn("WECHAT_CAREER_AGENT_EFFORT=${WECHAT_CAREER_AGENT_EFFORT:-medium}", reboot_text)
             self.assertIn("WECHAT_MARKDOWN_PDF_PANDOC=${WECHAT_MARKDOWN_PDF_PANDOC:-$HOME/miniconda3/bin/pandoc}", reboot_text)
             self.assertIn("WECHAT_MARKDOWN_PDF_LANGUAGES=${WECHAT_MARKDOWN_PDF_LANGUAGES:-zh,en}", stack_text)

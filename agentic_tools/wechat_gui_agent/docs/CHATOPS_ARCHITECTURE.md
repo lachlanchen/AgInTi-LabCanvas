@@ -173,7 +173,7 @@ labcanvas wechat stack start --web-port 19474
 ~/scripts/create-labcanvas-wechat-after-reboot.sh
 ```
 
-The stack creates or reuses `labcanvas-wechat`, `labcanvas-web-wechat`, and
+The stack creates or reuses `labcanvas-wechat`, `labcanvas-web`, and
 `labcanvas-career-daily`. The WeChat supervisor creates panes for:
 
 - virtual desktop / Linux WeChat relaunch
