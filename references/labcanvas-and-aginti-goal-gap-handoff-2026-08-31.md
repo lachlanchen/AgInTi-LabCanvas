@@ -54,9 +54,10 @@ Current authoritative state:
 - LabCanvas no longer injects AgInTi's OpenAI provider merely because the outer
   Codex attempt carried a GPT model name. Commit `aae8ccc` fixes and tests that
   boundary.
-- AgInTiFlow `0.20.306` is published and installed. Its explicit-source
-  evidence contract and manifest-free LabCanvas artifact recovery are accepted.
-- The complete LabCanvas suite passes 1,784 tests at this checkpoint.
+- AgInTiFlow `0.20.307` is published and installed. Its explicit-source
+  evidence contract, manifest-free LabCanvas artifact recovery, and
+  response-only provider-resume completion contract are accepted.
+- The complete LabCanvas suite passes 1,785 tests at this checkpoint.
 - All six personal-WeChat monitors and the WeChat/WeCom schedulers are alive,
   with no active or stale WeChat queue item.
 - Delivery is currently unavailable because desktop WeChat is at login entry
@@ -105,13 +106,28 @@ Current authoritative state:
   The focused health, worker, backend, and WeCom regression suite passes 808
   tests after this change, and the reloaded live guard now reports only the two
   real degraded conditions without the contradictory narrative.
-- A fresh no-churn audit of AgInTiFlow `main` at `890094d` / `0.20.306` found
-  no current reproducible general-runtime defect. Syntax, provider handoff,
-  truthful completion, LocalLLM readiness, perception/public/deep research,
-  scoped artifact research, session continuity, runtime core, coding tools,
-  canvas artifacts, local failure recovery, model roles, and capability smokes
-  all passed. The worktree remained clean; no speculative code, commit, npm
-  release, or unrelated vision-branch merge was made.
+- A broad no-churn audit of AgInTiFlow `main` at `890094d` / `0.20.306` passed,
+  but a later exact LabCanvas reproduction exposed a narrower truthful-
+  completion defect. LocalLLM executed and returned the requested finish value,
+  yet `deriveScsTaskContract` treated the forbidden clause `Do not create or
+  modify any file` as a positive file-evidence requirement and rejected the
+  completion because the external-evidence ledger was empty. Commit `6f0f9b0`
+  now derives the generic evidence requirement from the positive,
+  forbidden-language-stripped goal while preserving the original prohibition
+  in `forbiddenActions`. The regression covers one saved session across a
+  LocalLLM artifact turn, a DeepSeek continuation, and an explicit LocalLLM
+  response-only continuation. The full AgInTi test suite, provider/runtime
+  smokes, package dry-run, and package-surface audit passed; release commit
+  `3f958a3` published `@lazyingart/agintiflow@0.20.307` and the exact release was
+  installed globally.
+- Production acceptance then reused the same LabCanvas conversation and saved
+  AgInTi session that had failed before the fix. Pre-fix task
+  `c6971bc25e52422c88878058bf6524c8` ended with
+  `model_did_not_execute`. Post-install task
+  `7747e244624249fcaa55dc5b6b565bf9` completed in eight seconds with the exact
+  response `LOCALLLM_FORCED_RESUME_OK`, no file or tool actions, the same
+  AgInTi session ID, provider `localllm`, and turn count 3. This is installed-
+  package evidence, not a source-checkout-only smoke.
 
 The next external gate is one physical acceptance of the restored computer key
 on the unlocked MIX 2S: enable `Always allow from this computer`, then choose
