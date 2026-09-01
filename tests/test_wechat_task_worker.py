@@ -4448,6 +4448,9 @@ stderr: noisy internal trace
         self.assertIn("run remaining read-only validation separately", prompt)
         self.assertIn("short meaningful basename", prompt)
         self.assertIn("2026-08-22-organoid-imaging-review.pdf", prompt)
+        self.assertIn("Never invent a DOI", prompt)
+        self.assertIn("xelatex -interaction=nonstopmode -halt-on-error", prompt)
+        self.assertIn("do not repeatedly invoke `pdflatex`", prompt)
         self.assertIn('"artifact_root":"/tmp/exact-task/artifacts"', prompt)
         self.assertNotIn("For `task.routine.id=video_publish_existing`", prompt)
 
