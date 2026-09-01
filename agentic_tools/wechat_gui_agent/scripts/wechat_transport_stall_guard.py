@@ -1929,6 +1929,38 @@ def run_repair_agent_with_escalation(
     return {"ok": bool(high.get("ok")), "medium": medium, "high": high, **high}
 
 
+def finalize_repair_agent_result(
+    result: dict[str, Any],
+    *,
+    observed_issue_codes: list[str],
+    attempted_at: str,
+    verified_snapshot: dict[str, Any],
+) -> dict[str, Any]:
+    """Keep agent narration separate from authoritative post-repair health."""
+    current_issue_codes = sorted(
+        {
+            str(issue.get("code") or "")
+            for issue in verified_snapshot.get("issues", [])
+            if str(issue.get("code") or "")
+        }
+    )
+    recovered = bool(verified_snapshot.get("ok"))
+    return {
+        **result,
+        "status": "recovered" if recovered else "unresolved",
+        "attempted_at": attempted_at,
+        "observed_issue_codes": sorted(set(observed_issue_codes)),
+        "diagnostic_message_current_state_authoritative": False,
+        "verification": {
+            "current_state_authoritative": True,
+            "checked_at": str(verified_snapshot.get("checked_at") or ""),
+            "ok": recovered,
+            "severity": str(verified_snapshot.get("severity") or ""),
+            "issue_codes": current_issue_codes,
+        },
+    }
+
+
 def snapshot_signature(snapshot: dict[str, Any]) -> str:
     queues = {}
     for name, status in (snapshot.get("queues") or {}).items():
@@ -2181,7 +2213,8 @@ def one_cycle(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
             now=utc_now(),
         )
         if due:
-            state["last_repair_agent_attempt_at"] = iso_now()
+            attempted_at = iso_now()
+            state["last_repair_agent_attempt_at"] = attempted_at
             state["last_repair_agent_signature"] = agent_signature
             state["last_repair_agent_codes"] = agent_codes
             repair_agent_result = run_repair_agent_with_escalation(
@@ -2189,10 +2222,16 @@ def one_cycle(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
                 repairs,
                 timeout_seconds=args.repair_agent_timeout_seconds,
             )
-            state["last_repair_agent_result"] = repair_agent_result
             if args.repair_verify_delay_seconds > 0:
                 time.sleep(args.repair_verify_delay_seconds)
             verified = build_snapshot(max_sender_seconds=args.max_sender_age_seconds)
+            repair_agent_result = finalize_repair_agent_result(
+                repair_agent_result,
+                observed_issue_codes=agent_codes,
+                attempted_at=attempted_at,
+                verified_snapshot=verified,
+            )
+            state["last_repair_agent_result"] = repair_agent_result
             verified["repairs"] = repairs
             verified["repair_agent"] = repair_agent_result
             snapshot = verified

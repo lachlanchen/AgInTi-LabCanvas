@@ -96,6 +96,15 @@ Current authoritative state:
   maintenance `COMPLETE.json` appeared. This proves the final fallback path;
   it does not change the operating order of Codex, AgInTi with DeepSeek, then
   AgInTi with LocalLLM.
+- Repair-agent prose is no longer presented as authoritative live health. Every
+  repair-agent attempt is followed by a deterministic transport snapshot that
+  records `recovered` or `unresolved`, the current issue codes, and its own
+  timestamp. The agent narrative remains diagnostic evidence only. This fixes
+  a misleading state where an older sentence said Android polling was healthy
+  while the same health response correctly reported the phone as unauthorized.
+  The focused health, worker, backend, and WeCom regression suite passes 808
+  tests after this change, and the reloaded live guard now reports only the two
+  real degraded conditions without the contradictory narrative.
 
 The next external gate is one physical acceptance of the restored computer key
 on the unlocked MIX 2S: enable `Always allow from this computer`, then choose

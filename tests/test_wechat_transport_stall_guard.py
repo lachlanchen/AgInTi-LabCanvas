@@ -1726,6 +1726,36 @@ class WeChatTransportStallGuardTests(unittest.TestCase):
             ["medium", "high"],
         )
 
+    def test_repair_agent_narrative_is_not_authoritative_health(self) -> None:
+        result = guard.finalize_repair_agent_result(
+            {
+                "ok": True,
+                "message_excerpt": "Android polling healthy.",
+            },
+            observed_issue_codes=["android_poll_stalled"],
+            attempted_at="2026-07-22T12:00:00+00:00",
+            verified_snapshot={
+                "checked_at": "2026-07-22T12:00:05+00:00",
+                "ok": False,
+                "severity": "degraded",
+                "issues": [
+                    {
+                        "code": "android_poll_stalled",
+                        "severity": "degraded",
+                    }
+                ],
+            },
+        )
+
+        self.assertEqual(result["status"], "unresolved")
+        self.assertFalse(result["diagnostic_message_current_state_authoritative"])
+        self.assertTrue(result["verification"]["current_state_authoritative"])
+        self.assertFalse(result["verification"]["ok"])
+        self.assertEqual(
+            result["verification"]["issue_codes"],
+            ["android_poll_stalled"],
+        )
+
     def test_android_health_probe_preserves_poll_failure_evidence(self) -> None:
         response = mock.MagicMock()
         response.__enter__.return_value.read.return_value = json.dumps(
