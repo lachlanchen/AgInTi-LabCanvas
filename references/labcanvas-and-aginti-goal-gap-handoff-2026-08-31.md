@@ -56,7 +56,7 @@ Current authoritative state:
   boundary.
 - AgInTiFlow `0.20.306` is published and installed. Its explicit-source
   evidence contract and manifest-free LabCanvas artifact recovery are accepted.
-- The complete LabCanvas suite passes 1,780 tests at this checkpoint.
+- The complete LabCanvas suite passes 1,783 tests at this checkpoint.
 - All six personal-WeChat monitors and the WeChat/WeCom schedulers are alive,
   with no active or stale WeChat queue item.
 - Delivery is currently unavailable because desktop WeChat is at login entry
@@ -79,6 +79,23 @@ Current authoritative state:
   now bounded by the existing five-minute poll interval: no conversational
   lesson is sent overnight, the 06:00 PDF remains independent, and liveness is
   continuously observable.
+- Live AgInTi acceptance through `labcanvas agent chat` passed on 2026-09-01:
+  task `b699995fc1974712baa95f3c10516420` returned the exact requested chat
+  response through DeepSeek, and task `da610379b1c74da4a95ed04cd54c662c`
+  resumed the same provider session for a follow-up in six seconds. Task
+  `2c7efa9c37bb45e6a663d769b34d68e3` then completed a bounded live web search
+  against an official allowlisted source with command and browser evidence.
+  These prove the current installed AgInTi `0.20.306` path for direct chat,
+  durable continuation, and source-grounded research.
+- The same LabCanvas surface also has current LocalLLM fallback evidence. Task
+  `3bf3fd607fa8408fb3c88dbf3325b8d0` selected the `localllm` provider and
+  completed a bounded read-only repository/readiness inspection in 17 seconds.
+  Task `020612f0c26844febc280bd47dde340f` selected `localllm`, completed a
+  read/write artifact task in 30 seconds, and registered the verified
+  `provider-fallback-readiness.md` artifact. Both ran only after the LocalLLM
+  maintenance `COMPLETE.json` appeared. This proves the final fallback path;
+  it does not change the operating order of Codex, AgInTi with DeepSeek, then
+  AgInTi with LocalLLM.
 
 The next external gate is one physical acceptance of the restored computer key
 on the unlocked MIX 2S: enable `Always allow from this computer`, then choose
