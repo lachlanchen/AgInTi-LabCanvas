@@ -342,6 +342,57 @@ guard, not a replacement tool loop. The general AgInTi runtime owns the proper
 fix: normalize the DeepSeek DSML envelope and its safe `file` to `path` alias
 into a native validated tool call, execute it, and continue the same session.
 
+### 2026-09-01: Full-Context Memo Campaign And AgInTiFlow 0.20.308
+
+The historical `memo-current-local-062` row was not treated as success merely
+because it produced a PDF. Independent review found a crowded first page, an
+almost-empty second page, an invented book-archive completion claim, lost
+context, and an accidentally tracked SyncTeX file. The authoritative campaign
+ledger now records that run as failed with page renders and source evidence.
+
+A fresh ordinary-prompt campaign, `memo-current-092`, then reproduced a more
+general AgInTi defect on `0.20.307`. DeepSeek correctly read the full chat,
+wrote a good Chinese XeLaTeX memo, compiled and visually inspected the PDF,
+sent it to the canvas, and staged the exact TeX/PDF pair. The pre-commit
+document gate nevertheless received `artifacts=[]` because generated root
+documents discovered through current-goal mutation evidence were not included
+in the assessment candidates. The agent consequently repeated compilation
+instead of committing.
+
+AgInTiFlow commit `6edf9d95e9af64bc3b57a639295a356094f08626`
+fixes the runtime at the owning layer. Pre-commit and final document validation
+now include sanitized `.pdf` and `.docx` paths from the current goal's mutation
+history. Arbitrary pre-existing root documents remain excluded. Regression
+coverage proves generated root-PDF discovery, unrelated-root-PDF rejection,
+and preservation of semantic/source-status blockers. The fix passed focused
+smokes, `npm run check`, the full npm suite, package-surface inspection, and a
+global install check, then shipped as `@lazyingart/agintiflow@0.20.308` from
+release commit `4e50ca05de2b3caa10ed8080274c413099b71812`.
+
+The same persistent DeepSeek session resumed on `0.20.308`, passed the real
+document-quality gate, and committed only `daily_memo.tex` and
+`daily_memo.pdf` as target commit `239d8f5`. Independent acceptance verified:
+
+- a clean two-page A4 PDF with no overlap or broken layout;
+- `qpdf`, `pdfinfo`, and `pdftotext` integrity;
+- all interrupted-chat commitments, cancellations, waiting states, and
+  evidence boundaries;
+- no raw chat rows, private media identifiers, diagnostics, or placeholders;
+- editable CJK-capable TeX source, intentional git history, and a clean
+  worktree.
+
+The authoritative evidence is under
+`/home/lachlan/ProjectsLFS/Aginti-Test/supervision/evidence/memo-current-092/`,
+and the campaign ledger records `memo-current-092` as `passed_after_fix`.
+
+One bounded refinement remains. Resuming the same task increments the goal
+revision, so an already-created artifact from the previous revision is not
+immediately eligible as current-revision mutation evidence. The accepted run
+therefore performed one unnecessary recompilation and briefly edited then
+reverted `TASK.md` before completion. This did not affect the final artifact or
+commit, but a future campaign should prove same-task retained-artifact
+continuity without relaxing the current-goal evidence boundary.
+
 ## Remaining Gaps
 
 ### Completed: Unified Personal-WeChat Availability
