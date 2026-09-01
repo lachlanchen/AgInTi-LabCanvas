@@ -73,6 +73,12 @@ Current authoritative state:
   tasks retain the no-replay guard. Backend attempt evidence now records whether
   execution and tool activity began so future attribution does not depend on
   inference from truncated logs.
+- EchoMind quiet hours previously slept from 20:00 toward the next 06:00 daily
+  PDF wake in one long interval. Delivery stayed quiet as intended, but the
+  scheduler heartbeat crossed its 12-minute health limit. Quiet-hour sleeps are
+  now bounded by the existing five-minute poll interval: no conversational
+  lesson is sent overnight, the 06:00 PDF remains independent, and liveness is
+  continuously observable.
 
 The next external gate is one physical acceptance of the restored computer key
 on the unlocked MIX 2S: enable `Always allow from this computer`, then choose

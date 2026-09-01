@@ -63,10 +63,18 @@ class EchoMindLanguageSchedulerTests(unittest.TestCase):
         self.assertEqual(remaining, 0)
 
     def test_quiet_hours_wake_at_six_for_daily_pdf_then_poll_until_eight(self) -> None:
+        evening = datetime(2026, 7, 22, 20, 5, tzinfo=scheduler.LOCAL_TZ)
         before_daily = datetime(2026, 7, 23, 5, 50, tzinfo=scheduler.LOCAL_TZ)
         after_daily = datetime(2026, 7, 23, 6, 5, tzinfo=scheduler.LOCAL_TZ)
 
-        self.assertEqual(scheduler.quiet_seconds(now=before_daily), 600)
+        self.assertEqual(
+            scheduler.quiet_seconds(now=evening),
+            scheduler.SCHEDULER_POLL_SECONDS,
+        )
+        self.assertEqual(
+            scheduler.quiet_seconds(now=before_daily),
+            scheduler.SCHEDULER_POLL_SECONDS,
+        )
         self.assertEqual(
             scheduler.quiet_seconds(now=after_daily),
             scheduler.SCHEDULER_POLL_SECONDS,

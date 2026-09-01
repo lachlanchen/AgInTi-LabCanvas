@@ -452,7 +452,7 @@ def quiet_seconds(*, now: datetime | None = None) -> float:
     else:
         wake = now.replace(hour=QUIET_END, minute=0, second=0, microsecond=0)
         return min(SCHEDULER_POLL_SECONDS, max(60.0, (wake - now).total_seconds()))
-    return max(60.0, (wake - now).total_seconds())
+    return min(SCHEDULER_POLL_SECONDS, max(60.0, (wake - now).total_seconds()))
 
 
 def daily_pdf_target_date(now: datetime | None = None) -> str:
