@@ -406,8 +406,19 @@ rejecting different goals, missing hashes, unrelated stale root documents, and
 stale compiled output after source edits. Focused dynamic-step, document,
 truthful-completion, syntax, and full npm gates passed. Independent review
 caught and corrected permissive missing-hash handling before release. The
-campaign ledger records the scenario as `passed_after_fix`; these two commits
-have been pushed but were intentionally not published to npm at this checkpoint.
+campaign ledger records the scenario as `passed_after_fix`.
+
+The fix shipped as `@lazyingart/agintiflow@0.20.309` from release commit
+`b887c1e1ab48d711d4aaee10a00425b73a60445a`. Registry metadata, the global
+installation, and both `aginti` CLI binaries report `0.20.309`; local `main`
+and `origin/main` match and the source worktree is clean. A live continuation
+of the exact accepted `aginti-memo-current-092` DeepSeek session then completed
+as `completed-continuation-noop` in zero steps. It made no model request, tool
+call, producer invocation, file mutation, or external side effect. Independent
+before/after checks confirmed unchanged hashes and mtimes for `TASK.md`,
+`daily_memo.tex`, and `daily_memo.pdf`, unchanged target commit `239d8f5`, and
+a clean target worktree. This is the release-level proof that completed
+same-task artifacts are reused instead of regenerated.
 
 ## Remaining Gaps
 
