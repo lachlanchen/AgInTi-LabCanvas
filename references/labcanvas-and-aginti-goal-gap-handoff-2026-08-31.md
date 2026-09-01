@@ -127,7 +127,11 @@ Current authoritative state:
   `7747e244624249fcaa55dc5b6b565bf9` completed in eight seconds with the exact
   response `LOCALLLM_FORCED_RESUME_OK`, no file or tool actions, the same
   AgInTi session ID, provider `localllm`, and turn count 3. This is installed-
-  package evidence, not a source-checkout-only smoke.
+  package evidence, not a source-checkout-only smoke. Follow-up task
+  `dc602234575a41f481e22e4df5101720` then switched that same installed session
+  back to provider-default DeepSeek, returned the exact response
+  `DEEPSEEK_AFTER_020307_OK` in four seconds, and advanced the same session to
+  turn count 4.
 
 The next external gate is one physical acceptance of the restored computer key
 on the unlocked MIX 2S: enable `Always allow from this computer`, then choose
