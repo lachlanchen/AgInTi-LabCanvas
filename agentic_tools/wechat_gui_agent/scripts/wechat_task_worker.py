@@ -2910,6 +2910,7 @@ def send_result_once(
     target = target if target is not None else guarded_send_target(target_chat, send_targets, task=task)
     files_to_send, files_to_note = partition_result_files_for_wechat(result.get("files") or [])
     files_to_send = research_summary_delivery_files(task, files_to_send)
+    files_to_send = [ensure_meaningful_delivery_path(path, task) for path in files_to_send]
     if task is not None and files_to_send and not result_allows_chat_artifact_delivery(task, result):
         task["suppressed_chat_files"] = unique_strings(
             [
@@ -3517,7 +3518,7 @@ def send_result_once_wecom(result: dict[str, Any], target_chat: str, task: dict[
     files_to_send, files_to_note = partition_result_files_for_wechat(result.get("files") or [])
     selected_files = wecom_research_delivery_files(task, files_to_send)
     suppressed_sources = [path for path in files_to_send if path not in selected_files]
-    files_to_send = selected_files
+    files_to_send = [ensure_meaningful_delivery_path(path, task) for path in selected_files]
     if suppressed_sources:
         task["wecom_saved_source_files"] = [str(path.expanduser().resolve()) for path in suppressed_sources]
     if files_to_send and not result_allows_chat_artifact_delivery(task, result):
@@ -21626,10 +21627,12 @@ def artifact_name_needs_delivery_alias(
 ) -> bool:
     stem = Path(str(filename or "")).stem.casefold()
     normalized = re.sub(r"[^0-9a-z]+", "-", stem).strip("-")
+    unicode_normalized = re.sub(r"[^\w]+", "-", stem, flags=re.UNICODE).strip("-_")
     compact_label = re.sub(r"[\W_]+", "", stem, flags=re.UNICODE)
-    normalized_tokens = [token for token in normalized.split("-") if token]
+    normalized_tokens = [token for token in unicode_normalized.split("-") if token]
     operational_only = bool(normalized_tokens) and all(
         token in GENERIC_DELIVERY_STEMS
+        or re.sub(r"[\W_]+", "", token, flags=re.UNICODE) in GENERIC_DELIVERY_LABELS
         or token in {"complete", "completed", "final", "latest", "new"}
         or bool(re.fullmatch(r"v?\d+", token))
         for token in normalized_tokens
@@ -21646,6 +21649,10 @@ def artifact_name_needs_delivery_alias(
         r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
         normalized,
     ):
+        return True
+    if re.match(r"^(20\d{2}-\d{2}-\d{2})-\1(?:-|$)", unicode_normalized):
+        return True
+    if re.search(r"(?:^|-)(?:one-exact|exact-task|task-scoped)(?:-|$)", normalized):
         return True
     if isinstance(task, dict):
         task_id = safe_slug(str(task.get("id") or ""))
@@ -21688,10 +21695,12 @@ def task_artifact_date(task: dict[str, Any]) -> str:
 def task_artifact_subject(task: dict[str, Any]) -> str:
     route = task.get("route_decision") if isinstance(task.get("route_decision"), dict) else {}
     daily = task.get("daily_research") if isinstance(task.get("daily_research"), dict) else {}
+    daily_topics = daily.get("topics") if isinstance(daily.get("topics"), list) else []
     candidates = [
         task.get("artifact_subject"),
         route.get("artifact_subject"),
         daily.get("topic"),
+        daily_topics[0] if daily_topics else "",
         task.get("request"),
         route.get("topic"),
         route.get("title"),

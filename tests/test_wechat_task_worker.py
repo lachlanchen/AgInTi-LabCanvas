@@ -12312,6 +12312,12 @@ stderr: noisy internal trace
                     "organoid-review-delivery.pdf", task
                 )
             )
+            self.assertFalse(
+                worker.artifact_name_needs_delivery_alias(
+                    "2026-09-02-氧化还原闭环验证与类器官自动化研究简报.pdf",
+                    task,
+                )
+            )
 
             with mock.patch.object(worker.os, "link", side_effect=OSError("cross-device")):
                 repeated = worker.ensure_meaningful_delivery_path(source, task)
@@ -12345,6 +12351,38 @@ stderr: noisy internal trace
 
             self.assertEqual(prepared["files"], [str(source.resolve())])
             self.assertNotIn("delivery_artifact_aliases", task)
+
+    def test_internal_daily_delivery_alias_is_repaired_from_topic(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            artifact_dir = Path(tmp)
+            delivery_dir = artifact_dir / "delivery"
+            delivery_dir.mkdir()
+            source = delivery_dir / (
+                "2026-09-02-2026-09-02-daily-research-briefing-"
+                "for-one-exact-report-v2.pdf"
+            )
+            source.write_bytes(b"%PDF-1.4\norganoid evidence")
+            task: dict[str, object] = {
+                "id": "wecom-daily-test",
+                "chat": "LabAgent",
+                "created_at": "2026-09-02T06:00:00+08:00",
+                "request": "Prepare the daily research briefing for one exact member.",
+                "daily_research": {
+                    "topics": ["类器官与生物制造新进展；科幻领域新想法。"]
+                },
+                "artifact_dir": str(artifact_dir),
+            }
+
+            delivered = worker.ensure_meaningful_delivery_path(source, task)
+
+            self.assertEqual(
+                delivered.name,
+                "2026-09-02-类器官与生物制造新进展-科幻领域新想法-report.pdf",
+            )
+            self.assertNotIn("one-exact", delivered.name)
+            self.assertNotIn("2026-09-02-2026-09-02", delivered.name)
+            self.assertEqual(delivered.read_bytes(), source.read_bytes())
 
     def test_pdf_compile_failure_keeps_all_numbered_text(self) -> None:
         worker = load_worker()
