@@ -150,25 +150,38 @@ class OpenHISameLens4fManifestTests(unittest.TestCase):
             with self.subTest(design=design_name):
                 manifest = self.load_manifest(design_name)
                 focal_length = manifest["lens"]["focal_length_mm"]
+                inward_support = manifest["lens_model"][
+                    "mechanical_inward_contact_z_mm"
+                ]
                 chain = manifest["final_dimensional_audit"]["optical_distance_chain"]
 
                 self.assertAlmostEqual(
-                    chain["beam_splitter_to_nominal_seat_mm"], focal_length
+                    chain["beam_splitter_to_inward_axis_vertex_mm"],
+                    focal_length,
                 )
                 self.assertAlmostEqual(
-                    chain["a_to_b_nominal_seat_spacing_2f_mm"], 2 * focal_length
+                    chain["beam_splitter_to_annular_support_plane_mm"],
+                    focal_length + inward_support,
                 )
                 self.assertAlmostEqual(
-                    chain["a_to_c_nominal_seat_spacing_2f_mm"], 2 * focal_length
+                    chain["a_to_b_inward_vertex_spacing_2f_mm"],
+                    2 * focal_length,
                 )
                 self.assertAlmostEqual(
-                    chain["a_seat_to_outer_end_mm"], focal_length + 0.2
+                    chain["a_to_c_inward_vertex_path_2f_mm"],
+                    2 * focal_length,
                 )
                 self.assertAlmostEqual(
-                    chain["b_seat_to_outer_end_mm"], focal_length + 4.4
+                    chain["a_seat_to_outer_end_mm"],
+                    focal_length + 0.2 - inward_support,
                 )
                 self.assertAlmostEqual(
-                    chain["c_seat_to_outer_end_mm"], focal_length + 4.4
+                    chain["b_seat_to_outer_end_mm"],
+                    focal_length + 4.4 - inward_support,
+                )
+                self.assertAlmostEqual(
+                    chain["c_seat_to_outer_end_mm"],
+                    focal_length + 4.4 - inward_support,
                 )
                 self.assertAlmostEqual(
                     chain["a_outer_end_to_beam_splitter_mm"],
@@ -189,6 +202,80 @@ class OpenHISameLens4fManifestTests(unittest.TestCase):
                 self.assertAlmostEqual(
                     chain["a_to_c_complete_outer_end_path_mm"],
                     4 * focal_length + 4.6,
+                )
+
+    def test_fully_inserted_pairs_preserve_real_lens_cavity(self):
+        for design_name in DESIGN_NAMES:
+            with self.subTest(design=design_name):
+                manifest = self.load_manifest(design_name)
+                model = manifest["lens_model"]
+                required = (
+                    model["mechanical_outward_contact_z_mm"]
+                    - model["mechanical_inward_contact_z_mm"]
+                )
+                cavities = manifest["final_dimensional_audit"][
+                    "fully_inserted_lens_cavities"
+                ]
+                self.assertEqual(set(cavities), {"A", "B", "C"})
+                for cavity in cavities.values():
+                    self.assertAlmostEqual(
+                        cavity["lens_required_axial_envelope_mm"],
+                        required,
+                    )
+                    self.assertAlmostEqual(
+                        cavity["fully_inserted_available_cavity_mm"],
+                        required + 0.2,
+                    )
+                    self.assertAlmostEqual(
+                        cavity["fully_inserted_axial_clearance_mm"],
+                        0.2,
+                    )
+                    self.assertAlmostEqual(
+                        cavity["full_thread_engagement_mm"],
+                        7.75,
+                    )
+
+                brep_audit = manifest["optical_layout"][
+                    "lens_axis_brep_audit"
+                ]
+                self.assertEqual(set(brep_audit), {"A", "B", "C"})
+                for measured in brep_audit.values():
+                    self.assertAlmostEqual(
+                        measured["inward_vertex_error_mm"],
+                        0.0,
+                    )
+                    self.assertAlmostEqual(
+                        measured["outward_vertex_error_mm"],
+                        0.0,
+                    )
+
+    def test_a_input_receiver_is_exact_source_geometry_inside_arm(self):
+        for design_name in DESIGN_NAMES:
+            with self.subTest(design=design_name):
+                manifest = self.load_manifest(design_name)
+                receiver = manifest["a_input_receiver_audit"]
+                self.assertTrue(receiver["receiver_is_exact_source_brep"])
+                self.assertTrue(receiver["thread_relief_is_present"])
+                self.assertTrue(receiver["insertion_depth_is_internal_to_4f_arm"])
+                self.assertAlmostEqual(
+                    receiver["receiver_depth_mm"],
+                    12.474,
+                    places=5,
+                )
+                self.assertAlmostEqual(receiver["pilot_diameter_mm"], 25.0)
+                self.assertAlmostEqual(
+                    receiver["groove_envelope_diameter_mm"],
+                    25.8,
+                )
+                self.assertAlmostEqual(receiver["missing_source_void_mm3"], 0.0)
+                self.assertAlmostEqual(receiver["excess_void_mm3"], 0.0)
+                self.assertGreater(
+                    receiver["source_thread_relief_outside_smooth_pilot_mm3"],
+                    1.0,
+                )
+                self.assertGreaterEqual(
+                    receiver["minimum_radial_wall_inside_lens_thread_root_mm"],
+                    1.5,
                 )
 
     def test_lens_models_use_analytic_surfaces(self):

@@ -46,6 +46,7 @@ SOURCE_A = (
     / "cad/designs/openhi_abc_exact_parametric_baseline/"
     "USE_THIS_OpenHI_A_exact_current_geometry.step"
 )
+SOURCE_A_INPUT_RECEIVER = ROOT / "cad/extracted/OpenHI_STEP/A.step"
 SOURCE_B = (
     ROOT
     / "cad/designs/openhi_abc_exact_parametric_baseline/"
@@ -114,13 +115,26 @@ CAMERA_THREAD_END_LEAD_MM = 0.4
 CAMERA_TRANSITION_MM = 3.0
 CAMERA_CLEAR_BORE_MM = 21.0
 MIN_OUTER_COLLAR_MM = 0.1
+# The original A part has a source-authored internal OpenHI/C-mount-like
+# receiver at its lower end.  Preserve that B-rep cavity instead of replacing
+# it with a plain lead-in cone.  The receiver is internal to the A optical-arm
+# envelope: a mating flange seats at the A outer face, so its insertion depth
+# is not added a second time to the 4f distance chain.
+A_INPUT_RECEIVER_DOMAIN_DIAMETER_MM = 30.0
+A_INPUT_RECEIVER_PILOT_DIAMETER_MM = 25.0
+A_INPUT_RECEIVER_GROOVE_DIAMETER_MM = 25.8
+A_INPUT_RECEIVER_DEPTH_MM = 12.474
+A_INPUT_RECEIVER_BORE_TRANSITION_ANGLE_DEG = 45.0
 OPTICAL_CORE_PROBE_DIAMETER_MM = 4.0
 C_RECEIVER_MEMBRANE_PROBE_DIAMETER_MM = 29.4
 C_RECEIVER_PROBE_X0 = 269.91
 C_RECEIVER_PROBE_X1 = 274.95
 OPTICAL_PATH_END_MARGIN_MM = 0.05
 BREP_BOUND_TOLERANCE_MM = 1e-6
-PRINT_RELEASE_RUN_NAME = "run-3-c-path-clear-print-release-20260830T053241Z"
+PRINT_RELEASE_RUN_NAME = (
+    "run-4-a-input-receiver-optical-vertex-lens-clearance-"
+    "print-ready-20260901T040031Z"
+)
 
 
 @dataclass(frozen=True)
@@ -440,6 +454,49 @@ def keep_x_below(shape: cq.Shape, xmax: float) -> cq.Workplane:
     )
 
 
+def a_input_receiver_cavity(
+    outer_end_mm: float,
+) -> tuple[cq.Workplane, dict[str, float]]:
+    """Return the exact lower internal receiver void from the source A B-rep."""
+
+    source = cq.importers.importStep(str(SOURCE_A_INPUT_RECEIVER)).val()
+    lower = min(source.Solids(), key=lambda item: item.BoundingBox().zmin)
+    box = lower.BoundingBox()
+    depth = box.zmax - box.zmin
+    if not math.isclose(depth, A_INPUT_RECEIVER_DEPTH_MM, abs_tol=1e-5):
+        raise RuntimeError(
+            "source A input receiver depth changed: "
+            f"expected {A_INPUT_RECEIVER_DEPTH_MM}, measured {depth}"
+        )
+    domain = z_cylinder(
+        A_INPUT_RECEIVER_DOMAIN_DIAMETER_MM,
+        box.zmin,
+        depth,
+        BS_X,
+        BS_Y,
+    )
+    cavity = largest_solid(domain.cut(wp(lower)).clean())
+    cavity_box = cavity.val().BoundingBox()
+    if not math.isclose(
+        max(cavity_box.xlen, cavity_box.ylen),
+        A_INPUT_RECEIVER_GROOVE_DIAMETER_MM,
+        abs_tol=1e-5,
+    ):
+        raise RuntimeError("source A input receiver groove envelope changed")
+    translated = cavity.translate((0.0, 0.0, outer_end_mm - box.zmin))
+    return translated, {
+        "source_min_mm": box.zmin,
+        "source_max_mm": box.zmax,
+        "depth_mm": depth,
+        "min_mm": outer_end_mm,
+        "max_mm": outer_end_mm + depth,
+        "pilot_diameter_mm": A_INPUT_RECEIVER_PILOT_DIAMETER_MM,
+        "groove_diameter_mm": A_INPUT_RECEIVER_GROOVE_DIAMETER_MM,
+        "domain_diameter_mm": A_INPUT_RECEIVER_DOMAIN_DIAMETER_MM,
+        "source_cavity_volume_mm3": cavity.val().Volume(),
+    }
+
+
 def sag(radius: float, radial: float) -> float:
     if abs(radius) < 1e-12:
         return 0.0
@@ -616,10 +673,15 @@ def lens_aperture(spec: LensSpec) -> float:
     return min(24.0, spec.diameter_mm - 1.5)
 
 
-def build_a_c_bs(spec: LensSpec, edge: float) -> tuple[cq.Workplane, dict[str, float]]:
+def build_a_c_bs(
+    spec: LensSpec,
+    edge: float,
+    inward_contact: float,
+) -> tuple[cq.Workplane, dict[str, float]]:
     source = cq.importers.importStep(str(SOURCE_AC_BS)).val()
     static = keep_z_above(source, 580.0)
-    seat_z = BS_Z - spec.focal_length_mm
+    optical_vertex_z = BS_Z - spec.focal_length_mm
+    seat_z = optical_vertex_z - inward_contact
     contact_z = seat_z - edge - AXIAL_LENS_CLEARANCE_MM
     pocket = spec.diameter_mm + LENS_DIAMETER_CLEARANCE_MM
     aperture = lens_aperture(spec)
@@ -642,6 +704,7 @@ def build_a_c_bs(spec: LensSpec, edge: float) -> tuple[cq.Workplane, dict[str, f
     for cutter in cutters:
         body = largest_solid(body.cut(cutter).clean())
     return body, {
+        "optical_vertex_mm": optical_vertex_z,
         "seat_mm": seat_z,
         "contact_mm": contact_z,
         "thread_min_mm": thread_z0,
@@ -651,13 +714,21 @@ def build_a_c_bs(spec: LensSpec, edge: float) -> tuple[cq.Workplane, dict[str, f
         "pocket_mm": pocket,
         "optical_axis_x_mm": BS_X,
         "optical_axis_y_mm": BS_Y,
+        "inward_support_offset_mm": inward_contact,
+        "lens_axial_envelope_mm": edge,
+        "available_lens_cavity_mm": seat_z - contact_z,
     }
 
 
-def build_b_holder(spec: LensSpec, edge: float) -> tuple[cq.Workplane, dict[str, float]]:
+def build_b_holder(
+    spec: LensSpec,
+    edge: float,
+    inward_contact: float,
+) -> tuple[cq.Workplane, dict[str, float]]:
     source = cq.importers.importStep(str(SOURCE_B_HOLDER)).val()
     static = keep_z_below(source, 620.0)
-    seat_z = BS_Z + spec.focal_length_mm
+    optical_vertex_z = BS_Z + spec.focal_length_mm
+    seat_z = optical_vertex_z + inward_contact
     contact_z = seat_z + edge + AXIAL_LENS_CLEARANCE_MM
     pocket = spec.diameter_mm + LENS_DIAMETER_CLEARANCE_MM
     aperture = lens_aperture(spec)
@@ -680,6 +751,7 @@ def build_b_holder(spec: LensSpec, edge: float) -> tuple[cq.Workplane, dict[str,
     for cutter in cutters:
         body = largest_solid(body.cut(cutter).clean())
     return body, {
+        "optical_vertex_mm": optical_vertex_z,
         "seat_mm": seat_z,
         "contact_mm": contact_z,
         "thread_min_mm": thread_z0,
@@ -690,10 +762,17 @@ def build_b_holder(spec: LensSpec, edge: float) -> tuple[cq.Workplane, dict[str,
         "optical_axis_x_mm": B_AXIS_X,
         "optical_axis_y_mm": BS_Y,
         "preserved_outer_skin_axis_x_mm": 254.633,
+        "inward_support_offset_mm": inward_contact,
+        "lens_axial_envelope_mm": edge,
+        "available_lens_cavity_mm": contact_z - seat_z,
     }
 
 
-def build_c_holder(spec: LensSpec, edge: float) -> tuple[cq.Workplane, dict[str, float]]:
+def build_c_holder(
+    spec: LensSpec,
+    edge: float,
+    inward_contact: float,
+) -> tuple[cq.Workplane, dict[str, float]]:
     source = cq.importers.importStep(str(SOURCE_C_HOLDER)).val().moved(
         cq.Location(cq.Vector(-20.0, 0.0, 0.0))
     )
@@ -703,7 +782,8 @@ def build_c_holder(spec: LensSpec, edge: float) -> tuple[cq.Workplane, dict[str,
     male = min(solids, key=lambda item: item.Volume())
     main = max(solids, key=lambda item: item.Volume())
     static = keep_x_below(main, 280.2)
-    seat_x = BS_X + spec.focal_length_mm
+    optical_vertex_x = BS_X + spec.focal_length_mm
+    seat_x = optical_vertex_x + inward_contact
     contact_x = seat_x + edge + AXIAL_LENS_CLEARANCE_MM
     pocket = spec.diameter_mm + LENS_DIAMETER_CLEARANCE_MM
     aperture = lens_aperture(spec)
@@ -741,6 +821,7 @@ def build_c_holder(spec: LensSpec, edge: float) -> tuple[cq.Workplane, dict[str,
     if len(fused.val().Solids()) != 1:
         raise RuntimeError("Lens C holder did not fuse to one solid")
     return fused, {
+        "optical_vertex_mm": optical_vertex_x,
         "seat_mm": seat_x,
         "contact_mm": contact_x,
         "thread_min_mm": thread_x0,
@@ -753,6 +834,9 @@ def build_c_holder(spec: LensSpec, edge: float) -> tuple[cq.Workplane, dict[str,
         "optical_axis_z_mm": BS_Z,
         "legacy_male_root_mm": LEGACY_MALE_ROOT_MM,
         "legacy_male_fuse_diameter_mm": LEGACY_MALE_FUSE_DIAMETER_MM,
+        "inward_support_offset_mm": inward_contact,
+        "lens_axial_envelope_mm": edge,
+        "available_lens_cavity_mm": contact_x - seat_x,
     }
 
 
@@ -784,11 +868,11 @@ def build_a_cap(
     spec: LensSpec,
     info: dict[str, float],
 ) -> tuple[cq.Workplane, dict[str, float]]:
-    seat = info["seat_mm"]
     contact = info["contact_mm"]
     thread_z0 = info["thread_min_mm"]
     thread_z1 = info["thread_max_mm"]
-    outer_end = seat - spec.focal_length_mm - A_END_SEAT_EXTRA_MM
+    optical_vertex = info["optical_vertex_mm"]
+    outer_end = optical_vertex - spec.focal_length_mm - A_END_SEAT_EXTRA_MM
     mouth_z = info["outer_end_mm"]
     if mouth_z <= outer_end + 1.0 or thread_z0 <= mouth_z:
         raise RuntimeError(f"A cap is too short for bounded interfaces: {spec.key}")
@@ -809,18 +893,56 @@ def build_a_cap(
         z_cone(MALE_LENS_ROOT_MM, retainer_diameter, thread_z1, contact - thread_z1, BS_X, BS_Y),
     ]
     body = fuse_cap_parts(parts, label="A cap")
-    mouth_depth = min(2.0, mouth_z - outer_end - 0.5)
+    receiver, receiver_info = a_input_receiver_cavity(outer_end)
+    transition_length = (
+        A_INPUT_RECEIVER_PILOT_DIAMETER_MM - aperture
+    ) / 2.0
+    if transition_length < 0.0:
+        raise RuntimeError(f"A aperture exceeds source receiver pilot: {spec.key}")
+    transition_z0 = receiver_info["max_mm"]
+    transition_z1 = transition_z0 + transition_length
+    if transition_z1 >= contact - 0.5:
+        raise RuntimeError(
+            f"A receiver/optical transition leaves no support land: {spec.key}"
+        )
     cutters = [
-        z_cylinder(aperture, outer_end - 0.1, contact - outer_end + 0.2, BS_X, BS_Y),
-        z_cone(25.0, aperture, outer_end - 0.05, mouth_depth, BS_X, BS_Y),
+        receiver,
+        z_cone(
+            A_INPUT_RECEIVER_PILOT_DIAMETER_MM,
+            aperture,
+            transition_z0,
+            transition_length,
+            BS_X,
+            BS_Y,
+        ),
+        z_cylinder(
+            aperture,
+            transition_z1 - 0.05,
+            contact - transition_z1 + 0.15,
+            BS_X,
+            BS_Y,
+        ),
     ]
     body = cut_cap_bores(body, cutters, label="A cap")
     return body, {
+        "optical_vertex_mm": optical_vertex,
         "outer_end_mm": outer_end,
         "contact_mm": contact,
         "axial_length_mm": contact - outer_end,
         "lens_thread_min_mm": thread_z0,
         "lens_thread_max_mm": thread_z1,
+        "input_receiver_min_mm": receiver_info["min_mm"],
+        "input_receiver_max_mm": receiver_info["max_mm"],
+        "input_receiver_depth_mm": receiver_info["depth_mm"],
+        "input_receiver_pilot_diameter_mm": receiver_info["pilot_diameter_mm"],
+        "input_receiver_groove_diameter_mm": receiver_info["groove_diameter_mm"],
+        "input_receiver_source_cavity_volume_mm3": receiver_info[
+            "source_cavity_volume_mm3"
+        ],
+        "input_receiver_transition_min_mm": transition_z0,
+        "input_receiver_transition_max_mm": transition_z1,
+        "input_receiver_transition_length_mm": transition_length,
+        "input_receiver_flange_seat_mm": outer_end,
         "camera_thread_min_mm": None,
         "camera_thread_max_mm": None,
         "axis_x_mm": BS_X,
@@ -833,11 +955,11 @@ def build_b_cap(
     spec: LensSpec,
     info: dict[str, float],
 ) -> tuple[cq.Workplane, dict[str, float]]:
-    seat = info["seat_mm"]
     contact = info["contact_mm"]
     thread_z0 = info["thread_min_mm"]
     thread_z1 = info["thread_max_mm"]
-    outer_end = seat + spec.focal_length_mm + OUTPUT_END_SEAT_EXTRA_MM
+    optical_vertex = info["optical_vertex_mm"]
+    outer_end = optical_vertex + spec.focal_length_mm + OUTPUT_END_SEAT_EXTRA_MM
     body_z0 = info["outer_end_mm"]
     camera_thread_z1 = outer_end - CAMERA_THREAD_END_LEAD_MM
     camera_thread_z0 = camera_thread_z1 - CAMERA_THREAD_LENGTH_MM
@@ -876,6 +998,7 @@ def build_b_cap(
         )
     body = cut_cap_bores(body, cutters, label="B cap")
     return body, {
+        "optical_vertex_mm": optical_vertex,
         "outer_end_mm": outer_end,
         "contact_mm": contact,
         "axial_length_mm": outer_end - contact,
@@ -893,11 +1016,11 @@ def build_c_cap(
     spec: LensSpec,
     info: dict[str, float],
 ) -> tuple[cq.Workplane, dict[str, float]]:
-    seat = info["seat_mm"]
     contact = info["contact_mm"]
     thread_x0 = info["thread_min_mm"]
     thread_x1 = info["thread_max_mm"]
-    outer_end = seat + spec.focal_length_mm + OUTPUT_END_SEAT_EXTRA_MM
+    optical_vertex = info["optical_vertex_mm"]
+    outer_end = optical_vertex + spec.focal_length_mm + OUTPUT_END_SEAT_EXTRA_MM
     body_x0 = info["outer_end_mm"]
     camera_thread_x1 = outer_end - CAMERA_THREAD_END_LEAD_MM
     camera_thread_x0 = camera_thread_x1 - CAMERA_THREAD_LENGTH_MM
@@ -943,6 +1066,7 @@ def build_c_cap(
         )
     body = cut_cap_bores(body, cutters, label="C cap")
     return body, {
+        "optical_vertex_mm": optical_vertex,
         "outer_end_mm": outer_end,
         "contact_mm": contact,
         "axial_length_mm": outer_end - contact,
@@ -966,15 +1090,88 @@ def build_caps(
     return {"A": a, "B": b, "C": c}, {"A": a_info, "B": b_info, "C": c_info}
 
 
-def place_lens(lens: cq.Workplane, seat: float, arm: str, inward_edge: float) -> cq.Workplane:
-    shifted = lens.translate((0.0, 0.0, -inward_edge))
+def place_lens(
+    lens: cq.Workplane,
+    optical_vertex: float,
+    arm: str,
+) -> cq.Workplane:
+    """Place local lens z=0, the inward optical-axis vertex, exactly at f."""
+
     if arm == "A":
-        return shifted.rotate((0, 0, 0), (0, 1, 0), 180).translate((BS_X, BS_Y, seat))
+        return lens.rotate((0, 0, 0), (0, 1, 0), 180).translate(
+            (BS_X, BS_Y, optical_vertex)
+        )
     if arm == "B":
-        return shifted.translate((B_AXIS_X, BS_Y, seat))
+        return lens.translate((B_AXIS_X, BS_Y, optical_vertex))
     if arm == "C":
-        return shifted.rotate((0, 0, 0), (0, 1, 0), 90).translate((seat, BS_Y, BS_Z))
+        return lens.rotate((0, 0, 0), (0, 1, 0), 90).translate(
+            (optical_vertex, BS_Y, BS_Z)
+        )
     raise ValueError(arm)
+
+
+def measure_lens_axis_interval(
+    placed_lens: cq.Workplane,
+    spec: LensSpec,
+    optical_vertex: float,
+    arm: str,
+) -> dict[str, float | str]:
+    """Measure the placed B-rep on its optical axis, not only its transform."""
+
+    margin = 1.0
+    if arm == "A":
+        probe = z_cylinder(
+            0.2,
+            optical_vertex - spec.center_thickness_mm - margin,
+            spec.center_thickness_mm + 2.0 * margin,
+            BS_X,
+            BS_Y,
+        )
+        box = placed_lens.val().intersect(probe.val()).BoundingBox()
+        measured_inward = box.zmax
+        measured_outward = box.zmin
+        expected_outward = optical_vertex - spec.center_thickness_mm
+        axis = "Z"
+    elif arm == "B":
+        probe = z_cylinder(
+            0.2,
+            optical_vertex - margin,
+            spec.center_thickness_mm + 2.0 * margin,
+            B_AXIS_X,
+            BS_Y,
+        )
+        box = placed_lens.val().intersect(probe.val()).BoundingBox()
+        measured_inward = box.zmin
+        measured_outward = box.zmax
+        expected_outward = optical_vertex + spec.center_thickness_mm
+        axis = "Z"
+    elif arm == "C":
+        probe = x_cylinder(
+            0.2,
+            optical_vertex - margin,
+            spec.center_thickness_mm + 2.0 * margin,
+            BS_Y,
+            BS_Z,
+        )
+        box = placed_lens.val().intersect(probe.val()).BoundingBox()
+        measured_inward = box.xmin
+        measured_outward = box.xmax
+        expected_outward = optical_vertex + spec.center_thickness_mm
+        axis = "X"
+    else:
+        raise ValueError(arm)
+    return {
+        "axis": axis,
+        "expected_inward_vertex_mm": optical_vertex,
+        "measured_inward_vertex_mm": round(measured_inward, 9),
+        "inward_vertex_error_mm": round(abs(measured_inward - optical_vertex), 9),
+        "expected_outward_vertex_mm": expected_outward,
+        "measured_outward_vertex_mm": round(measured_outward, 9),
+        "outward_vertex_error_mm": round(
+            abs(measured_outward - expected_outward),
+            9,
+        ),
+    }
 
 
 def make_bs_proxy() -> cq.Workplane:
@@ -1423,6 +1620,57 @@ def build_thread_construction_audit() -> dict[str, Any]:
     }
 
 
+def build_a_input_receiver_audit(
+    a_cap: cq.Workplane,
+    cap_info: dict[str, float],
+) -> dict[str, Any]:
+    expected, receiver_info = a_input_receiver_cavity(
+        cap_info["input_receiver_flange_seat_mm"]
+    )
+    domain = z_cylinder(
+        A_INPUT_RECEIVER_DOMAIN_DIAMETER_MM,
+        receiver_info["min_mm"],
+        receiver_info["depth_mm"],
+        BS_X,
+        BS_Y,
+    )
+    actual = largest_solid(domain.cut(a_cap).clean())
+    missing_void = expected.val().cut(actual.val()).Volume()
+    excess_void = actual.val().cut(expected.val()).Volume()
+    smooth_pilot = z_cylinder(
+        A_INPUT_RECEIVER_PILOT_DIAMETER_MM,
+        receiver_info["min_mm"],
+        receiver_info["depth_mm"],
+        BS_X,
+        BS_Y,
+    )
+    source_thread_relief = expected.val().cut(smooth_pilot.val()).Volume()
+    return {
+        "source_path": str(SOURCE_A_INPUT_RECEIVER),
+        "flange_seat_mm": receiver_info["min_mm"],
+        "receiver_depth_mm": receiver_info["depth_mm"],
+        "pilot_diameter_mm": receiver_info["pilot_diameter_mm"],
+        "groove_envelope_diameter_mm": receiver_info["groove_diameter_mm"],
+        "source_cavity_volume_mm3": round(expected.val().Volume(), 9),
+        "actual_cavity_volume_mm3": round(actual.val().Volume(), 9),
+        "missing_source_void_mm3": round(missing_void, 9),
+        "excess_void_mm3": round(excess_void, 9),
+        "source_thread_relief_outside_smooth_pilot_mm3": round(
+            source_thread_relief,
+            9,
+        ),
+        "minimum_radial_wall_inside_lens_thread_root_mm": round(
+            (MALE_LENS_ROOT_MM - A_INPUT_RECEIVER_GROOVE_DIAMETER_MM) / 2.0,
+            6,
+        ),
+        "receiver_is_exact_source_brep": (
+            missing_void <= 1e-5 and excess_void <= 1e-5
+        ),
+        "thread_relief_is_present": source_thread_relief > 1.0,
+        "insertion_depth_is_internal_to_4f_arm": True,
+    }
+
+
 def build_dimensional_audit(
     spec: LensSpec,
     lens_info: dict[str, Any],
@@ -1437,10 +1685,34 @@ def build_dimensional_audit(
         math.atan2(cap_transition_radial, receiver_transition)
     )
     inward_contact = float(lens_info["mechanical_inward_contact_z_mm"])
-    output_vertex_offset = spec.center_thickness_mm - inward_contact
+    outward_contact = float(lens_info["mechanical_outward_contact_z_mm"])
+    lens_envelope = outward_contact - inward_contact
+    if not math.isclose(
+        lens_envelope,
+        float(lens_info["holder_axial_envelope_mm"]),
+        abs_tol=1e-6,
+    ):
+        raise RuntimeError(f"lens support envelope mismatch: {spec.key}")
     a_seat_to_end = arm_info["A"]["seat_mm"] - cap_info["A"]["outer_end_mm"]
     b_seat_to_end = cap_info["B"]["outer_end_mm"] - arm_info["B"]["seat_mm"]
     c_seat_to_end = cap_info["C"]["outer_end_mm"] - arm_info["C"]["seat_mm"]
+    cavity_fit = {}
+    for arm in ("A", "B", "C"):
+        available = float(arm_info[arm]["available_lens_cavity_mm"])
+        cavity_fit[arm] = {
+            "inward_optical_vertex_mm": arm_info[arm]["optical_vertex_mm"],
+            "holder_annular_support_mm": arm_info[arm]["seat_mm"],
+            "cap_annular_support_mm": cap_info[arm]["contact_mm"],
+            "mechanical_inward_support_offset_mm": inward_contact,
+            "mechanical_outward_support_offset_mm": outward_contact,
+            "lens_required_axial_envelope_mm": lens_envelope,
+            "fully_inserted_available_cavity_mm": available,
+            "fully_inserted_axial_clearance_mm": round(
+                available - lens_envelope,
+                6,
+            ),
+            "full_thread_engagement_mm": THREAD_LENGTH_MM,
+        }
 
     return {
         "lens_fit": {
@@ -1462,7 +1734,11 @@ def build_dimensional_audit(
                 6,
             ),
             "retainer_tightening_travel_mm": AXIAL_LENS_CLEARANCE_MM,
+            "mechanical_inward_support_offset_mm": inward_contact,
+            "mechanical_outward_support_offset_mm": outward_contact,
+            "mechanical_support_envelope_mm": round(lens_envelope, 6),
         },
+        "fully_inserted_lens_cavities": cavity_fit,
         "receiver_chamfers": {
             "lens_pocket_to_female_pivot": {
                 "from_diameter_mm": pocket,
@@ -1539,21 +1815,62 @@ def build_dimensional_audit(
             "standard_1in_32_major_mm": 25.4,
             "standard_1in_32_pitch_mm": 0.79375,
         },
+        "a_input_receiver": {
+            "classification": (
+                "exact source OpenHI internal female receiver B-rep"
+            ),
+            "flange_seat_mm": cap_info["A"]["input_receiver_flange_seat_mm"],
+            "receiver_min_mm": cap_info["A"]["input_receiver_min_mm"],
+            "receiver_max_mm": cap_info["A"]["input_receiver_max_mm"],
+            "receiver_depth_mm": cap_info["A"]["input_receiver_depth_mm"],
+            "pilot_diameter_mm": cap_info["A"][
+                "input_receiver_pilot_diameter_mm"
+            ],
+            "groove_diameter_mm": cap_info["A"][
+                "input_receiver_groove_diameter_mm"
+            ],
+            "bore_transition_min_mm": cap_info["A"][
+                "input_receiver_transition_min_mm"
+            ],
+            "bore_transition_max_mm": cap_info["A"][
+                "input_receiver_transition_max_mm"
+            ],
+            "bore_transition_length_mm": cap_info["A"][
+                "input_receiver_transition_length_mm"
+            ],
+            "bore_transition_angle_deg": (
+                A_INPUT_RECEIVER_BORE_TRANSITION_ANGLE_DEG
+            ),
+            "insertion_depth_is_internal_to_optical_arm": True,
+        },
         "optical_distance_chain": {
-            "beam_splitter_to_nominal_seat_mm": spec.focal_length_mm,
             "beam_splitter_to_inward_axis_vertex_mm": round(
-                spec.focal_length_mm - inward_contact,
+                spec.focal_length_mm,
                 6,
             ),
             "beam_splitter_to_outward_axis_vertex_mm": round(
-                spec.focal_length_mm + output_vertex_offset,
+                spec.focal_length_mm + spec.center_thickness_mm,
                 6,
             ),
-            "a_to_b_nominal_seat_spacing_2f_mm": round(
+            "beam_splitter_to_annular_support_plane_mm": round(
+                spec.focal_length_mm + inward_contact,
+                6,
+            ),
+            "a_to_b_inward_vertex_spacing_2f_mm": round(
+                arm_info["B"]["optical_vertex_mm"]
+                - arm_info["A"]["optical_vertex_mm"],
+                6,
+            ),
+            "a_to_c_inward_vertex_path_2f_mm": round(
+                (BS_Z - arm_info["A"]["optical_vertex_mm"])
+                + (arm_info["C"]["optical_vertex_mm"] - BS_X),
+                6,
+            ),
+            "a_to_b_annular_support_spacing_mm": round(
                 arm_info["B"]["seat_mm"] - arm_info["A"]["seat_mm"],
                 6,
             ),
-            "a_to_c_nominal_seat_spacing_2f_mm": round(
+            "a_to_c_annular_support_path_mm": round(
                 (BS_Z - arm_info["A"]["seat_mm"])
                 + (arm_info["C"]["seat_mm"] - BS_X),
                 6,
@@ -1584,9 +1901,12 @@ def build_dimensional_audit(
                 6,
             ),
             "reference_plane_note": (
-                "The nominal f datum is the inward annular lens seat, matching the "
-                "source OpenHI convention; it is not a certified thick-lens "
-                "principal plane."
+                "The inward optical-axis surface vertex is placed exactly one "
+                "catalog EFL from the beam splitter. The annular holder seat is "
+                "offset by the lens sag at its support radius, and the finite lens "
+                "thickness is contained inside the fully inserted holder/cap "
+                "cavity rather than added again to the 2f/4f arm distance. This "
+                "surface vertex is not a certified thick-lens principal plane."
             ),
         },
     }
@@ -1633,6 +1953,55 @@ def export_shape_set(
     return outputs
 
 
+def export_a_axis_inspection_sections(
+    a_cap: cq.Workplane,
+    a_holder: cq.Workplane,
+    artifact_dir: Path,
+) -> dict[str, dict[str, Any]]:
+    """Export non-printing half sections that expose the A receiver and lens seat."""
+
+    inspection_dir = artifact_dir / "inspection"
+    inspection_dir.mkdir(parents=True, exist_ok=True)
+    outputs: dict[str, dict[str, Any]] = {}
+    for name, shape in {"A": a_cap, "A_C_BS": a_holder}.items():
+        box = shape.val().BoundingBox()
+        clip = (
+            cq.Workplane("XY")
+            .box(
+                box.xlen + 4.0,
+                BS_Y - box.ymin + 0.05,
+                box.zlen + 4.0,
+                centered=(True, False, False),
+            )
+            .translate(
+                (
+                    (box.xmin + box.xmax) / 2.0,
+                    box.ymin - 0.05,
+                    box.zmin - 2.0,
+                )
+            )
+        )
+        section = largest_solid(shape.intersect(clip).clean())
+        step = inspection_dir / f"openhi_{name}_half_section.step"
+        stl = inspection_dir / f"openhi_{name}_half_section.stl"
+        exporters.export(section, str(step))
+        exporters.export(
+            section,
+            str(stl),
+            tolerance=0.025,
+            angularTolerance=0.08,
+        )
+        sanitize_stl(stl)
+        outputs[name] = {
+            "step": str(step.relative_to(ROOT)),
+            "stl": str(stl.relative_to(ROOT)),
+            "step_validation": step_summary(step),
+            "mesh_validation": mesh_summary(stl),
+            "purpose": "visual inspection only; not a printable part",
+        }
+    return outputs
+
+
 def write_readme(
     design_dir: Path,
     spec: LensSpec,
@@ -1656,13 +2025,15 @@ def write_readme(
 - `artifacts/manifest.json`: dimensions, source identity, assembly transforms, focal datums, and validation.
 - `artifacts/renders/openhi_4f_spatial_exploded.png`: spatial view with all mechanical parts, lenses, and beam splitter separated along their mating directions.
 - `artifacts/renders/openhi_4f_print_parts_layout.png`: exact orientations used by the separate STL/3MF print files.
+- `artifacts/renders/openhi_4f_a_input_receiver_section.png`: A-only half section proving the internal source receiver and lifted bore transition.
+- `artifacts/renders/openhi_4f_a_lens_cavity_section.png`: A/A+C+BS half section with the installed lens B-rep at its checked optical datum.
 - `runs/{PRINT_RELEASE_RUN_NAME}/`: checked one-object print files and the matching Nutstore handoff.
 
 ## Optical Layout
 
-All three arms use the same `{spec.label}` lens. The beam-splitter center is the fixed datum `(255, 210, 600) mm`. The CAD places the A, B, and C holder contact planes one catalog EFL from that datum: `{spec.focal_length_mm:.5f} mm`. Therefore A-B and A-C nominal mechanical-seat separations are `2f = {2.0 * spec.focal_length_mm:.5f} mm` under the source OpenHI thin-lens convention.{bfl_note}
+All three arms use the same `{spec.label}` lens. The beam-splitter center is the fixed datum `(255, 210, 600) mm`. The CAD places each inward optical-axis surface vertex exactly one catalog EFL from that datum: `{spec.focal_length_mm:.5f} mm`. Therefore the inward A-B and A-C surface-vertex paths are `2f = {2.0 * spec.focal_length_mm:.5f} mm` under the source OpenHI thin-lens convention.{bfl_note}
 
-Here "nominal lens plane" means the inward annular mechanical seat used by the original OpenHI assembly. The inward optical-axis vertex is `{dimensional_audit['optical_distance_chain']['beam_splitter_to_inward_axis_vertex_mm']:.5f} mm` from the beam splitter in this modeled geometry. Depending on the inward surface, that vertex and the annular seat may differ. Neither datum should be called a certified thick-lens principal plane without the complete vendor prescription.
+The optical vertex and the annular support seat are separate datums. At the support radius, this lens's inward surface is `{lens_info['mechanical_inward_contact_z_mm']:.6f} mm` from its axis vertex. Each holder seat is offset by that sag, while the matching A/B/C cap leaves the full `{lens_info['holder_axial_envelope_mm']:.6f} mm` support-to-support lens envelope plus `{AXIAL_LENS_CLEARANCE_MM:.2f} mm` tightening travel. Thus a fully inserted threaded pair captures the real finite lens without adding half or all of the lens thickness again to the `2f` or `4f` optical distance.
 
 The complete physical A-to-B and A-to-C outer-end paths are both `{complete_end_path:.5f} mm = 4f + {END_TO_END_SEAT_ALLOWANCE_MM:.1f} mm`. The `4.6 mm` allowance is measured from the accepted ST018 assembly, not guessed: the A outer end contributes `f + {A_END_SEAT_EXTRA_MM:.1f} mm` and each output end contributes `f + {OUTPUT_END_SEAT_EXTRA_MM:.1f} mm`. Thread length overlaps its receiver and is not added again to this path.
 
@@ -1687,6 +2058,8 @@ For the plano-convex variants, all plane faces point inward toward the beam spli
 The central interface map is deliberately not uniform: the preserved A+C+BS side/C female remains `29.6/30.4 mm`; its lower/A female is `29.8/30.6 mm`; both regenerated B/C lens-side females are `29.8/30.6 mm`; and the Lens C holder beam-splitter-side male remains the unchanged source `29.8/30.6 mm` root/crest. The central C pair therefore has `0.2 mm` nominal diametric interference. It is a preserved tight printed source fit, not a zero-clearance CAD pair. The three newly regenerated lens-retainer pairs are the clearance fits.
 
 The output thread also preserves the source OpenHI printed profile (`24.4 mm` root, `25.2 mm` crest, `0.8 mm` pitch). It is intentionally not relabeled as exact standard `1\"-32 UN` C-mount (`25.4 mm`, `0.79375 mm` pitch).
+
+The A input end now preserves the exact internal female receiver cavity from the original `OpenHI_STEP/A.step`: `{A_INPUT_RECEIVER_DEPTH_MM:.3f} mm` insertion depth, `{A_INPUT_RECEIVER_PILOT_DIAMETER_MM:.1f} mm` pilot, and `{A_INPUT_RECEIVER_GROOVE_DIAMETER_MM:.1f} mm` groove envelope. Its mating flange seats at the A outer face. The entire receiver depth remains inside the A arm envelope, followed by a 45-degree transition to the lens clear aperture; it is not a second seat-height term in the focal chain.
 
 The holder side supplies the flat locating shoulder. A/B/C retain from the opposite side. The 45-degree diameter transition is on the A/B/C-facing receiver side, preserving the original OpenHI design philosophy.
 
@@ -1726,7 +2099,7 @@ def sync_outputs(design_dir: Path, spec: LensSpec) -> Path:
     for source in direct_files:
         if source.exists():
             shutil.copy2(source, target / source.name)
-    for subdir in ("parts", "renders"):
+    for subdir in ("parts", "inspection", "renders"):
         source_dir = artifact_dir / subdir
         if not source_dir.exists():
             continue
@@ -1753,9 +2126,10 @@ def build_system(spec_key: str, design_dir: Path, *, sync: bool = True) -> dict[
         - float(lens_info["mechanical_inward_contact_z_mm"]),
     )
     lens_info["holder_axial_envelope_mm"] = round(edge, 6)
-    ac_bs, a_info = build_a_c_bs(spec, edge)
-    b_holder, b_info = build_b_holder(spec, edge)
-    c_holder, c_info = build_c_holder(spec, edge)
+    inward_contact = float(lens_info["mechanical_inward_contact_z_mm"])
+    ac_bs, a_info = build_a_c_bs(spec, edge, inward_contact)
+    b_holder, b_info = build_b_holder(spec, edge, inward_contact)
+    c_holder, c_info = build_c_holder(spec, edge, inward_contact)
     arm_info = {"A": a_info, "B": b_info, "C": c_info}
     caps, cap_info = build_caps(spec, arm_info)
     parts = {
@@ -1767,6 +2141,11 @@ def build_system(spec_key: str, design_dir: Path, *, sync: bool = True) -> dict[
         "Lens_C_holder": c_holder,
     }
     part_outputs = export_shape_set(parts, artifact_dir)
+    inspection_outputs = export_a_axis_inspection_sections(
+        caps["A"],
+        ac_bs,
+        artifact_dir,
+    )
 
     lens_step = artifact_dir / f"{spec.key}_lens.step"
     lens_stl = artifact_dir / f"{spec.key}_lens.stl"
@@ -1783,13 +2162,32 @@ def build_system(spec_key: str, design_dir: Path, *, sync: bool = True) -> dict[
         lens_three_mf_validation["bounds_mm"],
     )
 
-    lens_contact = lens_info["mechanical_inward_contact_z_mm"]
-    lens_a = place_lens(lens, a_info["seat_mm"], "A", lens_contact)
-    lens_b = place_lens(lens, b_info["seat_mm"], "B", lens_contact)
-    lens_c = place_lens(lens, c_info["seat_mm"], "C", lens_contact)
+    lens_a = place_lens(lens, a_info["optical_vertex_mm"], "A")
+    lens_b = place_lens(lens, b_info["optical_vertex_mm"], "B")
+    lens_c = place_lens(lens, c_info["optical_vertex_mm"], "C")
     lens_a_box = lens_a.val().BoundingBox()
     lens_b_box = lens_b.val().BoundingBox()
     lens_c_box = lens_c.val().BoundingBox()
+    lens_axis_brep_audit = {
+        "A": measure_lens_axis_interval(
+            lens_a,
+            spec,
+            a_info["optical_vertex_mm"],
+            "A",
+        ),
+        "B": measure_lens_axis_interval(
+            lens_b,
+            spec,
+            b_info["optical_vertex_mm"],
+            "B",
+        ),
+        "C": measure_lens_axis_interval(
+            lens_c,
+            spec,
+            c_info["optical_vertex_mm"],
+            "C",
+        ),
+    }
     assembly_parts = {
         "A": caps["A"],
         "A_C_BS": ac_bs,
@@ -1856,10 +2254,19 @@ def build_system(spec_key: str, design_dir: Path, *, sync: bool = True) -> dict[
         + protected_generated_bs.cut(protected_source_bs).Volume()
     )
     focal_datum_error_mm = {
-        "A_to_B_2f": abs((b_info["seat_mm"] - a_info["seat_mm"]) - 2.0 * spec.focal_length_mm),
-        "BS_to_A_f": abs((BS_Z - a_info["seat_mm"]) - spec.focal_length_mm),
-        "BS_to_B_f": abs((b_info["seat_mm"] - BS_Z) - spec.focal_length_mm),
-        "BS_to_C_f": abs((c_info["seat_mm"] - BS_X) - spec.focal_length_mm),
+        "A_to_B_2f": abs(
+            (b_info["optical_vertex_mm"] - a_info["optical_vertex_mm"])
+            - 2.0 * spec.focal_length_mm
+        ),
+        "BS_to_A_f": abs(
+            (BS_Z - a_info["optical_vertex_mm"]) - spec.focal_length_mm
+        ),
+        "BS_to_B_f": abs(
+            (b_info["optical_vertex_mm"] - BS_Z) - spec.focal_length_mm
+        ),
+        "BS_to_C_f": abs(
+            (c_info["optical_vertex_mm"] - BS_X) - spec.focal_length_mm
+        ),
     }
     expected_end_path_mm = 4.0 * spec.focal_length_mm + END_TO_END_SEAT_ALLOWANCE_MM
     end_path_mm = {
@@ -1911,6 +2318,7 @@ def build_system(spec_key: str, design_dir: Path, *, sync: bool = True) -> dict[
     optical_path_audit = build_optical_path_audit(parts, cap_info)
     thread_construction_audit = build_thread_construction_audit()
     dimensional_audit = build_dimensional_audit(spec, lens_info, arm_info, cap_info)
+    a_input_receiver_audit = build_a_input_receiver_audit(caps["A"], cap_info["A"])
     for name, shape in assembly_parts.items():
         export_shape = (
             fuse_source_solids(shape.val(), label=f"{name} assembly mesh")
@@ -1930,9 +2338,12 @@ def build_system(spec_key: str, design_dir: Path, *, sync: bool = True) -> dict[
     optical = {
         "beam_splitter_center_mm": [BS_X, BS_Y, BS_Z],
         "catalog_efl_mm": spec.focal_length_mm,
-        "a_holder_contact_plane_z_mm": a_info["seat_mm"],
-        "b_holder_contact_plane_z_mm": b_info["seat_mm"],
-        "c_holder_contact_plane_x_assembly_mm": c_info["seat_mm"],
+        "a_inward_optical_vertex_z_mm": a_info["optical_vertex_mm"],
+        "b_inward_optical_vertex_z_mm": b_info["optical_vertex_mm"],
+        "c_inward_optical_vertex_x_mm": c_info["optical_vertex_mm"],
+        "a_holder_annular_support_plane_z_mm": a_info["seat_mm"],
+        "b_holder_annular_support_plane_z_mm": b_info["seat_mm"],
+        "c_holder_annular_support_plane_x_mm": c_info["seat_mm"],
         "a_to_b_nominal_2f_mm": 2.0 * spec.focal_length_mm,
         "a_to_c_nominal_2f_mm": 2.0 * spec.focal_length_mm,
         "plano_faces_toward_beam_splitter": spec.kind == "plano_convex",
@@ -1943,8 +2354,10 @@ def build_system(spec_key: str, design_dir: Path, *, sync: bool = True) -> dict[
             else None
         ),
         "datum_policy": (
-            "Catalog EFL is used as the source-compatible holder contact distance. "
-            "Manufacturer BFL is retained as a physical tuning datum for thick plano-convex lenses."
+            "Catalog EFL is applied to the inward optical-axis surface vertex. "
+            "The annular mechanical support plane is derived separately from "
+            "the actual lens sag at the support radius. Manufacturer BFL is "
+            "retained as a physical tuning datum for thick plano-convex lenses."
         ),
         "lens_to_mechanical_interference_mm3": {
             key: round(value, 9) for key, value in lens_interference_mm3.items()
@@ -1982,6 +2395,7 @@ def build_system(spec_key: str, design_dir: Path, *, sync: bool = True) -> dict[
         }
         if spec.kind == "plano_convex"
         else None,
+        "lens_axis_brep_audit": lens_axis_brep_audit,
         "source_st018_focal_length_mm": SOURCE_FOCAL_LENGTH_MM,
         "end_to_end_seat_allowance_mm": END_TO_END_SEAT_ALLOWANCE_MM,
         "expected_end_path_4f_plus_seat_mm": round(expected_end_path_mm, 9),
@@ -1995,6 +2409,12 @@ def build_system(spec_key: str, design_dir: Path, *, sync: bool = True) -> dict[
         "all_part_steps_are_single_solids": all(
             row["step_validation"]["solid_count"] == 1
             for row in part_outputs.values()
+        ),
+        "a_axis_inspection_sections_are_valid": all(
+            row["step_validation"]["occt_valid"]
+            and row["step_validation"]["solid_count"] == 1
+            and row["mesh_validation"]["watertight"]
+            for row in inspection_outputs.values()
         ),
         "all_part_meshes_watertight": all(
             row["mesh_validation"]["watertight"]
@@ -2034,6 +2454,11 @@ def build_system(spec_key: str, design_dir: Path, *, sync: bool = True) -> dict[
         ),
         "assembly_step_valid": step_summary(assembly_step)["occt_valid"],
         "three_identical_lens_copies": True,
+        "placed_lens_brep_vertices_match_focal_datums": all(
+            audit["inward_vertex_error_mm"] <= 1e-7
+            and audit["outward_vertex_error_mm"] <= 1e-7
+            for audit in lens_axis_brep_audit.values()
+        ),
         "nominal_4f_spacing_matches_catalog_efl": max(focal_datum_error_mm.values()) <= 1e-8,
         "source_beam_splitter_geometry_preserved": protected_bs_difference_mm3 <= 1e-6,
         "lens_to_mechanical_interference_is_zero": all(
@@ -2108,6 +2533,28 @@ def build_system(spec_key: str, design_dir: Path, *, sync: bool = True) -> dict[
             ]
             <= 0.01
         ),
+        "a_input_receiver_exact_source_brep_is_preserved": bool(
+            a_input_receiver_audit["receiver_is_exact_source_brep"]
+        ),
+        "a_input_receiver_thread_relief_is_present": bool(
+            a_input_receiver_audit["thread_relief_is_present"]
+        ),
+        "a_input_receiver_has_structural_wall": (
+            a_input_receiver_audit[
+                "minimum_radial_wall_inside_lens_thread_root_mm"
+            ]
+            >= 1.5
+        ),
+        "all_fully_inserted_lens_cavities_have_0p2mm_axial_clearance": all(
+            math.isclose(
+                cavity["fully_inserted_axial_clearance_mm"],
+                AXIAL_LENS_CLEARANCE_MM,
+                abs_tol=1e-6,
+            )
+            for cavity in dimensional_audit[
+                "fully_inserted_lens_cavities"
+            ].values()
+        ),
     }
     manifest = {
         "design": design_dir.name,
@@ -2115,10 +2562,17 @@ def build_system(spec_key: str, design_dir: Path, *, sync: bool = True) -> dict[
         "lens_model": lens_info,
         "optical_layout": optical,
         "final_dimensional_audit": dimensional_audit,
+        "a_input_receiver_audit": a_input_receiver_audit,
         "thread_construction_audit": thread_construction_audit,
         "arms": {"A": a_info, "B": b_info, "C": c_info},
         "caps": cap_info,
         "thread_interfaces": {
+            "a_input_internal_female": {
+                "pilot_mm": A_INPUT_RECEIVER_PILOT_DIAMETER_MM,
+                "groove_mm": A_INPUT_RECEIVER_GROOVE_DIAMETER_MM,
+                "depth_mm": A_INPUT_RECEIVER_DEPTH_MM,
+                "status": "exact source B-rep preserved",
+            },
             "a_c_bs_lower_a_female": {
                 "pivot_mm": FEMALE_PIVOT_MM,
                 "groove_mm": FEMALE_GROOVE_MM,
@@ -2158,13 +2612,23 @@ def build_system(spec_key: str, design_dir: Path, *, sync: bool = True) -> dict[
         },
         "source_files": {
             path.name: {"path": str(path), "sha256": sha256(path)}
-            for path in (SOURCE_A, SOURCE_B, SOURCE_C, SOURCE_AC_BS, SOURCE_B_HOLDER, SOURCE_C_HOLDER, SOURCE_SHAPR)
+            for path in (
+                SOURCE_A,
+                SOURCE_A_INPUT_RECEIVER,
+                SOURCE_B,
+                SOURCE_C,
+                SOURCE_AC_BS,
+                SOURCE_B_HOLDER,
+                SOURCE_C_HOLDER,
+                SOURCE_SHAPR,
+            )
             if path.exists()
         },
         "lens_source_evidence": source_evidence(
             GLA_SOURCE_ROOT if spec.key.startswith("gla11") else JH_SOURCE_ROOT
         ),
         "parts": part_outputs,
+        "inspection_sections": inspection_outputs,
         "lens_outputs": {
             "step": str(lens_step.relative_to(ROOT)),
             "stl": str(lens_stl.relative_to(ROOT)),

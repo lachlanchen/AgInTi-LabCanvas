@@ -8,13 +8,15 @@
 - `artifacts/manifest.json`: dimensions, source identity, assembly transforms, focal datums, and validation.
 - `artifacts/renders/openhi_4f_spatial_exploded.png`: spatial view with all mechanical parts, lenses, and beam splitter separated along their mating directions.
 - `artifacts/renders/openhi_4f_print_parts_layout.png`: exact orientations used by the separate STL/3MF print files.
-- `runs/run-3-c-path-clear-print-release-20260830T053241Z/`: checked one-object print files and the matching Nutstore handoff.
+- `artifacts/renders/openhi_4f_a_input_receiver_section.png`: A-only half section proving the internal source receiver and lifted bore transition.
+- `artifacts/renders/openhi_4f_a_lens_cavity_section.png`: A/A+C+BS half section with the installed lens B-rep at its checked optical datum.
+- `runs/run-4-a-input-receiver-optical-vertex-lens-clearance-print-ready-20260901T040031Z/`: checked one-object print files and the matching Nutstore handoff.
 
 ## Optical Layout
 
-All three arms use the same `GLA11-025-025-A plano-convex lens` lens. The beam-splitter center is the fixed datum `(255, 210, 600) mm`. The CAD places the A, B, and C holder contact planes one catalog EFL from that datum: `25.40000 mm`. Therefore A-B and A-C nominal mechanical-seat separations are `2f = 50.80000 mm` under the source OpenHI thin-lens convention. Manufacturer BFL: `17.680 mm`.
+All three arms use the same `GLA11-025-025-A plano-convex lens` lens. The beam-splitter center is the fixed datum `(255, 210, 600) mm`. The CAD places each inward optical-axis surface vertex exactly one catalog EFL from that datum: `25.40000 mm`. Therefore the inward A-B and A-C surface-vertex paths are `2f = 50.80000 mm` under the source OpenHI thin-lens convention. Manufacturer BFL: `17.680 mm`.
 
-Here "nominal lens plane" means the inward annular mechanical seat used by the original OpenHI assembly. The inward optical-axis vertex is `25.40000 mm` from the beam splitter in this modeled geometry. Depending on the inward surface, that vertex and the annular seat may differ. Neither datum should be called a certified thick-lens principal plane without the complete vendor prescription.
+The optical vertex and the annular support seat are separate datums. At the support radius, this lens's inward surface is `0.000000 mm` from its axis vertex. Each holder seat is offset by that sag, while the matching A/B/C cap leaves the full `4.366642 mm` support-to-support lens envelope plus `0.20 mm` tightening travel. Thus a fully inserted threaded pair captures the real finite lens without adding half or all of the lens thickness again to the `2f` or `4f` optical distance.
 
 The complete physical A-to-B and A-to-C outer-end paths are both `106.20000 mm = 4f + 4.6 mm`. The `4.6 mm` allowance is measured from the accepted ST018 assembly, not guessed: the A outer end contributes `f + 0.2 mm` and each output end contributes `f + 4.4 mm`. Thread length overlaps its receiver and is not added again to this path.
 
@@ -39,6 +41,8 @@ For the plano-convex variants, all plane faces point inward toward the beam spli
 The central interface map is deliberately not uniform: the preserved A+C+BS side/C female remains `29.6/30.4 mm`; its lower/A female is `29.8/30.6 mm`; both regenerated B/C lens-side females are `29.8/30.6 mm`; and the Lens C holder beam-splitter-side male remains the unchanged source `29.8/30.6 mm` root/crest. The central C pair therefore has `0.2 mm` nominal diametric interference. It is a preserved tight printed source fit, not a zero-clearance CAD pair. The three newly regenerated lens-retainer pairs are the clearance fits.
 
 The output thread also preserves the source OpenHI printed profile (`24.4 mm` root, `25.2 mm` crest, `0.8 mm` pitch). It is intentionally not relabeled as exact standard `1"-32 UN` C-mount (`25.4 mm`, `0.79375 mm` pitch).
+
+The A input end now preserves the exact internal female receiver cavity from the original `OpenHI_STEP/A.step`: `12.474 mm` insertion depth, `25.0 mm` pilot, and `25.8 mm` groove envelope. Its mating flange seats at the A outer face. The entire receiver depth remains inside the A arm envelope, followed by a 45-degree transition to the lens clear aperture; it is not a second seat-height term in the focal chain.
 
 The holder side supplies the flat locating shoulder. A/B/C retain from the opposite side. The 45-degree diameter transition is on the A/B/C-facing receiver side, preserving the original OpenHI design philosophy.
 

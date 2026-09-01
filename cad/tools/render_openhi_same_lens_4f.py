@@ -330,6 +330,76 @@ def main():
     scene.render.filepath = str(render_dir / "openhi_4f_print_parts_layout.png")
     bpy.ops.render.render(write_still=True)
 
+    # Inspection-only half sections expose the exact A input receiver, its
+    # lifted 45-degree transition, and the fully inserted A lens cavity. These
+    # are deliberately separate from the printable part files.
+    bpy.ops.object.select_all(action="SELECT")
+    bpy.ops.object.delete(use_global=False)
+    inspection_objects = []
+    for name in ("A", "A_C_BS"):
+        path = artifact_dir / "inspection" / f"openhi_{name}_half_section.stl"
+        bpy.ops.wm.stl_import(filepath=str(path))
+        obj = bpy.context.object
+        obj.name = f"INSPECTION_{name}"
+        obj.data.materials.append(body_mats[name])
+        inspection_objects.append(obj)
+
+    bpy.ops.object.camera_add()
+    camera = bpy.context.object
+    camera.data.type = "ORTHO"
+    scene.camera = camera
+    scene.render.engine = "BLENDER_WORKBENCH"
+    scene.display.shading.light = "STUDIO"
+    scene.display.shading.color_type = "MATERIAL"
+    scene.display.shading.show_shadows = True
+    scene.display.shading.show_cavity = True
+    scene.display.shading.cavity_type = "BOTH"
+    scene.display.shading.background_type = "VIEWPORT"
+    scene.display.shading.background_color = (0.055, 0.07, 0.09)
+
+    # First isolate A so the internal receiver thread cannot be hidden by the
+    # central body.
+    inspection_objects[1].hide_render = True
+    lower, upper = object_bounds([inspection_objects[0]])
+    center = (lower + upper) / 2.0
+    camera.location = center + Vector((0.12, 1.0, 0.08)).normalized() * 260.0
+    look_at(camera, center)
+    fit_orthographic_camera(
+        camera,
+        [inspection_objects[0]],
+        scene.render.resolution_x / scene.render.resolution_y,
+        margin=1.55,
+    )
+    scene.render.filepath = str(
+        render_dir / "openhi_4f_a_input_receiver_section.png"
+    )
+    bpy.ops.render.render(write_still=True)
+
+    # Then show the mating A holder section and the real lens B-rep together.
+    inspection_objects[1].hide_render = False
+    lens_path = artifact_dir / "assembly_components" / "lens_A.stl"
+    bpy.ops.wm.stl_import(filepath=str(lens_path))
+    lens_obj = bpy.context.object
+    lens_obj.name = "INSPECTION_lens_A"
+    lens_obj.data.materials.append(glass)
+    for polygon in lens_obj.data.polygons:
+        polygon.use_smooth = True
+    section_assembly = [*inspection_objects, lens_obj]
+    lower, upper = object_bounds(section_assembly)
+    center = (lower + upper) / 2.0
+    camera.location = center + Vector((0.12, 1.0, 0.08)).normalized() * 360.0
+    look_at(camera, center)
+    fit_orthographic_camera(
+        camera,
+        section_assembly,
+        scene.render.resolution_x / scene.render.resolution_y,
+        margin=1.60,
+    )
+    scene.render.filepath = str(
+        render_dir / "openhi_4f_a_lens_cavity_section.png"
+    )
+    bpy.ops.render.render(write_still=True)
+
 
 if __name__ == "__main__":
     main()

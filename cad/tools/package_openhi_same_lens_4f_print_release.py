@@ -119,6 +119,8 @@ def package_design(design_dir: Path) -> dict[str, object]:
         "openhi_4f_optical_axis.png",
         "openhi_4f_spatial_exploded.png",
         "openhi_4f_print_parts_layout.png",
+        "openhi_4f_a_input_receiver_section.png",
+        "openhi_4f_a_lens_cavity_section.png",
     )
     for name in render_names:
         source = artifact_dir / "renders" / name

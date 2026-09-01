@@ -2,6 +2,15 @@
 
 Date: 2026-08-30
 
+> Superseded for print use on 2026-09-01. This audit correctly records the
+> analytic lens, C-receiver membrane, thread, and print-file work, but it
+> conflates the inward annular support seat with the inward optical-axis
+> surface vertex and does not detect the missing A input receiver in the first
+> same-lens rebuild. Use
+> `references/openhi-same-lens-4f-input-receiver-lens-cavity-correction-2026-09-01.md`
+> and each design's `run-4-a-input-receiver-optical-vertex-lens-clearance-*`
+> release for printing.
+
 ## Scope
 
 This audit covers the four same-lens OpenHI families:
