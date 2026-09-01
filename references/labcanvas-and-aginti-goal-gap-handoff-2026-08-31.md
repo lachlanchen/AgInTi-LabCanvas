@@ -56,7 +56,7 @@ Current authoritative state:
   boundary.
 - AgInTiFlow `0.20.306` is published and installed. Its explicit-source
   evidence contract and manifest-free LabCanvas artifact recovery are accepted.
-- The complete LabCanvas suite passes 1,783 tests at this checkpoint.
+- The complete LabCanvas suite passes 1,784 tests at this checkpoint.
 - All six personal-WeChat monitors and the WeChat/WeCom schedulers are alive,
   with no active or stale WeChat queue item.
 - Delivery is currently unavailable because desktop WeChat is at login entry
@@ -105,6 +105,13 @@ Current authoritative state:
   The focused health, worker, backend, and WeCom regression suite passes 808
   tests after this change, and the reloaded live guard now reports only the two
   real degraded conditions without the contradictory narrative.
+- A fresh no-churn audit of AgInTiFlow `main` at `890094d` / `0.20.306` found
+  no current reproducible general-runtime defect. Syntax, provider handoff,
+  truthful completion, LocalLLM readiness, perception/public/deep research,
+  scoped artifact research, session continuity, runtime core, coding tools,
+  canvas artifacts, local failure recovery, model roles, and capability smokes
+  all passed. The worktree remained clean; no speculative code, commit, npm
+  release, or unrelated vision-branch merge was made.
 
 The next external gate is one physical acceptance of the restored computer key
 on the unlocked MIX 2S: enable `Always allow from this computer`, then choose
