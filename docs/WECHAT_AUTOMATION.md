@@ -129,6 +129,12 @@ articles, or short-video summaries. Questions such as "summarize this link",
 page/PDF/media inspection or export requests are acknowledged and sent to the
 worker queue.
 
+An ordinary inbound video attachment with no accompanying current same-chat
+text instruction is the deliberate exception: it is passive save-only intake.
+Retain the exact source silently; do not ACK or echo it, transcribe it, create a
+research task, enter LazyEdit/AutoPublish, copy it to Nutstore, or publish it.
+Each later video stage needs a separate current same-chat instruction.
+
 For 视频号/Shipinhao/Finder shares, the worker should treat comments as optional
 auxiliary evidence when they are accessible. Search visible or retrieved comments
 for prompts such as `@元宝`, `腾讯元宝`, `英文全文`, `全文`, `总结`, `摘要`, `字幕`,
@@ -559,11 +565,14 @@ For `mp.weixin.qq.com` or WeChat official-account articles, a direct fetch that
 returns `环境异常` or `完成验证后继续访问` is not a completed read. Do not open an
 external Chrome/browser by default for these links; it can steal focus from the
 official WeChat client and make the desktop look locked. Prefer the native
-WeChat article/webview session or an already verified readable capture. If
-verification is needed, return `waiting_confirmation`, ask the account owner to
-verify/open the page in WeChat, then resume capture after confirmation. Use
-external `browser-assist` for mp.weixin only when the user explicitly asks for
-it or `WECHAT_ALLOW_EXTERNAL_BROWSER_FOR_MP_WEIXIN=1` is set. The
+WeChat article/webview session or an already verified readable capture.
+Read-only recovery gates never become `waiting_confirmation` and never ask the
+account owner to verify or open the page. Continue through the private cache,
+native exact-card extraction, and responsible exact-title/account
+reconstruction; if evidence remains incomplete, return a concise
+evidence-limited answer. Use external `browser-assist` for mp.weixin only when
+the user explicitly asks for it or
+`WECHAT_ALLOW_EXTERNAL_BROWSER_FOR_MP_WEIXIN=1` is set. The
 `browser-assist` tool enforces this: `mp.weixin.qq.com` URLs are refused before
 launch unless `--allow-mp-weixin` or the environment override is present.
 

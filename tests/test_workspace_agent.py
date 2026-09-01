@@ -262,6 +262,9 @@ class WorkspaceAgentTests(unittest.TestCase):
         cad = selected_packaged_knowledge("Design a Shapr3D C-mount holder")
         protein = selected_packaged_knowledge("Use AlphaFold for this protein structure")
         music = selected_packaged_knowledge("Generate a Musia song and then make an MV")
+        wechat = selected_packaged_knowledge(
+            "Audit WeChat video, Shipinhao, Gongzhonghao, and PDF intake"
+        )
         books = selected_packaged_knowledge(
             "Continue this PocketPolyglot quadrilingual book and report progress"
         )
@@ -271,6 +274,11 @@ class WorkspaceAgentTests(unittest.TestCase):
         self.assertIn("## CAD and Shapr3D-Compatible Design", cad)
         self.assertIn("## Protein Structure and AlphaFold", protein)
         self.assertIn("## Music and Music Video", music)
+        self.assertIn("## WeChat", wechat)
+        self.assertIn("passive save-only intake", wechat)
+        self.assertIn("wechat_document_reader.py", wechat)
+        self.assertIn("Read failures remain evidence-limited", wechat)
+        self.assertIn("browser-verification", wechat)
         self.assertIn("## Books and PocketPolyglot", books)
         self.assertIn("one durable PocketPolyglot project per book", books)
         self.assertLess(len(short), len(cad))

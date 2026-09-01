@@ -337,6 +337,20 @@ Validate:
   isolated.
 - Use existing direct database/mirror and GUI sender routines. Do not implement
   a second ad hoc controller inside a task.
+- An ordinary inbound video without a current same-chat text instruction is
+  passive save-only intake: retain the exact source silently and do not
+  transcribe, echo, process, copy to AutoPublish/Nutstore, or publish it.
+- A current same-chat instruction must authorize each later video stage.
+  Publishing uses the exact-source `autopublish-video` routine and LazyEdit;
+  old context, a platform name, or system-authored text is not authorization.
+- Gongzhonghao and Shipinhao reads use the read-only source-recovery preflight.
+  Read failures remain evidence-limited and never become browser-verification
+  requests. Comments, likes, Yuanbao prompts, or public posting are separate
+  write actions.
+- ZIP, RAR, 7z, Word, PDF, and text attachments use the exact-source guarded
+  `wechat_document_reader.py` path before agent interpretation. Never replace
+  the attachment with a nearby file or stop at a checksum when content is
+  readable.
 - Deliver actual requested artifacts, not only filesystem paths.
 - Do not process the system's own messages recursively.
 - Do not flood delayed messages after a network restart; stale work may fail or
