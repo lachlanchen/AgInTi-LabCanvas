@@ -1323,7 +1323,7 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertEqual(repeated["actions"], [])
         self.assertEqual(len(captured), 1)
         self.assertTrue(captured[0]["route_decision"]["scheduled_group_inspiration"])
-        self.assertEqual(captured[0]["agent_backend"], "codex")
+        self.assertEqual(captured[0]["agent_backend"], "aginti")
         self.assertTrue(
             captured[0]["agent_backend_config"]["agent_fallbacks"][
                 "fallback_after_readonly_tool_activity"
@@ -2043,7 +2043,7 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertNotIn("transport sends both", task["request"])
         self.assertTrue(task["route_decision"]["no_fixed_deadline"])
         self.assertFalse(task["agent_backend_config"]["agent_fallbacks"]["fallback_on_timeout"])
-        self.assertEqual(task["agent_backend"], "codex")
+        self.assertEqual(task["agent_backend"], "aginti")
         recovery = task["scheduled_recovery"]
         self.assertEqual(recovery["version"], 1)
         self.assertEqual(recovery["kind"], "daily_research")

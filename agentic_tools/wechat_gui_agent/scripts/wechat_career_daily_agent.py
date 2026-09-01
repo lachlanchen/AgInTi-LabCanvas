@@ -198,6 +198,7 @@ def loop_daily(args: argparse.Namespace) -> int:
             career_status = "waiting"
             organizer_status = "waiting"
         due = now >= run_at
+        retry_previous_day_deliveries(args, now=now)
         career_complete = career_delivery_complete_for_date(
             run_key,
             require_send=bool(args.send),
@@ -320,6 +321,65 @@ def loop_daily(args: argparse.Namespace) -> int:
         sleep_until = next_run_time(datetime.now(), args.morning_time)
         delay = min(max(5.0, (sleep_until - datetime.now()).total_seconds()), max(5.0, args.loop_sleep))
         time.sleep(delay)
+
+
+def retry_previous_day_deliveries(
+    args: argparse.Namespace,
+    *,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Retry yesterday's retained artifacts without regenerating their content."""
+
+    if not bool(getattr(args, "send", False)):
+        return {"ok": True, "status": "send_disabled", "date": ""}
+    current = now or datetime.now()
+    stamp = (current - timedelta(days=1)).strftime("%Y-%m-%d")
+    results: dict[str, Any] = {}
+
+    if latest_career_manifest(stamp) is not None:
+        results["career"] = safe_daily_call(
+            lambda: run_with_daily_operation_lock(
+                "career",
+                lambda: retry_existing_career_delivery(args, stamp),
+            )
+        )
+
+    if bool(getattr(args, "organize_report", False)):
+        chat = str(
+            getattr(args, "organize_chat", DEFAULT_ORGANIZER_CHAT)
+            or DEFAULT_ORGANIZER_CHAT
+        )
+        state = read_json_file(organizer_state_path())
+        report = OUTPUT / f"{stamp}-recent-items.zh.md"
+        pdf = OUTPUT / f"{stamp}-recent-items.zh.pdf"
+        retained = bool(
+            state.get("date") == stamp
+            and state.get("chat") == chat
+            and organizer_quality_accepted(state)
+            and report.is_file()
+            and pdf.is_file()
+            and pdf.stat().st_size > 0
+        )
+        if retained:
+            retry_args = argparse.Namespace(**vars(args))
+            retry_args.date = stamp
+            results["organizer"] = safe_daily_call(
+                lambda: run_with_daily_operation_lock(
+                    "organizer",
+                    lambda: run_organizer(retry_args),
+                )
+            )
+
+    return {
+        "ok": all(
+            bool(result.get("ok"))
+            or result.get("status") in {"delivery_deferred", "delivery_failed"}
+            for result in results.values()
+        ),
+        "status": "checked" if results else "nothing_retained",
+        "date": stamp,
+        "results": results,
+    }
 
 
 def run_catch_up(args: argparse.Namespace) -> dict[str, Any]:

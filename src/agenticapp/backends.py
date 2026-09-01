@@ -12,7 +12,7 @@ from typing import Any
 BIORENDER_MCP_URL = "https://mcp.services.biorender.com/mcp"
 MODEL_POLICY_PATH = Path(__file__).resolve().parents[2] / "configs" / "model-policy.json"
 DEFAULT_MODEL_POLICY: dict[str, Any] = {
-    "primary_backend": "codex",
+    "primary_backend": "aginti",
     "aginti": {
         "primary_provider": "deepseek",
         "provider_chain": ["deepseek", "localllm"],
@@ -45,7 +45,7 @@ DEFAULT_MODEL_POLICY: dict[str, Any] = {
 DEFAULT_BACKEND_SETTINGS: dict[str, Any] = {
     "agent": {
         "enabled": True,
-        "backend": "codex",
+        "backend": "auto",
         "model": "gpt-5.6-sol",
         "reasoning_effort": "auto",
         "mode": "execute",

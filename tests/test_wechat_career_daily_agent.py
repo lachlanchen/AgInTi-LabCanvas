@@ -1670,6 +1670,103 @@ Nature 光计算维度和视觉大模型预测实验属于另一条技术探索�
             self.assertTrue(saved["send"]["complete"])
             self.assertEqual(saved["delivery_attempts"], 0)
 
+    def test_previous_day_carryover_retries_exact_artifacts_without_regeneration(self):
+        module = load_wechat_career_daily_agent()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            module.ROOT = root
+            module.PRIVATE = root / ".private"
+            module.OUTPUT = root / "output"
+            stamp = "2026-09-01"
+
+            run_dir = (
+                module.PRIVATE
+                / "output"
+                / "career_daily"
+                / "runs"
+                / f"{stamp}-083000"
+            )
+            run_dir.mkdir(parents=True)
+            career_report = module.OUTPUT / f"{stamp}-career-strategy.md"
+            private_report = (
+                module.PRIVATE
+                / "output"
+                / "career_daily"
+                / f"{stamp}-career-strategy-private.md"
+            )
+            organizer_report = module.OUTPUT / f"{stamp}-recent-items.zh.md"
+            organizer_pdf = module.OUTPUT / f"{stamp}-recent-items.zh.pdf"
+            module.OUTPUT.mkdir(parents=True)
+            private_report.parent.mkdir(parents=True, exist_ok=True)
+            body = valid_career_report()
+            career_report.write_text(body, encoding="utf-8")
+            private_report.write_text(body, encoding="utf-8")
+            organizer_report.write_text("# Existing organizer", encoding="utf-8")
+            organizer_pdf.write_bytes(b"%PDF retained organizer")
+            original_pdf = organizer_pdf.read_bytes()
+            module.write_json_file(
+                run_dir / "manifest.json",
+                {
+                    "outputs": {
+                        "share_report_latest": str(career_report),
+                        "private_report_latest": str(private_report),
+                    },
+                    "send": {"attempted": True, "complete": False},
+                },
+            )
+            module.write_json_file(
+                module.organizer_state_path(),
+                {
+                    "date": stamp,
+                    "chat": "MEMO写作—外语—挣钱",
+                    "status": "delivery_failed",
+                    "report": str(organizer_report),
+                    "pdf": str(organizer_pdf),
+                    "quality": {"accepted": True},
+                },
+            )
+            module.observed_outbound_files = lambda *_args, **_kwargs: set()
+            module.observed_outbound_file = lambda *_args, **_kwargs: False
+            module.observed_outbound_filename = lambda *_args, **_kwargs: False
+            module.run_agent_session = lambda *_args, **_kwargs: self.fail(
+                "carry-over delivery must not invoke an agent"
+            )
+            career_sends = []
+            organizer_sends = []
+            module.send_daily_result = lambda *_args, **_kwargs: career_sends.append(True) or {
+                "attempted": True,
+                "complete": True,
+                "message_sent": True,
+                "file_sent": True,
+                "files_sent": ["career.zh.pdf", "career.en.pdf"],
+                "errors": [],
+            }
+            module.send_organizer_pdf = lambda _args, pdf, chat: organizer_sends.append(
+                (pdf, chat)
+            ) or {
+                "attempted": True,
+                "complete": True,
+                "file_sent": True,
+                "files_sent": [str(pdf)],
+                "errors": [],
+            }
+            args = argparse.Namespace(
+                send=True,
+                organize_report=True,
+                organize_chat="MEMO写作—外语—挣钱",
+            )
+
+            payload = module.retry_previous_day_deliveries(
+                args,
+                now=module.datetime(2026, 9, 2, 0, 15),
+            )
+
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["date"], stamp)
+            self.assertEqual(len(career_sends), 1)
+            self.assertEqual(organizer_sends, [(organizer_pdf, "MEMO写作—外语—挣钱")])
+            self.assertEqual(organizer_pdf.read_bytes(), original_pdf)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -4560,7 +4560,7 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
             queued = [json.loads(line) for line in Path(config["worker_queue"]).read_text(encoding="utf-8").splitlines()]
             self.assertEqual(queued[0]["route"], task["route"])
 
-    def test_default_direct_config_uses_sol_low_fast_polling(self) -> None:
+    def test_default_direct_config_uses_aginti_with_sol_compatibility(self) -> None:
         with self.subTest("defaults"):
             import json
 
@@ -4570,7 +4570,7 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
                 config = direct_chatops.load_config(Path(handle.name))
 
         self.assertEqual(config["codex"]["model"], "gpt-5.6-sol")
-        self.assertEqual(config["agent_backend"], "codex")
+        self.assertEqual(config["agent_backend"], "aginti")
         self.assertEqual(config["codex"]["reasoning_effort"], "low")
         self.assertEqual(config["codex"]["timeout_seconds"], 25)
         self.assertTrue(config["agent_fallbacks"]["enabled"])

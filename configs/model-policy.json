@@ -1,5 +1,5 @@
 {
-  "primary_backend": "codex",
+  "primary_backend": "aginti",
   "aginti": {
     "primary_provider": "deepseek",
     "provider_chain": [
@@ -79,5 +79,5 @@
       "reasoning_effort": "xhigh"
     }
   },
-  "notes": "Codex is primary while the normal quota is available. Chat and task turns use GPT-5.6 SOL through the model map. AgInTi remains an enabled fallback and resumes one session per conversation, using DeepSeek first and LocalLLM only when permitted."
+  "notes": "AgInTi is the automatic primary backend and resumes one session per conversation, using DeepSeek first and LocalLLM only as its same-session fallback. Codex remains available through explicit selection and specialist policy routes."
 }

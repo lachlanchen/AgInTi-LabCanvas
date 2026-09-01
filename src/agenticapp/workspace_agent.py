@@ -273,10 +273,13 @@ def select_agent_policy(
     selected_backend = str(backend or "auto").strip().lower()
     if selected_backend not in {"auto", "codex", "aginti"}:
         selected_backend = "auto"
-    if selected_backend == "auto":
+    backend_was_auto = selected_backend == "auto"
+    if backend_was_auto:
         selected_backend = str(current_model_policy.get("primary_backend") or "aginti").strip().lower()
         if selected_backend not in {"codex", "aginti"}:
             selected_backend = "aginti"
+        if protein_structure_work:
+            selected_backend = "codex"
     if selected_backend == "aginti" and model_was_auto:
         selected_model = "provider-default"
 

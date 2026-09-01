@@ -1127,8 +1127,8 @@ evidence for local artifacts, not chat-facing content.
   update queues one immediate point, then the three-hour quiet-period schedule
   resumes. It must be idempotent and must not merge private member context or
   create a public-posting permission.
-- Use fast-router Codex only for new actionable messages, ambiguous routing, or
-  immediate lightweight replies.
+- Use the configured fast route agent only for new actionable messages,
+  ambiguous routing, or immediate lightweight replies.
 - For the isolated WeCom transport, use `gpt-5.6-sol` low for route/chat turns,
   medium for ordinary durable work, high for complex implementation, and xhigh
   for demanding autonomous research or presentation synthesis. Keep that
@@ -1143,15 +1143,15 @@ evidence for local artifacts, not chat-facing content.
   ordinary text bubbles and different senders remain separate.
 - Keep route classification agent-first for triggerable monitored chats:
   `agent_route_enabled=true` with `agent_route_prefilter=agent_first` lets the
-  per-chat `route` Codex session choose `route_kind`, project, source policy,
+  per-chat `route` agent session choose `route_kind`, project, source policy,
   and worker need before keyword lists. `agent_router.reuse_session=true` is
   the default, so repeated requests in one chat resume the same route thread.
   Keyword and attachment checks remain auxiliary fallback and safety gates, not
   the primary capability map.
-- The repository model policy selects Codex as the primary backend. When Codex
-  is unavailable, the same turn falls back to AgInTi, which uses DeepSeek first
-  and LocalLLM only as its final same-session capability fallback. Explicit
-  backend selection remains supported. Every backend must use the same route, message
+- The repository model policy selects AgInTi as the automatic primary backend.
+  AgInTi uses DeepSeek first and LocalLLM only as its final same-session
+  capability fallback. Codex remains available through explicit selection and
+  specialist policy routes. Every backend must use the same route, message
   ledger, worker queue, media, completion-audit, and artifact-delivery
   contracts. Do not bypass or shrink source scope because the backend changed.
 - Backend fallback is centralized in

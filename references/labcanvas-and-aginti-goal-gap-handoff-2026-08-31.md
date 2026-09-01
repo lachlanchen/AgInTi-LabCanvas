@@ -39,9 +39,9 @@ The current operating goal is:
 > reply, durable tool task, verified artifact, deliberate contextual silence, or
 > concrete blocker. Consecutive messages may be answered together, but none may
 > disappear. The MIX 2S is an owned transport lane for WeChat and WeCom, not an
-> operator-only workaround. Codex is attempted first; an unavailable turn falls
-> back to AgInTi with DeepSeek, then to AgInTi with LocalLLM only as the final
-> capability path. Every reusable failure becomes a regression test and a fix at
+> operator-only workaround. Automatic turns use AgInTi with DeepSeek first,
+> then LocalLLM only as a same-session fallback. Codex remains an explicit or
+> specialist route. Every reusable failure becomes a regression test and a fix at
 > the LabCanvas, AgInTi, provider, transport, or owning-routine layer.
 
 This wording corrects dictation variants such as `Lab Canyas`, `Lab commerce`,
@@ -49,7 +49,7 @@ or `Canva`: the product and repository are **LabCanvas**.
 
 Current authoritative state:
 
-- `configs/model-policy.json` selects Codex first.
+- `configs/model-policy.json` selects AgInTi automatically.
 - AgInTi's configured provider order is DeepSeek, then LocalLLM.
 - LabCanvas no longer injects AgInTi's OpenAI provider merely because the outer
   Codex attempt carried a GPT model name. Commit `aae8ccc` fixes and tests that
@@ -95,8 +95,7 @@ Current authoritative state:
   read/write artifact task in 30 seconds, and registered the verified
   `provider-fallback-readiness.md` artifact. Both ran only after the LocalLLM
   maintenance `COMPLETE.json` appeared. This proves the final fallback path;
-  it does not change the operating order of Codex, AgInTi with DeepSeek, then
-  AgInTi with LocalLLM.
+  it does not change AgInTi's operating order of DeepSeek followed by LocalLLM.
 - Repair-agent prose is no longer presented as authoritative live health. Every
   repair-agent attempt is followed by a deterministic transport snapshot that
   records `recovered` or `unresolved`, the current issue codes, and its own
@@ -420,6 +419,35 @@ before/after checks confirmed unchanged hashes and mtimes for `TASK.md`,
 a clean target worktree. This is the release-level proof that completed
 same-task artifacts are reused instead of regenerated.
 
+### 2026-09-02: AgInTi Primary Routing And Schedule Carry-Over
+
+The repository, CLI, Studio, personal-WeChat, and WeCom automatic routes now
+inherit one policy: AgInTi is primary, DeepSeek is its first provider, and
+LocalLLM is its same-session fallback. Codex remains available through an
+explicit backend choice and through specialist policy such as nontrivial
+AlphaFold work. The ignored personal-WeChat and WeCom environment pins that
+still requested Codex were cleared and only worker-side processes were
+reloaded; GUI identities were not restarted.
+
+Focused runtime, CLI, web, and backend tests passed 134 cases. Dry-run evidence
+selects `aginti / provider-default / medium` for CAD and
+`codex / gpt-5.6-sol / medium` for AlphaFold. A live CLI turn completed in five
+seconds through AgInTi and the durable registry records provider `deepseek`,
+model `deepseek-v4-flash`, and one retained conversation turn. Transport health
+then reported both WeChat and WeCom as policy-aligned with effective backend
+AgInTi.
+
+The midnight audit also found that the career/memo scheduler reset to the new
+date before retrying the prior day's persisted delivery failures. The scheduler
+now performs one bounded previous-day carry-over check using only the existing
+quality-accepted report/PDF and existing idempotent send routines. Its
+regression forbids an agent call and verifies the organizer PDF bytes are
+unchanged. Live acceptance retried the 2026-09-01 career and organizer files
+after midnight, advanced their persisted backoff to 04:16 HKT, and preserved
+the exact three PDF hashes and mtimes. Delivery remains blocked only by the
+existing WeChat login and MIX 2S ADB authorization state; no report was
+regenerated.
+
 ## Remaining Gaps
 
 ### Completed: Unified Personal-WeChat Availability
@@ -469,8 +497,9 @@ file identity.
 
 ### P2: AgInTi Capability Attribution
 
-AgInTi remains the configured fallback agent runtime. LabCanvas attempts Codex
-first, then AgInTi with DeepSeek, then AgInTi with LocalLLM. Continue
+AgInTi is the configured automatic agent runtime. It uses DeepSeek first and
+LocalLLM only as a same-session fallback; Codex remains an explicit or
+specialist route. Continue
 representative tests for ordinary chat, research, files, schedules, CAD,
 publication supervision, and recovery. Compare raw provider output, AgInTi
 output, and routine evidence before deciding where to fix a failure.
