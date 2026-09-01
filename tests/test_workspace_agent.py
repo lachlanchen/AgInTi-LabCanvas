@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 from agenticapp.workspace_agent import (
     _aginti_machine_command,
+    _aginti_provider_chain,
     _parse_aginti_machine_result,
     AgentTaskStore,
     build_agent_prompt,
@@ -764,6 +765,35 @@ class WorkspaceAgentTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertFalse(result["resumed"])
         self.assertTrue(result["fallback_continued_same_session"])
+
+    def test_aginti_provider_environment_override_precedes_policy_settings(self):
+        settings = {"provider_chain": ["deepseek", "localllm"]}
+
+        with patch.dict(
+            "agenticapp.workspace_agent.os.environ",
+            {"LABCANVAS_AGINTI_PROVIDER_CHAIN": "localllm"},
+        ):
+            providers = _aginti_provider_chain(
+                settings,
+                policy={"model": "provider-default"},
+            )
+
+        self.assertEqual(providers, ["localllm"])
+
+    def test_aginti_provider_policy_settings_apply_without_environment_override(self):
+        settings = {"provider_chain": ["deepseek", "localllm"]}
+
+        with patch.dict(
+            "agenticapp.workspace_agent.os.environ",
+            {},
+            clear=True,
+        ):
+            providers = _aginti_provider_chain(
+                settings,
+                policy={"model": "provider-default"},
+            )
+
+        self.assertEqual(providers, ["deepseek", "localllm"])
 
     def test_aginti_machine_command_replaces_managed_transport_args(self):
         command = _aginti_machine_command(

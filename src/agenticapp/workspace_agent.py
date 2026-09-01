@@ -1672,7 +1672,8 @@ def _aginti_unresolved_tool_protocol(value: Any) -> bool:
 
 
 def _aginti_provider_chain(settings: dict[str, Any], *, policy: dict[str, Any] | None = None) -> list[str]:
-    raw = settings.get("provider_chain") or os.environ.get("LABCANVAS_AGINTI_PROVIDER_CHAIN") or "deepseek,localllm"
+    environment_override = os.environ.get("LABCANVAS_AGINTI_PROVIDER_CHAIN")
+    raw = environment_override or settings.get("provider_chain") or "deepseek,localllm"
     values = raw if isinstance(raw, list) else re.split(r"[,\s]+", str(raw))
     providers: list[str] = []
     for value in values:
