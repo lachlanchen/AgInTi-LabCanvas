@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import sqlite3
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -3088,9 +3089,11 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertIn("waiting for the existing computer key to be accepted", android_source)
         self.assertIn("mirror: waiting for scrcpy retry", android_source)
         self.assertIn(
-            "on|off|start|stop|restart|transport-restart|dual-heal|status|dual|single|wechat|wecom",
+            "on|off|start|stop|restart|transport-restart|dual-heal|status|key-status|dual|single|wechat|wecom",
             android_source,
         )
+        self.assertIn("key-status) adb_key_status", android_source)
+        self.assertNotIn('adb keygen "$ADB_KEY_FILE"', android_source)
         self.assertIn("restart_novnc_transport", android_source)
         self.assertIn("heal_dual_layout_once", android_source)
         self.assertIn("ensure_dual_guard", android_source)
@@ -3139,6 +3142,70 @@ class WeComAgentBridgeTests(unittest.TestCase):
         mix2s_wrapper = (ROOT / "scripts" / "mix2s").read_text(encoding="utf-8")
         self.assertIn("android_device_desktop.sh", mix2s_wrapper)
         self.assertIn('exec ', mix2s_wrapper)
+
+    def test_android_key_status_never_modifies_existing_key(self) -> None:
+        script = (
+            ROOT
+            / "agentic_tools"
+            / "android_device_agent"
+            / "scripts"
+            / "android_device_desktop.sh"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            key = root / "adbkey"
+            fake_bin = root / "bin"
+            fake_bin.mkdir()
+            subprocess.run(
+                [
+                    "openssl",
+                    "genpkey",
+                    "-algorithm",
+                    "RSA",
+                    "-pkeyopt",
+                    "rsa_keygen_bits:2048",
+                    "-out",
+                    str(key),
+                ],
+                check=True,
+                capture_output=True,
+            )
+            key.chmod(0o600)
+            fake_adb = fake_bin / "adb"
+            fake_adb.write_text(
+                "#!/bin/sh\n"
+                "if [ \"${1:-}\" = devices ]; then\n"
+                "  printf 'List of devices attached\\ntest-device\\tunauthorized\\n'\n"
+                "  exit 0\n"
+                "fi\n"
+                "exit 1\n",
+                encoding="utf-8",
+            )
+            fake_adb.chmod(0o755)
+            before_bytes = key.read_bytes()
+            before_stat = key.stat()
+            env = os.environ.copy()
+            env.update(
+                {
+                    "ANDROID_DEVICE_ADB_KEY_FILE": str(key),
+                    "PATH": f"{fake_bin}:{env['PATH']}",
+                }
+            )
+
+            completed = subprocess.run(
+                [str(script), "key-status", "--serial", "test-device"],
+                env=env,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertIn("ADB key: valid", completed.stdout)
+            self.assertIn("test-device (unauthorized)", completed.stdout)
+            self.assertIn("accept the existing computer key", completed.stdout)
+            self.assertEqual(key.read_bytes(), before_bytes)
+            self.assertEqual(key.stat().st_mtime_ns, before_stat.st_mtime_ns)
 
     def test_external_cli_exact_group_resolution_is_fail_closed(self) -> None:
         bridge = load_cli_bridge()

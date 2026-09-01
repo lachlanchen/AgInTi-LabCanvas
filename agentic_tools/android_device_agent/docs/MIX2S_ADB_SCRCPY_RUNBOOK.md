@@ -16,9 +16,15 @@ computer in Android's ADB prompt.
 
 ```bash
 adb devices -l
+scripts/mix2s key-status --serial <ADB_SERIAL>
 agentic_tools/android_device_agent/scripts/android_control.py --serial <ADB_SERIAL> status
 adb -s <ADB_SERIAL> shell dumpsys window | rg 'mCurrentFocus|isStatusBarKeyguard'
 ```
+
+`scripts/mix2s key-status` is the only supported identity diagnostic. It
+validates and fingerprints the existing private key without changing it. Never
+run `adb keygen ~/.android/adbkey` as a fingerprint or health probe: that command
+replaces the key and forces a new device authorization.
 
 For the local MIX 2S, the useful state was:
 

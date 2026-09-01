@@ -29,6 +29,50 @@ This checkpoint supplements the full governing contract in
 It records the normalized two-track goal, the latest verified progress, and the
 remaining gap after reviewing the conversation and current runtime evidence.
 
+## 2026-09-01 Goal And Runtime Update
+
+The current operating goal is:
+
+> Make LabCanvas feel like a smooth direct conversation with a capable agent.
+> Every genuine WeChat, WeCom, web, or CLI message must be retained, understood
+> with its exact-chat context, and given one appropriate disposition: a natural
+> reply, durable tool task, verified artifact, deliberate contextual silence, or
+> concrete blocker. Consecutive messages may be answered together, but none may
+> disappear. The MIX 2S is an owned transport lane for WeChat and WeCom, not an
+> operator-only workaround. Codex is attempted first; an unavailable turn falls
+> back to AgInTi with DeepSeek, then to AgInTi with LocalLLM only as the final
+> capability path. Every reusable failure becomes a regression test and a fix at
+> the LabCanvas, AgInTi, provider, transport, or owning-routine layer.
+
+This wording corrects dictation variants such as `Lab Canyas`, `Lab commerce`,
+or `Canva`: the product and repository are **LabCanvas**.
+
+Current authoritative state:
+
+- `configs/model-policy.json` selects Codex first.
+- AgInTi's configured provider order is DeepSeek, then LocalLLM.
+- LabCanvas no longer injects AgInTi's OpenAI provider merely because the outer
+  Codex attempt carried a GPT model name. Commit `aae8ccc` fixes and tests that
+  boundary.
+- AgInTiFlow `0.20.306` is published and installed. Its explicit-source
+  evidence contract and manifest-free LabCanvas artifact recovery are accepted.
+- The complete LabCanvas suite passes 1,780 tests at this checkpoint.
+- All six personal-WeChat monitors and the WeChat/WeCom schedulers are alive,
+  with no active or stale WeChat queue item.
+- Delivery is currently unavailable because desktop WeChat is at login entry
+  and the MIX 2S reports `adb unauthorized`. Generated career, memo, and
+  periodic-language outputs remain persisted for bounded same-artifact retry.
+- The pre-existing MIX 2S ADB key was recovered from the still-running ADB
+  server, validated, and restored after an operator probe accidentally replaced
+  its on-disk copy. No key regeneration should be used as a diagnostic again.
+
+The next external gate is one physical acceptance of the restored computer key
+on the unlocked MIX 2S: enable `Always allow from this computer`, then choose
+`Allow`. After that, the waiting supervisors must recover automatically. The
+acceptance is not complete until one inbound message reaches its exact-chat
+agent session and each pending schedule artifact is delivered once without
+regeneration or duplication.
+
 ## Normalized Two-Track Goal
 
 ### Track A: LabCanvas
@@ -280,10 +324,11 @@ file identity.
 
 ### P2: AgInTi Capability Attribution
 
-AgInTi remains the configured primary backend. Continue representative tests
-for ordinary chat, research, files, schedules, CAD, publication supervision,
-and recovery. Compare raw provider output, AgInTi output, and routine evidence
-before deciding where to fix a failure.
+AgInTi remains the configured fallback agent runtime. LabCanvas attempts Codex
+first, then AgInTi with DeepSeek, then AgInTi with LocalLLM. Continue
+representative tests for ordinary chat, research, files, schedules, CAD,
+publication supervision, and recovery. Compare raw provider output, AgInTi
+output, and routine evidence before deciding where to fix a failure.
 
 The current highest-priority core defect is DeepSeek DSML tool-call
 normalization. Until the AgInTi fix is validated and installed, LabCanvas must
@@ -296,13 +341,15 @@ permitted again; any future fence must be honored in the same way.
 
 ## Next Acceptance Order
 
-1. Validate and install AgInTi's DSML tool-call normalization, then repeat the
-   bounded exact-file task successfully.
-2. Prove a live consecutive-message interruption turn.
-3. Prove deferred schedule delivery across a transport outage.
+1. Restore one MIX 2S or desktop-WeChat transport lane using the existing
+   identity, then verify automatic supervisor recovery.
+2. Prove deferred schedule delivery across that transport outage reuses each
+   stored artifact exactly once.
+3. Prove a live consecutive-message interruption turn with one disposition per
+   source event and one coherent response.
 4. Prove the next source-bearing EchoMind day compiles and delivers one accepted
    PDF, while a source-empty day remains a quiet terminal skip.
-5. Continue bounded task-family acceptance and attribute every failure to
+5. Continue bounded AgInTi task-family acceptance and attribute every failure to
    LabCanvas transport, AgInTi runtime, provider quality, or an owning routine.
 6. Commit and push only scoped source, tests, and documentation; keep private
    captures, raw chat state, credentials, and runtime artifacts ignored.

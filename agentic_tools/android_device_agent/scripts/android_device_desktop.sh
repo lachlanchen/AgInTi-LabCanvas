@@ -38,11 +38,12 @@ SCRCPY_OVERRIDE="${ANDROID_DEVICE_SCRCPY_BIN:-}"
 CONTROL_LEASE="$ROOT/agentic_tools/android_device_agent/scripts/android_control_lease.py"
 CONTROL_LOCK="$ROOT/agentic_tools/wecom_agent/.private/wecom_android_bridge.lock"
 CONTROL_PRIORITY="$ROOT/agentic_tools/android_device_agent/.private/android_control_priority.json"
+ADB_KEY_FILE="${ANDROID_DEVICE_ADB_KEY_FILE:-$HOME/.android/adbkey}"
 
 usage() {
   cat <<'EOF'
 Usage:
-  android_device_desktop.sh [on|off|start|stop|restart|transport-restart|dual-heal|status|dual|single|wechat|wecom] [--serial SERIAL] [--open-wechat]
+  android_device_desktop.sh [on|off|start|stop|restart|transport-restart|dual-heal|status|key-status|dual|single|wechat|wecom] [--serial SERIAL] [--open-wechat]
 
 Starts a dedicated tmux-held noVNC desktop running scrcpy for an Android device.
 
@@ -54,6 +55,8 @@ Actions:
                     phone state, WeChat, and WeCom.
   dual-heal         Restore WeChat-left and WeCom-right without touching login.
   status            Report mirror, transport, and phone power state.
+  key-status        Validate and fingerprint the existing ADB key without
+                    creating, replacing, or restarting anything.
   dual              Keep WeChat physical and WeCom virtual side by side.
   single, wecom      Return to the automation-safe physical WeCom mirror.
   wechat             Show WeChat on the physical mirror with media muted.
@@ -72,7 +75,7 @@ EOF
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    on|off|start|stop|restart|transport-restart|dual-heal|status|dual|single|wechat|wecom) ACTION="$1"; shift ;;
+    on|off|start|stop|restart|transport-restart|dual-heal|status|key-status|dual|single|wechat|wecom) ACTION="$1"; shift ;;
     --serial) SERIAL="$2"; shift 2 ;;
     --open-wechat) OPEN_WECHAT="1"; shift ;;
     --no-wake) WAKE_DEVICE="0"; shift ;;
@@ -156,6 +159,33 @@ adb_transport_state() {
   [[ -n "$serial" ]] || return 1
   adb devices 2>/dev/null |
     awk -v expected="$serial" '$1 == expected {print $2; found=1; exit} END {exit !found}'
+}
+
+adb_key_status() {
+  local fingerprint serial state
+  need openssl
+  need sha256sum
+  if [[ ! -f "$ADB_KEY_FILE" ]]; then
+    echo "ADB key: missing ($ADB_KEY_FILE)" >&2
+    return 1
+  fi
+  if ! openssl pkey -in "$ADB_KEY_FILE" -check -noout >/dev/null 2>&1; then
+    echo "ADB key: invalid ($ADB_KEY_FILE)" >&2
+    return 1
+  fi
+  fingerprint="$(
+    openssl pkey -in "$ADB_KEY_FILE" -pubout -outform DER 2>/dev/null |
+      sha256sum | awk '{print $1}'
+  )"
+  serial="$(known_serial 2>/dev/null || true)"
+  state="$(adb_transport_state "$serial" 2>/dev/null || true)"
+  echo "ADB key: valid"
+  echo "ADB key file: $ADB_KEY_FILE"
+  echo "ADB public fingerprint (SHA-256): $fingerprint"
+  echo "Device: ${serial:-not-configured} (${state:-disconnected})"
+  if [[ "$state" == "unauthorized" ]]; then
+    echo "Action: unlock the phone and accept the existing computer key; do not run adb keygen."
+  fi
 }
 
 port_listening() {
@@ -719,6 +749,7 @@ case "$ACTION" in
   transport-restart) restart_novnc_transport ;;
   dual-heal) heal_dual_layout_once ;;
   status) status ;;
+  key-status) adb_key_status ;;
   dual)
     save_layout dual
     start_session
