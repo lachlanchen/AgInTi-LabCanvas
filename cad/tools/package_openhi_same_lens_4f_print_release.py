@@ -121,6 +121,8 @@ def package_design(design_dir: Path) -> dict[str, object]:
         "openhi_4f_print_parts_layout.png",
         "openhi_4f_a_input_receiver_section.png",
         "openhi_4f_a_lens_cavity_section.png",
+        "openhi_4f_c_lens_thread_section.png",
+        "openhi_4f_b_c_straight_camera_grips.png",
     )
     for name in render_names:
         source = artifact_dir / "renders" / name
@@ -165,6 +167,11 @@ axis-alignment, optical-core, interference, STEP, STL, and 3MF checks.
 
 Before committing all material, print one central C thread-fit coupon or test
 the mating pair because that preserved source interface is intentionally tight.
+
+The C lens-facing holder/cap thread and both B/C output threads are verified in
+the final exported solids. The B/C outer output grips are straight 40 mm
+cylinders ending at flat annular shoulders; use slicer support under those
+shoulders as intended.
 """,
         encoding="utf-8",
     )

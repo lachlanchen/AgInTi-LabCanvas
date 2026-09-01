@@ -400,6 +400,86 @@ def main():
     )
     bpy.ops.render.render(write_still=True)
 
+    # The run-5 C pair is sectioned after all helical booleans have been
+    # completed and rotated onto X. This view proves that neither final solid
+    # silently degraded to a smooth pilot cylinder.
+    bpy.ops.object.select_all(action="SELECT")
+    bpy.ops.object.delete(use_global=False)
+    c_section_objects = []
+    for name in ("C", "Lens_C_holder"):
+        path = artifact_dir / "inspection" / f"openhi_{name}_half_section.stl"
+        bpy.ops.wm.stl_import(filepath=str(path))
+        obj = bpy.context.object
+        obj.name = f"INSPECTION_{name}"
+        obj.data.materials.append(body_mats[name])
+        c_section_objects.append(obj)
+    lens_path = artifact_dir / "assembly_components" / "lens_C.stl"
+    bpy.ops.wm.stl_import(filepath=str(lens_path))
+    lens_obj = bpy.context.object
+    lens_obj.name = "INSPECTION_lens_C"
+    lens_obj.data.materials.append(glass)
+    for polygon in lens_obj.data.polygons:
+        polygon.use_smooth = True
+    c_section_objects.append(lens_obj)
+
+    bpy.ops.object.camera_add()
+    camera = bpy.context.object
+    camera.data.type = "ORTHO"
+    scene.camera = camera
+    lower, upper = object_bounds(c_section_objects)
+    center = (lower + upper) / 2.0
+    camera.location = center + Vector((0.08, 1.0, 0.12)).normalized() * 360.0
+    look_at(camera, center)
+    fit_orthographic_camera(
+        camera,
+        c_section_objects,
+        scene.render.resolution_x / scene.render.resolution_y,
+        margin=1.55,
+    )
+    scene.render.filepath = str(
+        render_dir / "openhi_4f_c_lens_thread_section.png"
+    )
+    bpy.ops.render.render(write_still=True)
+
+    # Isolate the two output caps in their checked print orientations. The
+    # broad cylindrical grip now ends at a flat shoulder around the protruding
+    # C-mount-style thread; this is intentionally support-dependent.
+    bpy.ops.object.select_all(action="SELECT")
+    bpy.ops.object.delete(use_global=False)
+    grip_objects = []
+    x_cursor = 0.0
+    for name in ("B", "C"):
+        path = artifact_dir / "parts" / f"openhi_{name}.stl"
+        bpy.ops.wm.stl_import(filepath=str(path))
+        obj = bpy.context.object
+        obj.name = f"STRAIGHT_GRIP_{name}"
+        obj.data.materials.append(body_mats[name])
+        lower, upper = object_bounds([obj])
+        obj.location += Vector((x_cursor - lower.x, -lower.y, -lower.z))
+        bpy.context.view_layer.update()
+        lower, upper = object_bounds([obj])
+        x_cursor = upper.x + 24.0
+        grip_objects.append(obj)
+
+    bpy.ops.object.camera_add()
+    camera = bpy.context.object
+    camera.data.type = "ORTHO"
+    scene.camera = camera
+    lower, upper = object_bounds(grip_objects)
+    center = (lower + upper) / 2.0
+    camera.location = center + Vector((1.15, -1.35, 1.0)).normalized() * 360.0
+    look_at(camera, center)
+    fit_orthographic_camera(
+        camera,
+        grip_objects,
+        scene.render.resolution_x / scene.render.resolution_y,
+        margin=1.5,
+    )
+    scene.render.filepath = str(
+        render_dir / "openhi_4f_b_c_straight_camera_grips.png"
+    )
+    bpy.ops.render.render(write_still=True)
+
 
 if __name__ == "__main__":
     main()

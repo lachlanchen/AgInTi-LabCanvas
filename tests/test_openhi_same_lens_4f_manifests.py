@@ -370,6 +370,64 @@ class OpenHISameLens4fManifestTests(unittest.TestCase):
                     if name in {"C", "Lens_B_holder", "Lens_C_holder"}:
                         self.assertIn("rotate", part["print_orientation"])
 
+    def test_every_final_holder_and_cap_contains_its_helical_thread(self):
+        for design_name in DESIGN_NAMES:
+            with self.subTest(design=design_name):
+                audit = self.load_manifest(design_name)[
+                    "final_thread_presence_audit"
+                ]
+                self.assertTrue(audit["all_lens_retainer_pairs_present"])
+                self.assertTrue(audit["all_camera_output_threads_present"])
+                self.assertTrue(audit["central_c_connection_present"])
+                self.assertEqual(
+                    set(audit["lens_retainer_pairs"]),
+                    {"A", "B", "C"},
+                )
+                for pair in audit["lens_retainer_pairs"].values():
+                    self.assertAlmostEqual(pair["female_pivot_mm"], 29.8)
+                    self.assertAlmostEqual(pair["female_groove_mm"], 30.6)
+                    self.assertAlmostEqual(pair["male_root_mm"], 29.6)
+                    self.assertAlmostEqual(pair["male_crest_mm"], 30.4)
+                    self.assertGreaterEqual(
+                        pair["holder_female"][
+                            "helical_bspline_face_count"
+                        ],
+                        2,
+                    )
+                    self.assertGreaterEqual(
+                        pair["cap_male"]["helical_bspline_face_count"],
+                        2,
+                    )
+
+                central = audit["central_c_connection"]
+                self.assertAlmostEqual(central["female_pivot_mm"], 29.6)
+                self.assertAlmostEqual(central["female_groove_mm"], 30.4)
+                self.assertGreaterEqual(
+                    central["female_thread"]["helical_bspline_face_count"],
+                    2,
+                )
+                self.assertGreaterEqual(
+                    central["male_thread"]["helical_bspline_face_count"],
+                    2,
+                )
+
+    def test_b_and_c_camera_ends_use_straight_cylindrical_grips(self):
+        expected_style = "straight_40mm_cylinder_with_annular_shoulder"
+        for design_name in DESIGN_NAMES:
+            with self.subTest(design=design_name):
+                manifest = self.load_manifest(design_name)
+                for name in ("B", "C"):
+                    self.assertEqual(
+                        manifest["caps"][name]["camera_outer_style"],
+                        expected_style,
+                    )
+                    self.assertEqual(
+                        manifest["final_thread_presence_audit"][
+                            "camera_outputs"
+                        ][name]["outer_style"],
+                        expected_style,
+                    )
+
     def test_fixed_a_c_bs_source_has_no_c_receiver_membrane(self):
         manifest = json.loads(AC_BS_MANIFEST.read_text(encoding="utf-8"))
         validation = manifest["validation"]

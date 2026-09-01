@@ -10,7 +10,9 @@
 - `artifacts/renders/openhi_4f_print_parts_layout.png`: exact orientations used by the separate STL/3MF print files.
 - `artifacts/renders/openhi_4f_a_input_receiver_section.png`: A-only half section proving the internal source receiver and lifted bore transition.
 - `artifacts/renders/openhi_4f_a_lens_cavity_section.png`: A/A+C+BS half section with the installed lens B-rep at its checked optical datum.
-- `runs/run-4-a-input-receiver-optical-vertex-lens-clearance-print-ready-20260901T040031Z/`: checked one-object print files and the matching Nutstore handoff.
+- `artifacts/renders/openhi_4f_c_lens_thread_section.png`: C holder/cap half section proving both final-solid lens-retainer helices and the installed lens cavity.
+- `artifacts/renders/openhi_4f_b_c_straight_camera_grips.png`: isolated B/C caps showing the straight `40 mm` output grips and flat annular shoulders.
+- `runs/run-5-c-thread-straight-camera-grip-print-ready-20260901T143912Z/`: checked one-object print files and the matching Nutstore handoff.
 
 ## Optical Layout
 
@@ -38,9 +40,13 @@ For the plano-convex variants, all plane faces point inward toward the beam spli
 - root and crest radial thread clearance: `0.100/0.100 mm`;
 - B optical axis: `X = 254.633 mm`, intentionally `-0.367 mm` from the A/beam-splitter datum.
 
-The central interface map is deliberately not uniform: the preserved A+C+BS side/C female remains `29.6/30.4 mm`; its lower/A female is `29.8/30.6 mm`; both regenerated B/C lens-side females are `29.8/30.6 mm`; and the Lens C holder beam-splitter-side male remains the unchanged source `29.8/30.6 mm` root/crest. The central C pair therefore has `0.2 mm` nominal diametric interference. It is a preserved tight printed source fit, not a zero-clearance CAD pair. The three newly regenerated lens-retainer pairs are the clearance fits.
+The central interface map is deliberately not uniform. `A_C_BS` is the A lens holder, `Lens_B_holder` is the B lens holder, and `Lens_C_holder` is the C lens holder. Their three lens-facing female threads are all `29.8/30.6 mm`; the matching `A.step`, `B.step`, and `C.step` cap males are all `29.6/30.4 mm`. The separate preserved A+C+BS side/C connection is the one with a `29.6/30.4 mm` female, while the Lens C holder beam-splitter-side male remains the unchanged source `29.8/30.6 mm` root/crest. That central C pair therefore has `0.2 mm` nominal diametric interference. It is a preserved tight printed source fit, not a zero-clearance CAD pair.
+
+The final-solid audit requires two helical B-spline faces in every A/B/C holder female, every A/B/C cap male, both B/C output threads, and both sides of the central C connection. The C lens-facing holder and cap are completed in the proven Z-axis Boolean frame and only then rotated onto X; this prevents OCCT from silently exporting their valid standalone helical sweeps as smooth cylinders.
 
 The output thread also preserves the source OpenHI printed profile (`24.4 mm` root, `25.2 mm` crest, `0.8 mm` pitch). It is intentionally not relabeled as exact standard `1"-32 UN` C-mount (`25.4 mm`, `0.79375 mm` pitch).
+
+On B and C, the outer `40 mm` grip remains cylindrical up to the output-thread shoulder. The former outer `40 -> 24.4 mm` conical taper is removed, leaving a flat annular shoulder around the protruding output thread. The lens-facing `30 mm` transition is unchanged. This orientation needs slicer support under the output shoulder, as requested.
 
 The A input end now preserves the exact internal female receiver cavity from the original `OpenHI_STEP/A.step`: `12.474 mm` insertion depth, `25.0 mm` pilot, and `25.8 mm` groove envelope. Its mating flange seats at the A outer face. The entire receiver depth remains inside the A arm envelope, followed by a 45-degree transition to the lens clear aperture; it is not a second seat-height term in the focal chain.
 

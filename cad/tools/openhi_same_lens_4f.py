@@ -112,7 +112,6 @@ CAP_MOUTH_INSERT_DIAMETER_MM = 39.8
 CAMERA_MALE_ROOT_MM = 24.4
 CAMERA_THREAD_LENGTH_MM = 4.7
 CAMERA_THREAD_END_LEAD_MM = 0.4
-CAMERA_TRANSITION_MM = 3.0
 CAMERA_CLEAR_BORE_MM = 21.0
 MIN_OUTER_COLLAR_MM = 0.1
 # The original A part has a source-authored internal OpenHI/C-mount-like
@@ -129,11 +128,15 @@ OPTICAL_CORE_PROBE_DIAMETER_MM = 4.0
 C_RECEIVER_MEMBRANE_PROBE_DIAMETER_MM = 29.4
 C_RECEIVER_PROBE_X0 = 269.91
 C_RECEIVER_PROBE_X1 = 274.95
+CENTRAL_C_FEMALE_THREAD_X0 = 270.0
+CENTRAL_C_FEMALE_THREAD_X1 = 275.0
+CENTRAL_C_MALE_THREAD_X0 = 270.0
+CENTRAL_C_MALE_THREAD_X1 = 275.5
 OPTICAL_PATH_END_MARGIN_MM = 0.05
 BREP_BOUND_TOLERANCE_MM = 1e-6
 PRINT_RELEASE_RUN_NAME = (
-    "run-4-a-input-receiver-optical-vertex-lens-clearance-"
-    "print-ready-20260901T040031Z"
+    "run-5-c-thread-straight-camera-grip-"
+    "print-ready-20260901T143912Z"
 )
 
 
@@ -423,6 +426,22 @@ def x_male_thread(
         phase_shift=phase_shift,
     ).translate((0.0, y, z))
     return tooth.intersect(x_clip(x0, length, crest + 4.0, y, z))
+
+
+def rotate_z_part_to_c_axis(shape: cq.Workplane) -> cq.Workplane:
+    """Map the proven A/B Z-axis construction onto the positive C axis.
+
+    OCCT accepts the direct X-axis helical sweep as a valid standalone solid,
+    but can classify its teeth as being inside the smooth root during later
+    fuse/cut operations.  Complete the booleans in the stable Z frame first,
+    then rigidly rotate the finished solid so the axial coordinate is retained
+    as global X and the axis lands at ``(y, z) = (210, 600)``.
+    """
+    return shape.rotate(
+        (0.0, 0.0, 0.0),
+        (0.0, 1.0, 0.0),
+        90.0,
+    ).translate((0.0, 0.0, BS_Z + BS_X))
 
 
 def keep_z_above(shape: cq.Shape, zmin: float) -> cq.Workplane:
@@ -793,18 +812,23 @@ def build_c_holder(
     mouth_length = (40.0 - FEMALE_PIVOT_MM) / 2.0
     body_x1 = thread_x1 + mouth_length
 
-    outer = x_cylinder(40.0, 280.15, body_x1 - 280.15, BS_Y, BS_Z)
-    body = largest_solid(static.union(outer, tol=0.002))
+    # Build the complete lens-side arm in the proven Z-axis frame.  Rotating a
+    # finished threaded socket is robust; cutting a direct X-axis sweep from
+    # the final holder silently collapsed the C female thread to a smooth bore.
+    arm = z_cylinder(40.0, 280.15, body_x1 - 280.15, BS_X, BS_Y)
     cutters = [
-        x_cylinder(aperture, 279.9, seat_x - 279.9, BS_Y, BS_Z),
-        x_cylinder(pocket, seat_x, contact_x - seat_x, BS_Y, BS_Z),
-        x_cone(pocket, FEMALE_PIVOT_MM, contact_x, transition, BS_Y, BS_Z),
-        x_cylinder(FEMALE_PIVOT_MM, thread_x0, THREAD_LENGTH_MM, BS_Y, BS_Z),
-        x_female_thread(thread_x0, THREAD_LENGTH_MM, BS_Y, BS_Z),
-        x_cone(FEMALE_PIVOT_MM, 40.0, thread_x1, mouth_length, BS_Y, BS_Z),
+        z_cylinder(aperture, 279.9, seat_x - 279.9, BS_X, BS_Y),
+        z_cylinder(pocket, seat_x, contact_x - seat_x, BS_X, BS_Y),
+        z_cone(pocket, FEMALE_PIVOT_MM, contact_x, transition, BS_X, BS_Y),
+        z_cylinder(FEMALE_PIVOT_MM, thread_x0, THREAD_LENGTH_MM, BS_X, BS_Y),
+        z_female_thread(thread_x0, THREAD_LENGTH_MM, BS_X, BS_Y),
+        z_cone(FEMALE_PIVOT_MM, 40.0, thread_x1, mouth_length, BS_X, BS_Y),
     ]
     for cutter in cutters:
-        body = largest_solid(body.cut(cutter).clean())
+        arm = largest_solid(arm.cut(cutter).clean())
+    body = largest_solid(
+        static.union(rotate_z_part_to_c_axis(arm), tol=0.002)
+    )
     # The legacy male tooth starts exactly on its root cylinder and therefore
     # imports as a separate tangent solid.  A 0.005 mm radial overlap sleeve is
     # below print tolerance, leaves the crest unchanged, and makes the exported
@@ -963,8 +987,7 @@ def build_b_cap(
     body_z0 = info["outer_end_mm"]
     camera_thread_z1 = outer_end - CAMERA_THREAD_END_LEAD_MM
     camera_thread_z0 = camera_thread_z1 - CAMERA_THREAD_LENGTH_MM
-    camera_transition_z0 = camera_thread_z0 - CAMERA_TRANSITION_MM
-    if camera_transition_z0 < body_z0 + MIN_OUTER_COLLAR_MM:
+    if camera_thread_z0 < body_z0 + MIN_OUTER_COLLAR_MM:
         raise RuntimeError(f"B cap is too short for bounded interfaces: {spec.key}")
     retainer_diameter = spec.diameter_mm
     aperture = info["aperture_mm"]
@@ -981,8 +1004,7 @@ def build_b_cap(
             B_AXIS_X,
             BS_Y,
         ),
-        z_cylinder(CAP_OUTER_DIAMETER_MM, body_z0, camera_transition_z0 - body_z0, B_AXIS_X, BS_Y),
-        z_cone(CAP_OUTER_DIAMETER_MM, CAMERA_MALE_ROOT_MM, camera_transition_z0, CAMERA_TRANSITION_MM, B_AXIS_X, BS_Y),
+        z_cylinder(CAP_OUTER_DIAMETER_MM, body_z0, camera_thread_z0 - body_z0, B_AXIS_X, BS_Y),
         z_cylinder(CAMERA_MALE_ROOT_MM, camera_thread_z0, outer_end - camera_thread_z0, B_AXIS_X, BS_Y),
         z_male_thread(CAMERA_MALE_ROOT_MM, camera_thread_z0, CAMERA_THREAD_LENGTH_MM, B_AXIS_X, BS_Y, phase_shift=0.0),
     ]
@@ -1006,6 +1028,8 @@ def build_b_cap(
         "lens_thread_max_mm": thread_z1,
         "camera_thread_min_mm": camera_thread_z0,
         "camera_thread_max_mm": camera_thread_z1,
+        "camera_outer_shoulder_mm": camera_thread_z0,
+        "camera_outer_style": "straight_40mm_cylinder_with_annular_shoulder",
         "axis_x_mm": B_AXIS_X,
         "axis_y_mm": BS_Y,
         "retainer_aperture_mm": aperture,
@@ -1024,47 +1048,47 @@ def build_c_cap(
     body_x0 = info["outer_end_mm"]
     camera_thread_x1 = outer_end - CAMERA_THREAD_END_LEAD_MM
     camera_thread_x0 = camera_thread_x1 - CAMERA_THREAD_LENGTH_MM
-    camera_transition_x0 = camera_thread_x0 - CAMERA_TRANSITION_MM
-    if camera_transition_x0 < body_x0 + MIN_OUTER_COLLAR_MM:
+    if camera_thread_x0 < body_x0 + MIN_OUTER_COLLAR_MM:
         raise RuntimeError(f"C cap is too short for bounded interfaces: {spec.key}")
     retainer_diameter = spec.diameter_mm
     aperture = info["aperture_mm"]
     body_bore = min(CAMERA_CLEAR_BORE_MM, aperture)
+    # As with the C holder, complete both male threads and all unions in the
+    # stable Z frame, then rotate the finished cap onto the C axis.
     parts = [
-        x_cone(retainer_diameter, MALE_LENS_ROOT_MM, contact, thread_x0 - contact, BS_Y, BS_Z),
-        x_cylinder(MALE_LENS_ROOT_MM, thread_x0, THREAD_LENGTH_MM, BS_Y, BS_Z),
-        x_male_thread(
+        z_cone(retainer_diameter, MALE_LENS_ROOT_MM, contact, thread_x0 - contact, BS_X, BS_Y),
+        z_cylinder(MALE_LENS_ROOT_MM, thread_x0, THREAD_LENGTH_MM, BS_X, BS_Y),
+        z_male_thread(
             MALE_LENS_ROOT_MM,
             thread_x0,
             THREAD_LENGTH_MM,
+            BS_X,
             BS_Y,
-            BS_Z,
-            phase_shift=0.0,
         ),
-        x_cone(
+        z_cone(
             MALE_LENS_ROOT_MM,
             CAP_MOUTH_INSERT_DIAMETER_MM,
             thread_x1,
             body_x0 - thread_x1,
+            BS_X,
             BS_Y,
-            BS_Z,
         ),
-        x_cylinder(CAP_OUTER_DIAMETER_MM, body_x0, camera_transition_x0 - body_x0, BS_Y, BS_Z),
-        x_cone(CAP_OUTER_DIAMETER_MM, CAMERA_MALE_ROOT_MM, camera_transition_x0, CAMERA_TRANSITION_MM, BS_Y, BS_Z),
-        x_cylinder(CAMERA_MALE_ROOT_MM, camera_thread_x0, outer_end - camera_thread_x0, BS_Y, BS_Z),
-        x_male_thread(CAMERA_MALE_ROOT_MM, camera_thread_x0, CAMERA_THREAD_LENGTH_MM, BS_Y, BS_Z, phase_shift=0.0),
+        z_cylinder(CAP_OUTER_DIAMETER_MM, body_x0, camera_thread_x0 - body_x0, BS_X, BS_Y),
+        z_cylinder(CAMERA_MALE_ROOT_MM, camera_thread_x0, outer_end - camera_thread_x0, BS_X, BS_Y),
+        z_male_thread(CAMERA_MALE_ROOT_MM, camera_thread_x0, CAMERA_THREAD_LENGTH_MM, BS_X, BS_Y, phase_shift=0.0),
     ]
     body = fuse_cap_parts(parts, label="C cap")
     aperture_taper_length = 1.5
     cutters = [
-        x_cylinder(body_bore, contact - 0.1, outer_end - contact + 0.2, BS_Y, BS_Z),
-        x_cylinder(aperture, contact - 0.1, body_x0 - contact + 0.2, BS_Y, BS_Z),
+        z_cylinder(body_bore, contact - 0.1, outer_end - contact + 0.2, BS_X, BS_Y),
+        z_cylinder(aperture, contact - 0.1, body_x0 - contact + 0.2, BS_X, BS_Y),
     ]
     if not math.isclose(aperture, body_bore, abs_tol=1e-9):
         cutters.append(
-            x_cone(aperture, body_bore, body_x0, aperture_taper_length, BS_Y, BS_Z)
+            z_cone(aperture, body_bore, body_x0, aperture_taper_length, BS_X, BS_Y)
         )
     body = cut_cap_bores(body, cutters, label="C cap")
+    body = rotate_z_part_to_c_axis(body)
     return body, {
         "optical_vertex_mm": optical_vertex,
         "outer_end_mm": outer_end,
@@ -1074,6 +1098,8 @@ def build_c_cap(
         "lens_thread_max_mm": thread_x1,
         "camera_thread_min_mm": camera_thread_x0,
         "camera_thread_max_mm": camera_thread_x1,
+        "camera_outer_shoulder_mm": camera_thread_x0,
+        "camera_outer_style": "straight_40mm_cylinder_with_annular_shoulder",
         "axis_y_mm": BS_Y,
         "axis_z_mm": BS_Z,
         "retainer_aperture_mm": aperture,
@@ -1567,18 +1593,46 @@ def build_optical_path_audit(
 
 
 def build_thread_construction_audit() -> dict[str, Any]:
+    c_axis_sample_start = 100.0
     samples = {
-        "female_lens_z": (z_female_thread(0.0, THREAD_LENGTH_MM, 0.0, 0.0), "z", THREAD_LENGTH_MM),
-        "female_lens_x": (x_female_thread(0.0, THREAD_LENGTH_MM, 0.0, 0.0), "x", THREAD_LENGTH_MM),
+        "female_lens_z": (
+            z_female_thread(0.0, THREAD_LENGTH_MM, 0.0, 0.0),
+            "z",
+            0.0,
+            THREAD_LENGTH_MM,
+        ),
+        "female_lens_c_axis_rotated": (
+            rotate_z_part_to_c_axis(
+                z_female_thread(
+                    c_axis_sample_start,
+                    THREAD_LENGTH_MM,
+                    BS_X,
+                    BS_Y,
+                )
+            ),
+            "x",
+            c_axis_sample_start,
+            c_axis_sample_start + THREAD_LENGTH_MM,
+        ),
         "male_lens_z": (
             z_male_thread(MALE_LENS_ROOT_MM, 0.0, THREAD_LENGTH_MM, 0.0, 0.0),
             "z",
+            0.0,
             THREAD_LENGTH_MM,
         ),
-        "male_lens_x": (
-            x_male_thread(MALE_LENS_ROOT_MM, 0.0, THREAD_LENGTH_MM, 0.0, 0.0),
+        "male_lens_c_axis_rotated": (
+            rotate_z_part_to_c_axis(
+                z_male_thread(
+                    MALE_LENS_ROOT_MM,
+                    c_axis_sample_start,
+                    THREAD_LENGTH_MM,
+                    BS_X,
+                    BS_Y,
+                )
+            ),
             "x",
-            THREAD_LENGTH_MM,
+            c_axis_sample_start,
+            c_axis_sample_start + THREAD_LENGTH_MM,
         ),
         "male_camera_z": (
             z_male_thread(
@@ -1590,33 +1644,192 @@ def build_thread_construction_audit() -> dict[str, Any]:
                 phase_shift=0.0,
             ),
             "z",
+            0.0,
             CAMERA_THREAD_LENGTH_MM,
+        ),
+        "male_camera_c_axis_rotated": (
+            rotate_z_part_to_c_axis(
+                z_male_thread(
+                    CAMERA_MALE_ROOT_MM,
+                    c_axis_sample_start,
+                    CAMERA_THREAD_LENGTH_MM,
+                    BS_X,
+                    BS_Y,
+                    phase_shift=0.0,
+                )
+            ),
+            "x",
+            c_axis_sample_start,
+            c_axis_sample_start + CAMERA_THREAD_LENGTH_MM,
         ),
     }
     records: dict[str, dict[str, Any]] = {}
-    for name, (shape, axis, expected_length) in samples.items():
+    for name, (shape, axis, expected_minimum, expected_maximum) in samples.items():
         box = shape.val().BoundingBox()
         minimum = box.xmin if axis == "x" else box.zmin
         maximum = box.xmax if axis == "x" else box.zmax
         records[name] = {
             "axis": axis.upper(),
-            "expected_bounds_mm": [0.0, expected_length],
+            "expected_bounds_mm": [expected_minimum, expected_maximum],
             "measured_bounds_mm": [round(minimum, 9), round(maximum, 9)],
-            "start_error_mm": round(abs(minimum), 9),
-            "end_error_mm": round(abs(maximum - expected_length), 9),
+            "start_error_mm": round(abs(minimum - expected_minimum), 9),
+            "end_error_mm": round(abs(maximum - expected_maximum), 9),
             "clipped_to_parent_interval": (
-                abs(minimum) <= BREP_BOUND_TOLERANCE_MM
-                and abs(maximum - expected_length) <= BREP_BOUND_TOLERANCE_MM
+                abs(minimum - expected_minimum) <= BREP_BOUND_TOLERANCE_MM
+                and abs(maximum - expected_maximum) <= BREP_BOUND_TOLERANCE_MM
             ),
         }
     return {
         "pitch_mm": PITCH_MM,
         "radial_tooth_height_mm": TOOTH_RADIAL_HEIGHT_MM,
         "construction_runout_mm": THREAD_RUNOUT_MM,
+        "c_axis_strategy": "complete_z_axis_booleans_then_rigidly_rotate",
         "samples": records,
         "all_samples_clipped_to_parent_interval": all(
             record["clipped_to_parent_interval"] for record in records.values()
         ),
+    }
+
+
+def helical_faces_in_interval(
+    shape: cq.Workplane,
+    *,
+    axis: str,
+    expected_minimum: float,
+    expected_maximum: float,
+) -> dict[str, Any]:
+    tolerance = 2e-4
+    matches: list[dict[str, Any]] = []
+    for face in shape.val().Faces():
+        if face.geomType() != "BSPLINE":
+            continue
+        box = face.BoundingBox()
+        minimum = box.xmin if axis == "x" else box.zmin
+        maximum = box.xmax if axis == "x" else box.zmax
+        if (
+            abs(minimum - expected_minimum) <= tolerance
+            and abs(maximum - expected_maximum) <= tolerance
+        ):
+            matches.append(
+                {
+                    "bounds_mm": [round(minimum, 9), round(maximum, 9)],
+                    "area_mm2": round(face.Area(), 9),
+                }
+            )
+    return {
+        "axis": axis.upper(),
+        "expected_bounds_mm": [expected_minimum, expected_maximum],
+        "helical_bspline_face_count": len(matches),
+        "helical_faces": matches,
+        "present_in_final_solid": len(matches) >= 2,
+    }
+
+
+def build_final_thread_presence_audit(
+    parts: dict[str, cq.Workplane],
+    arm_info: dict[str, dict[str, float]],
+    cap_info: dict[str, dict[str, float]],
+) -> dict[str, Any]:
+    pair_specs = {
+        "A": ("A_C_BS", "A", "z"),
+        "B": ("Lens_B_holder", "B", "z"),
+        "C": ("Lens_C_holder", "C", "x"),
+    }
+    lens_pairs: dict[str, Any] = {}
+    for name, (holder_name, cap_name, axis) in pair_specs.items():
+        minimum = arm_info[name]["thread_min_mm"]
+        maximum = arm_info[name]["thread_max_mm"]
+        holder = helical_faces_in_interval(
+            parts[holder_name],
+            axis=axis,
+            expected_minimum=minimum,
+            expected_maximum=maximum,
+        )
+        cap = helical_faces_in_interval(
+            parts[cap_name],
+            axis=axis,
+            expected_minimum=minimum,
+            expected_maximum=maximum,
+        )
+        lens_pairs[name] = {
+            "holder_part": holder_name,
+            "cap_part": cap_name,
+            "female_pivot_mm": FEMALE_PIVOT_MM,
+            "female_groove_mm": FEMALE_GROOVE_MM,
+            "male_root_mm": MALE_LENS_ROOT_MM,
+            "male_crest_mm": MALE_LENS_ROOT_MM
+            + 2.0 * TOOTH_RADIAL_HEIGHT_MM,
+            "holder_female": holder,
+            "cap_male": cap,
+            "pair_present_in_final_solids": (
+                holder["present_in_final_solid"]
+                and cap["present_in_final_solid"]
+            ),
+        }
+
+    camera_outputs: dict[str, Any] = {}
+    for name, part_name, axis in (("B", "B", "z"), ("C", "C", "x")):
+        minimum = cap_info[name]["camera_thread_min_mm"]
+        maximum = cap_info[name]["camera_thread_max_mm"]
+        record = helical_faces_in_interval(
+            parts[part_name],
+            axis=axis,
+            expected_minimum=minimum,
+            expected_maximum=maximum,
+        )
+        camera_outputs[name] = {
+            "part": part_name,
+            "root_mm": CAMERA_MALE_ROOT_MM,
+            "crest_mm": CAMERA_MALE_ROOT_MM
+            + 2.0 * TOOTH_RADIAL_HEIGHT_MM,
+            "outer_style": cap_info[name]["camera_outer_style"],
+            "male_thread": record,
+            "present_in_final_solid": record["present_in_final_solid"],
+        }
+
+    central_c_female = helical_faces_in_interval(
+        parts["A_C_BS"],
+        axis="x",
+        expected_minimum=CENTRAL_C_FEMALE_THREAD_X0,
+        expected_maximum=CENTRAL_C_FEMALE_THREAD_X1,
+    )
+    central_c_male = helical_faces_in_interval(
+        parts["Lens_C_holder"],
+        axis="x",
+        expected_minimum=CENTRAL_C_MALE_THREAD_X0,
+        expected_maximum=CENTRAL_C_MALE_THREAD_X1,
+    )
+    central_c_connection = {
+        "female_part": "A_C_BS",
+        "female_pivot_mm": 29.6,
+        "female_groove_mm": 30.4,
+        "female_thread": central_c_female,
+        "male_part": "Lens_C_holder",
+        "male_root_mm": LEGACY_MALE_ROOT_MM,
+        "male_crest_mm": LEGACY_MALE_ROOT_MM
+        + 2.0 * TOOTH_RADIAL_HEIGHT_MM,
+        "male_thread": central_c_male,
+        "pair_present_in_final_solids": (
+            central_c_female["present_in_final_solid"]
+            and central_c_male["present_in_final_solid"]
+        ),
+    }
+
+    return {
+        "lens_retainer_pairs": lens_pairs,
+        "camera_outputs": camera_outputs,
+        "central_c_connection": central_c_connection,
+        "all_lens_retainer_pairs_present": all(
+            pair["pair_present_in_final_solids"]
+            for pair in lens_pairs.values()
+        ),
+        "all_camera_output_threads_present": all(
+            output["present_in_final_solid"]
+            for output in camera_outputs.values()
+        ),
+        "central_c_connection_present": central_c_connection[
+            "pair_present_in_final_solids"
+        ],
     }
 
 
@@ -1812,6 +2025,9 @@ def build_dimensional_audit(
             "pitch_mm": PITCH_MM,
             "bounded_length_mm": CAMERA_THREAD_LENGTH_MM,
             "classification": "source OpenHI printed C-mount-like profile",
+            "outer_grip_diameter_mm": CAP_OUTER_DIAMETER_MM,
+            "outer_style": cap_info["B"]["camera_outer_style"],
+            "annular_shoulder_requires_print_support": True,
             "standard_1in_32_major_mm": 25.4,
             "standard_1in_32_pitch_mm": 0.79375,
         },
@@ -1953,17 +2169,16 @@ def export_shape_set(
     return outputs
 
 
-def export_a_axis_inspection_sections(
-    a_cap: cq.Workplane,
-    a_holder: cq.Workplane,
+def export_axis_inspection_sections(
+    shapes: dict[str, cq.Workplane],
     artifact_dir: Path,
 ) -> dict[str, dict[str, Any]]:
-    """Export non-printing half sections that expose the A receiver and lens seat."""
+    """Export non-printing half sections through the shared optical plane."""
 
     inspection_dir = artifact_dir / "inspection"
     inspection_dir.mkdir(parents=True, exist_ok=True)
     outputs: dict[str, dict[str, Any]] = {}
-    for name, shape in {"A": a_cap, "A_C_BS": a_holder}.items():
+    for name, shape in shapes.items():
         box = shape.val().BoundingBox()
         clip = (
             cq.Workplane("XY")
@@ -2027,6 +2242,8 @@ def write_readme(
 - `artifacts/renders/openhi_4f_print_parts_layout.png`: exact orientations used by the separate STL/3MF print files.
 - `artifacts/renders/openhi_4f_a_input_receiver_section.png`: A-only half section proving the internal source receiver and lifted bore transition.
 - `artifacts/renders/openhi_4f_a_lens_cavity_section.png`: A/A+C+BS half section with the installed lens B-rep at its checked optical datum.
+- `artifacts/renders/openhi_4f_c_lens_thread_section.png`: C holder/cap half section proving both final-solid lens-retainer helices and the installed lens cavity.
+- `artifacts/renders/openhi_4f_b_c_straight_camera_grips.png`: isolated B/C caps showing the straight `40 mm` output grips and flat annular shoulders.
 - `runs/{PRINT_RELEASE_RUN_NAME}/`: checked one-object print files and the matching Nutstore handoff.
 
 ## Optical Layout
@@ -2055,9 +2272,13 @@ For the plano-convex variants, all plane faces point inward toward the beam spli
 - root and crest radial thread clearance: `{dimensional_audit['lens_retainer_thread_fit']['root_radial_clearance_mm']:.3f}/{dimensional_audit['lens_retainer_thread_fit']['crest_radial_clearance_mm']:.3f} mm`;
 - B optical axis: `X = {B_AXIS_X:.3f} mm`, intentionally `{B_AXIS_X - BS_X:.3f} mm` from the A/beam-splitter datum.
 
-The central interface map is deliberately not uniform: the preserved A+C+BS side/C female remains `29.6/30.4 mm`; its lower/A female is `29.8/30.6 mm`; both regenerated B/C lens-side females are `29.8/30.6 mm`; and the Lens C holder beam-splitter-side male remains the unchanged source `29.8/30.6 mm` root/crest. The central C pair therefore has `0.2 mm` nominal diametric interference. It is a preserved tight printed source fit, not a zero-clearance CAD pair. The three newly regenerated lens-retainer pairs are the clearance fits.
+The central interface map is deliberately not uniform. `A_C_BS` is the A lens holder, `Lens_B_holder` is the B lens holder, and `Lens_C_holder` is the C lens holder. Their three lens-facing female threads are all `29.8/30.6 mm`; the matching `A.step`, `B.step`, and `C.step` cap males are all `29.6/30.4 mm`. The separate preserved A+C+BS side/C connection is the one with a `29.6/30.4 mm` female, while the Lens C holder beam-splitter-side male remains the unchanged source `29.8/30.6 mm` root/crest. That central C pair therefore has `0.2 mm` nominal diametric interference. It is a preserved tight printed source fit, not a zero-clearance CAD pair.
+
+The final-solid audit requires two helical B-spline faces in every A/B/C holder female, every A/B/C cap male, both B/C output threads, and both sides of the central C connection. The C lens-facing holder and cap are completed in the proven Z-axis Boolean frame and only then rotated onto X; this prevents OCCT from silently exporting their valid standalone helical sweeps as smooth cylinders.
 
 The output thread also preserves the source OpenHI printed profile (`24.4 mm` root, `25.2 mm` crest, `0.8 mm` pitch). It is intentionally not relabeled as exact standard `1\"-32 UN` C-mount (`25.4 mm`, `0.79375 mm` pitch).
+
+On B and C, the outer `40 mm` grip remains cylindrical up to the output-thread shoulder. The former outer `40 -> 24.4 mm` conical taper is removed, leaving a flat annular shoulder around the protruding output thread. The lens-facing `30 mm` transition is unchanged. This orientation needs slicer support under the output shoulder, as requested.
 
 The A input end now preserves the exact internal female receiver cavity from the original `OpenHI_STEP/A.step`: `{A_INPUT_RECEIVER_DEPTH_MM:.3f} mm` insertion depth, `{A_INPUT_RECEIVER_PILOT_DIAMETER_MM:.1f} mm` pilot, and `{A_INPUT_RECEIVER_GROOVE_DIAMETER_MM:.1f} mm` groove envelope. Its mating flange seats at the A outer face. The entire receiver depth remains inside the A arm envelope, followed by a 45-degree transition to the lens clear aperture; it is not a second seat-height term in the focal chain.
 
@@ -2141,9 +2362,13 @@ def build_system(spec_key: str, design_dir: Path, *, sync: bool = True) -> dict[
         "Lens_C_holder": c_holder,
     }
     part_outputs = export_shape_set(parts, artifact_dir)
-    inspection_outputs = export_a_axis_inspection_sections(
-        caps["A"],
-        ac_bs,
+    inspection_outputs = export_axis_inspection_sections(
+        {
+            "A": caps["A"],
+            "A_C_BS": ac_bs,
+            "C": caps["C"],
+            "Lens_C_holder": c_holder,
+        },
         artifact_dir,
     )
 
@@ -2317,6 +2542,11 @@ def build_system(spec_key: str, design_dir: Path, *, sync: bool = True) -> dict[
     }
     optical_path_audit = build_optical_path_audit(parts, cap_info)
     thread_construction_audit = build_thread_construction_audit()
+    final_thread_presence_audit = build_final_thread_presence_audit(
+        parts,
+        arm_info,
+        cap_info,
+    )
     dimensional_audit = build_dimensional_audit(spec, lens_info, arm_info, cap_info)
     a_input_receiver_audit = build_a_input_receiver_audit(caps["A"], cap_info["A"])
     for name, shape in assembly_parts.items():
@@ -2410,7 +2640,7 @@ def build_system(spec_key: str, design_dir: Path, *, sync: bool = True) -> dict[
             row["step_validation"]["solid_count"] == 1
             for row in part_outputs.values()
         ),
-        "a_axis_inspection_sections_are_valid": all(
+        "axis_inspection_sections_are_valid": all(
             row["step_validation"]["occt_valid"]
             and row["step_validation"]["solid_count"] == 1
             and row["mesh_validation"]["watertight"]
@@ -2492,6 +2722,19 @@ def build_system(spec_key: str, design_dir: Path, *, sync: bool = True) -> dict[
                 "all_samples_clipped_to_parent_interval"
             ]
         ),
+        "all_final_lens_retainer_threads_are_present": (
+            final_thread_presence_audit[
+                "all_lens_retainer_pairs_present"
+            ]
+        ),
+        "all_final_camera_output_threads_are_present": (
+            final_thread_presence_audit[
+                "all_camera_output_threads_present"
+            ]
+        ),
+        "central_c_29p6_female_and_male_threads_are_present": (
+            final_thread_presence_audit["central_c_connection_present"]
+        ),
         "lens_model_uses_analytic_optical_surfaces": bool(
             lens_info.get("analytic_spherical_faces")
         ),
@@ -2564,6 +2807,7 @@ def build_system(spec_key: str, design_dir: Path, *, sync: bool = True) -> dict[
         "final_dimensional_audit": dimensional_audit,
         "a_input_receiver_audit": a_input_receiver_audit,
         "thread_construction_audit": thread_construction_audit,
+        "final_thread_presence_audit": final_thread_presence_audit,
         "arms": {"A": a_info, "B": b_info, "C": c_info},
         "caps": cap_info,
         "thread_interfaces": {
