@@ -385,13 +385,29 @@ The authoritative evidence is under
 `/home/lachlan/ProjectsLFS/Aginti-Test/supervision/evidence/memo-current-092/`,
 and the campaign ledger records `memo-current-092` as `passed_after_fix`.
 
-One bounded refinement remains. Resuming the same task increments the goal
-revision, so an already-created artifact from the previous revision is not
-immediately eligible as current-revision mutation evidence. The accepted run
-therefore performed one unnecessary recompilation and briefly edited then
-reverted `TASK.md` before completion. This did not affect the final artifact or
-commit, but a future campaign should prove same-task retained-artifact
-continuity without relaxing the current-goal evidence boundary.
+The follow-up campaign `same-task-retained-document-093` closed the remaining
+resume inefficiency. AgInTiFlow commits
+`5ee94fe78392554d290afc3b652940f3f5b839ec` and
+`1a11370e496cd9db6c893f5b6358cf25dd51ff95` now permit retained PDF/DOCX
+discovery across goal revisions only when all of the following hold:
+
+- the artifact path is safe, project-relative, non-private, and not a scoped
+  verification artifact;
+- the file exists as a nonempty regular file and is not a symlink;
+- the artifact mutation carries a nonempty task hash equal to the current task
+  hash;
+- every intervening continuation is explicitly same-task and carries that same
+  nonempty task hash;
+- no later same-task mutation changed the artifact or a likely same-stem source
+  such as `.tex`, `.md`, `.qmd`, or `.typ` without a newer artifact mutation.
+
+This allows the harmless `TASK.md` touch/revert seen in the real memo run while
+rejecting different goals, missing hashes, unrelated stale root documents, and
+stale compiled output after source edits. Focused dynamic-step, document,
+truthful-completion, syntax, and full npm gates passed. Independent review
+caught and corrected permissive missing-hash handling before release. The
+campaign ledger records the scenario as `passed_after_fix`; these two commits
+have been pushed but were intentionally not published to npm at this checkpoint.
 
 ## Remaining Gaps
 
