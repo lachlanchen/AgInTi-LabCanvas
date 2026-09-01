@@ -1711,7 +1711,10 @@ def _aginti_provider_chain(settings: dict[str, Any], *, policy: dict[str, Any] |
         requested_provider = "deepseek"
     elif requested.startswith("localllm"):
         requested_provider = "localllm"
-    if requested_provider:
+    # The outer Codex policy is carried into an AgInTi fallback turn. Do not
+    # treat that Codex model name as permission to inject AgInTi's OpenAI
+    # provider ahead of its configured DeepSeek -> LocalLLM chain.
+    if requested_provider and requested_provider in providers:
         providers = [requested_provider, *(item for item in providers if item != requested_provider)]
     return providers
 

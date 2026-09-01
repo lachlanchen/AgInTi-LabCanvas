@@ -826,6 +826,14 @@ class WorkspaceAgentTests(unittest.TestCase):
 
         self.assertEqual(providers, ["localllm"])
 
+    def test_aginti_fallback_does_not_inject_openai_from_outer_codex_model(self):
+        providers = _aginti_provider_chain(
+            {"provider_chain": ["deepseek", "localllm"]},
+            policy={"model": "gpt-5.6-sol"},
+        )
+
+        self.assertEqual(providers, ["deepseek", "localllm"])
+
     def test_aginti_provider_policy_settings_apply_without_environment_override(self):
         settings = {"provider_chain": ["deepseek", "localllm"]}
 

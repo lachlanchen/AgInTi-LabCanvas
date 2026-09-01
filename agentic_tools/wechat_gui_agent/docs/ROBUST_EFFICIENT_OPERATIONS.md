@@ -1148,9 +1148,10 @@ evidence for local artifacts, not chat-facing content.
   the default, so repeated requests in one chat resume the same route thread.
   Keyword and attachment checks remain auxiliary fallback and safety gates, not
   the primary capability map.
-- The repository model policy selects AgInTi as the primary backend, with a
-  same-session DeepSeek-to-LocalLLM provider handoff. Explicit Codex or Claude
-  selection remains supported. Every backend must use the same route, message
+- The repository model policy selects Codex as the primary backend. When Codex
+  is unavailable, the same turn falls back to AgInTi, which uses DeepSeek first
+  and LocalLLM only as its final same-session capability fallback. Explicit
+  backend selection remains supported. Every backend must use the same route, message
   ledger, worker queue, media, completion-audit, and artifact-delivery
   contracts. Do not bypass or shrink source scope because the backend changed.
 - Backend fallback is centralized in
