@@ -79,6 +79,51 @@ class CliTests(unittest.TestCase):
         self.assertEqual(payload["policy"]["reasoning_effort"], "medium")
         self.assertIn("Shapr3D", payload["prompt"])
 
+    def test_agent_chat_reports_terminal_task_failure(self):
+        queued = {
+            "ok": True,
+            "task": {
+                "id": "failed-task",
+                "status": "queued",
+                "policy": {"timeout_seconds": 30, "fallback_to_aginti": False},
+            },
+        }
+        failed = {
+            "ok": True,
+            "task": {
+                "id": "failed-task",
+                "status": "failed",
+                "reply": "The LabCanvas agent could not complete this turn.",
+                "error": "model_did_not_execute",
+                "artifacts": [],
+            },
+            "artifacts": {"ok": True, "items": [], "selected_id": ""},
+        }
+        stdout = io.StringIO()
+
+        with (
+            patch("agenticapp.workspace_agent.create_agent_task", return_value=queued),
+            patch("agenticapp.workspace_agent.wait_for_task", return_value=failed),
+            redirect_stdout(stdout),
+        ):
+            code = main(
+                [
+                    "agent",
+                    "chat",
+                    "Return a short answer",
+                    "--storage-dir",
+                    "/tmp/labcanvas-test-agent-chat",
+                    "--no-aginti-fallback",
+                    "--json",
+                ]
+            )
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(code, 1)
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["task"]["status"], "failed")
+        self.assertEqual(payload["task"]["error"], "model_did_not_execute")
+
     def test_list_reads_config(self):
         with tempfile.TemporaryDirectory() as tmp:
             config = Path(tmp) / "targets.json"

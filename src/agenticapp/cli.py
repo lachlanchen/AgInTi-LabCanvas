@@ -601,8 +601,16 @@ def cmd_agent_chat(args: argparse.Namespace) -> int:
             attempts = 2 if result["task"]["policy"].get("fallback_to_aginti", True) else 1
             timeout = policy_timeout * attempts + 60
             result = wait_for_task(result["task"]["id"], storage_dir, timeout=timeout)
+    command_ok = bool(result.get("ok"))
+    if not args.dry_run and not args.detach:
+        task = result.get("task") if isinstance(result.get("task"), dict) else {}
+        command_ok = command_ok and str(task.get("status") or "") in {
+            "completed",
+            "waiting_confirmation",
+        }
     if args.json:
         output = result if args.dry_run else _task_scoped_agent_payload(result)
+        output["ok"] = command_ok
         print(json.dumps(output, ensure_ascii=False, indent=2, sort_keys=True))
     elif args.dry_run:
         policy = result["policy"]
@@ -611,7 +619,7 @@ def cmd_agent_chat(args: argparse.Namespace) -> int:
         print(f"agent task: {result['task']['id']} ({result['task']['status']})")
     else:
         print(result["task"].get("reply") or result["task"].get("error") or result["task"]["status"])
-    return 0 if result.get("ok") else 1
+    return 0 if command_ok else 1
 
 
 def cmd_agent_capabilities(args: argparse.Namespace) -> int:
