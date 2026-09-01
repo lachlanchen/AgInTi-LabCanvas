@@ -395,6 +395,52 @@ class WorkspaceAgentTests(unittest.TestCase):
         self.assertNotEqual(response_name, "response.md")
         self.assertNotIn(task_id, response_name)
 
+    def test_task_runner_recovers_explicit_task_artifact_without_result_manifest(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            storage = root / "output" / "webapp"
+            artifact_name = "provider-fallback-readiness.md"
+            created = create_agent_task(
+                {
+                    "message": f"Create the task artifact {artifact_name}.",
+                    "conversation_id": "manifest-free-artifact",
+                },
+                storage,
+                root=root,
+                launch=False,
+            )
+            task_id = created["task"]["id"]
+
+            def fake_runner(_prompt, **kwargs):
+                task_dir = kwargs["task_dir"]
+                (task_dir / artifact_name).write_text(
+                    "# Provider fallback readiness\n",
+                    encoding="utf-8",
+                )
+                (task_dir / "private-diagnostic.md").write_text(
+                    "internal evidence\n",
+                    encoding="utf-8",
+                )
+                return {
+                    "ok": True,
+                    "backend": "aginti",
+                    "returncode": 0,
+                    "message": f"Created and verified {artifact_name}.",
+                }
+
+            result = run_agent_task(
+                task_id,
+                storage,
+                root=root,
+                backend_runner=fake_runner,
+            )
+            stored = AgentTaskStore(storage).read(task_id)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(len(stored["artifacts"]), 1)
+        self.assertEqual(Path(stored["artifacts"][0]["path"]).name, artifact_name)
+        self.assertNotIn("private-diagnostic.md", stored["reply"])
+
     def test_task_runner_replaces_generic_artifact_name_with_declared_subject(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

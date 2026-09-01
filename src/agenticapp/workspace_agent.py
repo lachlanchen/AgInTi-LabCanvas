@@ -65,6 +65,15 @@ ARTIFACT_SUFFIXES = {
     ".flac",
     ".zip",
 }
+TASK_INTERNAL_ARTIFACT_NAMES = {
+    ".task.lock",
+    "agent-result.json",
+    "aginti-prompt.md",
+    "prompt.md",
+    "task.json",
+    "worker.stderr.log",
+    "worker.stdout.log",
+}
 QUOTA_MARKERS = (
     "429",
     "capacity",
@@ -1035,6 +1044,7 @@ def run_agent_task(
         context=task.get("context") if isinstance(task.get("context"), dict) else {},
     )
     (task_dir / "prompt.md").write_text(prompt, encoding="utf-8")
+    initial_task_files = task_file_snapshot(task_dir)
     runner = backend_runner or run_backend_turn
     try:
         result = runner(
@@ -1051,8 +1061,21 @@ def run_agent_task(
         reply = str(manifest.get("reply") or result.get("message") or "").strip()
         if not result.get("ok") and not reply:
             reply = "The LabCanvas agent could not complete this turn."
+        declared_artifacts = (
+            list(manifest.get("artifacts"))
+            if isinstance(manifest.get("artifacts"), list)
+            else []
+        )
+        declared_artifacts.extend(
+            discover_task_artifacts(
+                task_dir,
+                initial_task_files,
+                request=str(task.get("message") or ""),
+                reply=reply,
+            )
+        )
         copied = collect_task_artifacts(
-            manifest.get("artifacts") if isinstance(manifest.get("artifacts"), list) else [],
+            declared_artifacts,
             reply,
             request=str(task.get("message") or ""),
             task_dir=task_dir,
@@ -1839,6 +1862,53 @@ def load_agent_result(task_dir: Path, backend_result: dict[str, Any]) -> dict[st
         "needs_confirmation": False,
         "confirmation": "",
     }
+
+
+def task_file_snapshot(task_dir: Path) -> dict[Path, tuple[int, int]]:
+    snapshot: dict[Path, tuple[int, int]] = {}
+    for path in task_dir.rglob("*"):
+        if path.is_symlink() or not path.is_file():
+            continue
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        snapshot[path.resolve()] = (stat.st_mtime_ns, stat.st_size)
+    return snapshot
+
+
+def discover_task_artifacts(
+    task_dir: Path,
+    before: dict[Path, tuple[int, int]],
+    *,
+    request: str,
+    reply: str,
+) -> list[dict[str, Any]]:
+    """Recover explicit task outputs when a backend omits its result manifest."""
+
+    named_text = f"{request}\n{reply}"
+    artifacts_dir = (task_dir / "artifacts").resolve()
+    discovered: list[dict[str, Any]] = []
+    for path in sorted(task_dir.rglob("*")):
+        if len(discovered) >= 40 or path.is_symlink() or not path.is_file():
+            continue
+        if path.name in TASK_INTERNAL_ARTIFACT_NAMES:
+            continue
+        if path.suffix.lower() not in ARTIFACT_SUFFIXES:
+            continue
+        resolved = path.resolve()
+        try:
+            stat = resolved.stat()
+        except OSError:
+            continue
+        if before.get(resolved) == (stat.st_mtime_ns, stat.st_size):
+            continue
+        if stat.st_size > 512 * 1024 * 1024:
+            continue
+        if not (_inside(resolved, artifacts_dir) or path.name in named_text):
+            continue
+        discovered.append({"path": str(resolved)})
+    return discovered
 
 
 def collect_task_artifacts(
