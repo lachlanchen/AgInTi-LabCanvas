@@ -588,6 +588,23 @@ packaging, and real package-surface inspection. Release commit
 `aginti-cli` independently verify `0.20.330`. The durable campaign scenario
 `inspect-project-annotation-093` is recorded as `passed_after_fix`.
 
+AgInTiFlow `0.20.331` then closes a related but distinct native-tool routing
+failure. Retained evidence and a controlled persisted reproduction showed a
+provider placing `tmux_list_sessions` or exact `tmux list-sessions` text inside
+generic `run_command`, causing shell failure or a broad permission pause even
+though the safer native tmux tool was offered. Source commit
+`15242420769f313e8336976527ac34cc62d3841e` now auto-corrects only those exact
+read-only aliases to `tmux_list_sessions` before shell guardrails run. It records
+the correction and original requested tool, dispatches no generic shell command,
+and continues to block tmux startup, send, and mutation commands.
+
+The persisted positive and negative regressions, tmux guardrail suite,
+progressive-tool selection, provider handoff, syntax, full npm suite, audit, and
+package gates pass. Release commit
+`09b3b31314f4edf3aab21c8973ddfc7acfaa2609` is pushed; npm `latest`, `aginti`, and
+`aginti-cli` independently verify `0.20.331`. The durable scenario
+`tmux-run-command-native-recovery-094` is `passed_after_fix`.
+
 ## Remaining Gaps
 
 ### Completed: Unified Personal-WeChat Availability
