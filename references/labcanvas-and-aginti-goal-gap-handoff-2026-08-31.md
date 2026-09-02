@@ -4,6 +4,56 @@ Date: 2026-08-31
 
 Status: active engineering contract and current verification checkpoint
 
+## 2026-09-02 Checkpoint
+
+The two-track goal below remains active. The latest completed slice fixes a
+specific boundary between LabCanvas recovery and AgInTi evidence handling:
+
+- A scheduled, message-only WeCom correction must be treated as a
+  host-managed response. It must not inherit an older task's artifact root,
+  missing-file list, or task-evidence requirement.
+- LabCanvas now withholds unsupported publication, date, validation, forecast,
+  and quantitative claims from message-only research when no fresh exact-task
+  evidence manifest exists. It still permits a clearly labeled, source-free
+  hypothesis with an actionable experiment.
+- Generic completion-checker uncertainty about a scheduled correction no
+  longer causes a mechanical "unfinished part" notice after the corrected
+  message has passed the dedicated evidence gate. Substantive missing
+  requirements remain unresolved and cannot be waived by this reconciliation.
+- A successful replacement explicitly records its message-only evidence state
+  as `accepted`; stale rejection state from an earlier generation cannot
+  mislead later recovery or health diagnostics.
+
+LabCanvas commits for this slice are `28705ce`, `cd31c7c`, `24aee8b`, and
+`c487b8e`. The focused worker and WeCom bridge suite passes 686 tests. Two live
+LabAgent inspiration occurrences were repaired without regenerating completed
+safe content: both now contain a concise labeled hypothesis, no files, no
+invented source or benchmark, no confirmation request, and no mechanical
+coverage notice.
+
+The current remaining failure is transport, not task execution:
+
+- the MIX 2S is physically reachable but Android reports the existing computer
+  ADB key as unauthorized;
+- desktop personal WeChat is at its QR login entry;
+- the isolated desktop WeCom client is at its security-verification gate;
+- all monitor, worker, and scheduler processes are alive, and neither the
+  personal-WeChat nor WeCom queue has an active or stale task;
+- exact generated results remain persisted for bounded delivery recovery and
+  are not regenerated while transport is unavailable.
+
+Do not delete or regenerate the existing ADB key. The next physical acceptance
+gate is to unlock the phone and approve that existing computer key. After a
+transport returns, acceptance requires one exact inbound message and one stored
+deferred result to complete without duplicate delivery.
+
+AgInTiFlow `main` is currently released as `0.20.327`; its recent scoped
+response-only work complements the LabCanvas host guard. The next AgInTi
+campaign target is to make response-only research honor an evidence scope
+before generation, especially during DeepSeek-to-LocalLLM handoff, while
+keeping LabCanvas chat names, schedules, permissions, and transport policy out
+of the general AgInTi runtime.
+
 ## Name And Intent
 
 The product name is **LabCanvas**, pronounced as two ordinary English words:
