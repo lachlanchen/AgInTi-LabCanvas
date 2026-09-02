@@ -5075,6 +5075,10 @@ stderr: noisy internal trace
         guarded = worker.enforce_message_only_research_evidence(task, result)
 
         self.assertEqual(guarded, result)
+        self.assertEqual(
+            task["message_only_research_quality"]["status"], "accepted"
+        )
+        self.assertEqual(task["message_only_research_quality"]["issues"], [])
 
     def test_message_only_inspiration_rejects_unbounded_chinese_year_forecast(self) -> None:
         worker = load_worker()

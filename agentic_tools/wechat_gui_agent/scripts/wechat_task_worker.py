@@ -5108,11 +5108,7 @@ MESSAGE_ONLY_QUANTITATIVE_CLAIM_RE = re.compile(
 )
 
 
-def message_only_research_evidence_issues(
-    task: dict[str, Any], result: dict[str, Any]
-) -> list[str]:
-    """Reject unsourced factual research claims while allowing explicit hypotheses."""
-
+def message_only_research_evidence_contract_applies(task: dict[str, Any]) -> bool:
     execution = (
         task.get("execution_contract")
         if isinstance(task.get("execution_contract"), dict)
@@ -5123,11 +5119,19 @@ def message_only_research_evidence_issues(
         if isinstance(execution.get("research_evidence"), dict)
         else {}
     )
-    if not (
+    return bool(
         contract.get("required")
         and contract.get("message_only")
         and task_forbids_chat_artifact_delivery(task)
-    ):
+    )
+
+
+def message_only_research_evidence_issues(
+    task: dict[str, Any], result: dict[str, Any]
+) -> list[str]:
+    """Reject unsourced factual research claims while allowing explicit hypotheses."""
+
+    if not message_only_research_evidence_contract_applies(task):
         return []
     text = str(result.get("message") or "").strip()
     if not text or result_is_no_reply(result):
@@ -5173,8 +5177,18 @@ def enforce_message_only_research_evidence(
 ) -> dict[str, Any]:
     """Withhold unsupported message-only research claims before chat delivery."""
 
+    if not message_only_research_evidence_contract_applies(task):
+        return result
+    text = str(result.get("message") or "").strip()
+    if not text or result_is_no_reply(result):
+        return result
     issues = message_only_research_evidence_issues(task, result)
     if not issues:
+        task["message_only_research_quality"] = {
+            "status": "accepted",
+            "issues": [],
+            "checked_at": datetime.now().isoformat(timespec="seconds"),
+        }
         return result
     task["message_only_research_quality"] = {
         "status": "rejected",
