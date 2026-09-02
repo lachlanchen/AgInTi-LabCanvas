@@ -91,6 +91,11 @@ def load_android_bridge():
 
 
 class WeComAgentBridgeTests(unittest.TestCase):
+    def test_gui_bridge_never_accepts_tex_for_delivery(self) -> None:
+        bridge = load_gui_bridge()
+
+        self.assertNotIn(".tex", bridge.SAFE_SEND_EXTENSIONS)
+
     def test_android_bridge_restores_requested_dual_layout(self) -> None:
         bridge_module = load_android_bridge()
         with tempfile.TemporaryDirectory() as tmp:

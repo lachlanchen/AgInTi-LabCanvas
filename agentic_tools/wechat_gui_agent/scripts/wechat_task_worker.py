@@ -2125,10 +2125,20 @@ def research_summary_delivery_files(
 
 
 def wecom_research_delivery_files(task: dict[str, Any] | None, files: list[Path]) -> list[Path]:
-    """Apply the shared research delivery filter on the WeCom transport."""
+    """Keep TeX private on WeCom, then apply the shared research filter."""
     if not task or task_transport_kind(task) != "wecom":
         return files
-    return research_summary_delivery_files(task, files)
+    selected = research_summary_delivery_files(task, files)
+    kept = [path for path in selected if path.suffix.casefold() != ".tex"]
+    suppressed = [str(path) for path in selected if path not in kept]
+    if suppressed:
+        task["suppressed_chat_files"] = unique_strings(
+            [
+                *(str(path) for path in task.get("suppressed_chat_files") or []),
+                *suppressed,
+            ]
+        )
+    return kept
 
 
 def task_required_artifact_suffixes(task: dict[str, Any] | None) -> set[str]:
@@ -2181,7 +2191,8 @@ def required_delivery_file_paths(
         path = Path(str(raw))
         if path.suffix.lower() in suffixes:
             candidates.append(path.expanduser().resolve())
-    return research_summary_delivery_files(task, list(dict.fromkeys(candidates)))
+    selected = research_summary_delivery_files(task, list(dict.fromkeys(candidates)))
+    return wecom_research_delivery_files(task, selected)
 
 
 def required_file_delivery_complete(task: dict[str, Any] | None, result: dict[str, Any]) -> bool:
@@ -2866,6 +2877,21 @@ def enforce_worker_result_response_policy(
     task: dict[str, Any], result: dict[str, Any]
 ) -> dict[str, Any]:
     """Apply narrow final guards against transport and language-mode leakage."""
+    if task_transport_kind(task) == "wecom" and result.get("files"):
+        source_files = [Path(str(path)).expanduser() for path in result.get("files") or []]
+        delivery_files = wecom_research_delivery_files(task, source_files)
+        if delivery_files != source_files:
+            result["files"] = [str(path) for path in delivery_files]
+            data = result.get("data") if isinstance(result.get("data"), dict) else None
+            if data is not None and "files" in data:
+                data["files"] = list(result["files"])
+            task.setdefault("response_policy_adjustments", []).append(
+                {
+                    "at": datetime.now().isoformat(timespec="seconds"),
+                    "kind": "kept_wecom_tex_sources_local",
+                    "fields": ["files"],
+                }
+            )
     if read_only_snapshot_should_be_message_only(task) and result.get("files"):
         suppressed = [str(path) for path in result.get("files") or [] if str(path)]
         task["suppressed_chat_files"] = unique_strings(

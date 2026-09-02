@@ -58,7 +58,7 @@ MAX_API_BODY = 2 * 1024 * 1024
 SAFE_SEND_EXTENSIONS = {
     ".3mf", ".blend", ".csv", ".docx", ".dxf", ".gif", ".jpeg", ".jpg",
     ".json", ".kicad_pcb", ".kicad_sch", ".md", ".mov", ".mp3", ".mp4",
-    ".pdf", ".png", ".step", ".stl", ".svg", ".tex", ".txt", ".wav",
+    ".pdf", ".png", ".step", ".stl", ".svg", ".txt", ".wav",
     ".xlsx", ".zip",
 }
 FILE_PICKER_TITLES = ("Select file/folder", "Select file")

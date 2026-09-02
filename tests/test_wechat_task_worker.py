@@ -16385,7 +16385,57 @@ NVQNIF+NotoSansCJKjp-Regular-Identity-H CID Type 0C       Identity-H       yes y
 
         selected = worker.wecom_research_delivery_files(task, files)
 
-        self.assertEqual(selected, files)
+        self.assertEqual(selected, [Path("/tmp/report.pdf"), Path("/tmp/report.md")])
+        self.assertEqual(task["suppressed_chat_files"], ["/tmp/report.tex"])
+
+    def test_wecom_general_worker_never_delivers_tex(self) -> None:
+        worker = load_worker()
+        task = {
+            "source": {"transport": "wecom"},
+            "routine": {"id": "general_worker"},
+            "route_decision": {"route_kind": "other_worker"},
+            "request": "Prepare the finished report.",
+        }
+        files = [Path("/tmp/report.pdf"), Path("/tmp/report.tex")]
+
+        selected = worker.wecom_research_delivery_files(task, files)
+
+        self.assertEqual(selected, [Path("/tmp/report.pdf")])
+        self.assertEqual(task["suppressed_chat_files"], ["/tmp/report.tex"])
+
+    def test_wecom_required_delivery_never_requires_tex(self) -> None:
+        worker = load_worker()
+        task = {
+            "source": {"transport": "wecom"},
+            "execution_contract": {"required_artifacts": ["compiled_pdf", "latex_source"]},
+        }
+        result = {"files": ["/tmp/report.pdf", "/tmp/report.tex"]}
+
+        required = worker.required_delivery_file_paths(result, task)
+
+        self.assertEqual(required, [Path("/tmp/report.pdf")])
+
+    def test_wecom_response_policy_removes_tex_before_any_sender(self) -> None:
+        worker = load_worker()
+        task = {
+            "source": {"transport": "wecom"},
+            "routine": {"id": "general_worker"},
+        }
+        result = {
+            "message": "The report is ready.",
+            "files": ["/tmp/report.pdf", "/tmp/report.tex"],
+            "data": {"files": ["/tmp/report.pdf", "/tmp/report.tex"]},
+        }
+
+        guarded = worker.enforce_worker_result_response_policy(task, result)
+
+        self.assertEqual(guarded["files"], ["/tmp/report.pdf"])
+        self.assertEqual(guarded["data"]["files"], ["/tmp/report.pdf"])
+        self.assertEqual(task["suppressed_chat_files"], ["/tmp/report.tex"])
+        self.assertEqual(
+            task["response_policy_adjustments"][-1]["kind"],
+            "kept_wecom_tex_sources_local",
+        )
 
     def test_ordinary_research_summary_keeps_optional_artifacts_local(self) -> None:
         worker = load_worker()
