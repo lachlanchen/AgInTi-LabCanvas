@@ -9085,34 +9085,58 @@ def aginti_worker_evidence_scope_request(
             if isinstance(repair.get("artifact_repair"), dict)
             else {}
         )
-        source_candidates = [
-            str(item.get("workspace_path") or item.get("path") or "").strip()
-            for item in artifact_repair.get("source_candidates") or []
-            if isinstance(item, dict)
-            and str(item.get("workspace_path") or item.get("path") or "").strip()
+        if completion_audit_missing_pdf_artifact(repair):
+            source_candidates = [
+                str(item.get("workspace_path") or item.get("path") or "").strip()
+                for item in artifact_repair.get("source_candidates") or []
+                if isinstance(item, dict)
+                and str(item.get("workspace_path") or item.get("path") or "").strip()
+            ]
+            rejected = [
+                str(item.get("workspace_path") or item.get("path") or "").strip()
+                for item in artifact_repair.get("rejected_artifacts") or []
+                if isinstance(item, dict)
+                and str(item.get("workspace_path") or item.get("path") or "").strip()
+            ]
+            issues = [
+                str(issue)
+                for item in artifact_repair.get("rejected_artifacts") or []
+                if isinstance(item, dict)
+                for issue in item.get("issues") or []
+                if str(issue).strip()
+            ]
+            target = source_candidates[0] if source_candidates else (
+                rejected[0] if rejected else "the exact task-local report"
+            )
+            issue_text = ", ".join(unique_strings(issues)) or "all listed reader-quality defects"
+            return collapse_context_text(
+                f"Revise the exact existing report source {target}; resolve {issue_text}; "
+                "write a clean reader-facing source in the same task artifact directory, "
+                "compile or enable host compilation of its PDF, inspect the result, and "
+                "return the verified replacement PDF plus a concise direct answer.",
+                max_len=3600,
+            )
+
+        missing_requirements = [
+            str(item.get("requirement") or "").strip()
+            for item in repair.get("missing") or []
+            if isinstance(item, dict) and str(item.get("requirement") or "").strip()
         ]
-        rejected = [
-            str(item.get("workspace_path") or item.get("path") or "").strip()
-            for item in artifact_repair.get("rejected_artifacts") or []
-            if isinstance(item, dict)
-            and str(item.get("workspace_path") or item.get("path") or "").strip()
+        missing_source_text = [
+            str(item.get("text") or "").strip()
+            for item in repair.get("missing_items") or []
+            if isinstance(item, dict) and str(item.get("text") or "").strip()
         ]
-        issues = [
-            str(issue)
-            for item in artifact_repair.get("rejected_artifacts") or []
-            if isinstance(item, dict)
-            for issue in item.get("issues") or []
-            if str(issue).strip()
-        ]
-        target = source_candidates[0] if source_candidates else (
-            rejected[0] if rejected else "the exact task-local report"
-        )
-        issue_text = ", ".join(unique_strings(issues)) or "all listed reader-quality defects"
         return collapse_context_text(
-            f"Revise the exact existing report source {target}; resolve {issue_text}; "
-            "write a clean reader-facing source in the same task artifact directory, "
-            "compile or enable host compilation of its PDF, inspect the result, and "
-            "return the verified replacement PDF plus a concise direct answer.",
+            " ".join(
+                [
+                    "Complete only the still-missing reply requirements for the exact current task.",
+                    *missing_requirements,
+                    *missing_source_text,
+                    "Return a complete natural replacement response that retains useful prior conclusions. "
+                    "Do not create a file or attachment unless a missing requirement explicitly requests one.",
+                ]
+            ),
             max_len=3600,
         )
 
@@ -10113,8 +10137,13 @@ def audit_and_repair_worker_completion(
     correction_attempted = bool(final.get("repair_recommended"))
     if correction_attempted:
         correction_policy = completion_repair_policy(task, final)
-        artifact_repair = completion_pdf_repair_context(task, combined)
-        task["completion_audit_repair"] = {
+        pdf_repair_required = completion_audit_missing_pdf_artifact(final)
+        artifact_repair = (
+            completion_pdf_repair_context(task, combined)
+            if pdf_repair_required
+            else {}
+        )
+        repair_packet = {
             "missing": final.get("missing") or [],
             "expected_item_ids": final.get("expected_item_ids")
             or completion_expected_item_ids(task),
@@ -10126,15 +10155,21 @@ def audit_and_repair_worker_completion(
                 ),
                 "files": list(combined.get("files") or [])[:20],
             },
-            "artifact_repair": artifact_repair,
             "instruction": (
                 "Complete every missing numbered-message requirement in one bounded turn. "
-                "For a rejected artifact, read and revise the exact task-local source named "
-                "in artifact_repair, resolve every listed issue, rebuild or enable host "
-                "compilation, inspect the replacement, and return a complete response. "
-                "Preserve useful prior conclusions but never return the rejected file unchanged."
+                + (
+                    "For a rejected artifact, read and revise the exact task-local source named "
+                    "in artifact_repair, resolve every listed issue, rebuild or enable host "
+                    "compilation, inspect the replacement, and return a complete response. "
+                    "Preserve useful prior conclusions but never return the rejected file unchanged."
+                    if pdf_repair_required
+                    else "Return the missing natural reply without inventing or attaching an artifact."
+                )
             ),
         }
+        if artifact_repair:
+            repair_packet["artifact_repair"] = artifact_repair
+        task["completion_audit_repair"] = repair_packet
         orchestrator = (
             task.get("orchestrator")
             if isinstance(task.get("orchestrator"), dict)

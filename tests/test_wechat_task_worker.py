@@ -260,6 +260,93 @@ class WeChatTaskWorkerTests(unittest.TestCase):
             ["task:parent-1", "task:child-2"],
         )
 
+    def test_completion_audit_reply_repair_does_not_become_pdf_repair(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "inspiration-1",
+            "chat": "LabAgent",
+            "request": (
+                "Create one concise inspiration message. Return exactly one natural "
+                "chat message and create no files or attachments."
+            ),
+            "source": {"local_id": 1, "sender_display": "scheduler"},
+            "artifact_dir": "/tmp/inspiration-1",
+            "route_decision": {
+                "route_kind": "research_or_summary",
+                "message_only": True,
+            },
+            "routine": {"id": "research_summary"},
+            "worker_policy": {
+                "model": "gpt-5.6-sol",
+                "reasoning_effort": "low",
+                "sandbox": "danger-full-access",
+                "timeout_seconds": 300,
+            },
+        }
+        first = {
+            "status": "checked",
+            "coverage_complete": False,
+            "expected_item_ids": ["task:inspiration-1"],
+            "covered_item_ids": [],
+            "missing": [
+                {
+                    "item_id": "task:inspiration-1",
+                    "requirement": "Create one concise, genuinely useful inspiration point.",
+                    "kind": "reply",
+                }
+            ],
+            "repair_recommended": True,
+            "complexity": "low",
+        }
+        complete = {
+            "status": "checked",
+            "coverage_complete": True,
+            "expected_item_ids": ["task:inspiration-1"],
+            "covered_item_ids": ["task:inspiration-1"],
+            "missing": [],
+            "repair_recommended": False,
+            "complexity": "low",
+        }
+        scopes: list[str] = []
+        repair_packets: list[dict[str, object]] = []
+
+        def repair(current_task: dict, _policy: dict) -> str:
+            repair_packets.append(dict(current_task["completion_audit_repair"]))
+            packet = worker.aginti_worker_task_view(current_task)
+            scopes.append(worker.aginti_worker_evidence_scope_request(current_task, packet))
+            return json.dumps(
+                {
+                    "message": "一个可验证的研究灵感。",
+                    "files": [],
+                    "confirmation": "",
+                },
+                ensure_ascii=False,
+            )
+
+        with (
+            mock.patch.object(
+                worker,
+                "run_completion_audit",
+                side_effect=[first, complete],
+            ),
+            mock.patch.object(
+                worker,
+                "run_worker_agent_session",
+                side_effect=repair,
+            ),
+        ):
+            result = worker.audit_and_repair_worker_completion(
+                task,
+                {"message": "", "confirmation": "", "files": []},
+            )
+
+        self.assertEqual(result["files"], [])
+        self.assertNotIn("artifact_repair", repair_packets[0])
+        self.assertIn("still-missing reply requirements", scopes[0])
+        self.assertNotIn("report source", scopes[0])
+        self.assertNotIn("replacement PDF", scopes[0])
+        self.assertEqual(task["message_coverage"]["status"], "covered")
+
     def test_completion_audit_recovers_exact_task_pdf_before_agent_repair(self) -> None:
         worker = load_worker()
         first = {
