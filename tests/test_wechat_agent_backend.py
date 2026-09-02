@@ -164,11 +164,11 @@ class WeChatAgentBackendTests(unittest.TestCase):
     def test_select_backend_uses_shared_primary_and_accepts_aliases(self) -> None:
         backend = load_backend()
 
-        self.assertEqual(backend.select_agent_backend({}), "aginti")
+        self.assertEqual(backend.select_agent_backend({}), "codex")
         self.assertEqual(backend.select_agent_backend({"agent_backend": "codex-cli"}), "codex")
         self.assertEqual(backend.select_agent_backend({"agent_backend": "claude-code"}), "claude")
         self.assertEqual(backend.select_agent_backend({"agent_backend": "agintiflow"}), "aginti")
-        self.assertEqual(backend.select_agent_backend({"agent_backend": "unknown"}), "aginti")
+        self.assertEqual(backend.select_agent_backend({"agent_backend": "unknown"}), "codex")
 
     def test_agent_context_model_uses_smallest_active_aginti_provider_window(self) -> None:
         backend = load_backend()

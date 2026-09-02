@@ -11,7 +11,7 @@ class BackendSettingsTests(unittest.TestCase):
 
         self.assertEqual(settings["agent"]["backend"], "auto")
         self.assertEqual(settings["agent"]["model"], "gpt-5.6-sol")
-        self.assertEqual(settings["model_policy"]["primary_backend"], "aginti")
+        self.assertEqual(settings["model_policy"]["primary_backend"], "codex")
         self.assertEqual(settings["model_policy"]["aginti"]["provider_chain"], ["deepseek", "localllm"])
         self.assertTrue(settings["agent"]["dynamic_routing"])
         self.assertTrue(settings["toolchain"]["cad"])

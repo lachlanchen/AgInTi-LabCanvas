@@ -12,6 +12,7 @@ from pathlib import Path
 import queue
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -20,6 +21,17 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
 ROOT = Path(__file__).resolve().parents[3]
+SRC = ROOT / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
+
+from agenticapp.codex_accounts import (  # noqa: E402
+    DEFAULT_POOL_CACHE,
+    agentshell_codex_command,
+    best_cached_codex_status,
+    discover_agentshell_accounts,
+)
+
 DEFAULT_CACHE = Path(
     os.environ.get("LABCANVAS_CODEX_QUOTA_CACHE")
     or ROOT
@@ -184,11 +196,17 @@ def read_rate_limits_from_app_server(
     *,
     timeout_seconds: float = 8.0,
     codex_bin: str | None = None,
+    command_prefix: list[str] | None = None,
 ) -> dict[str, Any]:
     """Call the read-only account/rateLimits/read app-server method."""
-    executable = resolve_codex_bin(codex_bin)
+    executable = resolve_codex_bin(codex_bin) if not command_prefix else ""
+    command = (
+        [*command_prefix, "app-server", "--disable", "hooks", "--stdio"]
+        if command_prefix
+        else [executable, "app-server", "--disable", "hooks", "--stdio"]
+    )
     process = subprocess.Popen(
-        [executable, "app-server", "--disable", "hooks", "--stdio"],
+        command,
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
@@ -352,6 +370,81 @@ def probe_status(
     return status
 
 
+def probe_account_pool(
+    *,
+    cache_path: Path = DEFAULT_POOL_CACHE,
+    threshold_percent: float = DEFAULT_THRESHOLD_PERCENT,
+    timeout_seconds: float = 8.0,
+    accounts: list[str] | None = None,
+    reader: Callable[..., dict[str, Any]] = read_rate_limits_from_app_server,
+) -> dict[str, Any]:
+    """Probe every existing AgentShell profile without running inference."""
+    selected = accounts if accounts is not None else discover_agentshell_accounts()
+    previous = load_cached_status(cache_path)
+    previous_accounts = previous.get("accounts") if isinstance(previous.get("accounts"), dict) else {}
+    statuses: dict[str, dict[str, Any]] = {}
+    for account in selected:
+        try:
+            response = reader(
+                timeout_seconds=timeout_seconds,
+                command_prefix=agentshell_codex_command(account, []),
+            )
+            status = normalize_rate_limit_response(
+                response,
+                threshold_percent=threshold_percent,
+            )
+        except Exception as exc:
+            status = {
+                "ok": False,
+                "source": "codex_app_server_account_rate_limits",
+                "observed_at_epoch": now_epoch(),
+                "observed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                "error": f"{type(exc).__name__}: {str(exc)[:300]}",
+            }
+        previous_status = previous_accounts.get(account) if isinstance(previous_accounts.get(account), dict) else {}
+        runtime_unavailable_until = float(previous_status.get("runtime_unavailable_until") or 0)
+        if runtime_unavailable_until > now_epoch():
+            status["codex_available"] = False
+            status["runtime_unavailable_reason"] = str(
+                previous_status.get("runtime_unavailable_reason") or "runtime_rejection"
+            )
+            status["runtime_unavailable_until"] = runtime_unavailable_until
+        statuses[account] = status
+    payload = {
+        "ok": bool(statuses) and any(status.get("ok") for status in statuses.values()),
+        "source": "agentshell_codex_account_pool",
+        "observed_at_epoch": now_epoch(),
+        "observed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "account_count": len(statuses),
+        "available_count": sum(
+            1 for status in statuses.values() if status.get("codex_available")
+        ),
+        "accounts": statuses,
+    }
+    write_private_json(cache_path, payload)
+    return payload
+
+
+def current_best_status(
+    *,
+    max_age_seconds: float = DEFAULT_CACHE_MAX_AGE_SECONDS,
+    threshold_percent: float = DEFAULT_THRESHOLD_PERCENT,
+    refresh: bool = False,
+) -> dict[str, Any]:
+    """Return the best cached AgentShell status, then the legacy account status."""
+    pooled = best_cached_codex_status(max_age_seconds=max_age_seconds)
+    if pooled:
+        remaining = float(pooled.get("remaining_percent") or 0)
+        pooled["threshold_percent"] = float(threshold_percent)
+        pooled["warning"] = remaining < float(threshold_percent)
+        return add_availability_fields(pooled)
+    return current_status(
+        max_age_seconds=max_age_seconds,
+        threshold_percent=threshold_percent,
+        refresh=refresh,
+    )
+
+
 def current_status(
     *,
     cache_path: Path = DEFAULT_CACHE,
@@ -460,9 +553,10 @@ def quota_warning_for_request(request_text: str) -> str:
                 str(DEFAULT_CACHE_MAX_AGE_SECONDS),
             )
         )
-        status = current_status(
+        status = current_best_status(
             max_age_seconds=max(5.0, max_age),
             threshold_percent=max(0.0, min(100.0, threshold)),
+            refresh=True,
         )
         return format_warning(status, request_text=request_text)
     except Exception:
@@ -491,22 +585,47 @@ def main() -> int:
         default=DEFAULT_CACHE_MAX_AGE_SECONDS,
     )
     parser.add_argument("--interval-seconds", type=float, default=60.0)
+    parser.add_argument(
+        "--agentshell-all",
+        action="store_true",
+        help="Probe all existing AgentShell Codex profiles into the private pool cache.",
+    )
+    parser.add_argument("--pool-cache", type=Path, default=DEFAULT_POOL_CACHE)
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
 
     if args.command == "loop":
         while True:
-            status = probe_status(
-                cache_path=args.cache,
-                threshold_percent=args.threshold_percent,
-                timeout_seconds=args.timeout_seconds,
+            status = (
+                probe_account_pool(
+                    cache_path=args.pool_cache,
+                    threshold_percent=args.threshold_percent,
+                    timeout_seconds=args.timeout_seconds,
+                )
+                if args.agentshell_all
+                else probe_status(
+                    cache_path=args.cache,
+                    threshold_percent=args.threshold_percent,
+                    timeout_seconds=args.timeout_seconds,
+                )
             )
             if args.json:
                 print(json.dumps(status, ensure_ascii=False), flush=True)
             time.sleep(max(15.0, args.interval_seconds))
 
     status = (
-        probe_status(
+        probe_account_pool(
+            cache_path=args.pool_cache,
+            threshold_percent=args.threshold_percent,
+            timeout_seconds=args.timeout_seconds,
+        )
+        if args.agentshell_all and args.command == "probe"
+        else best_cached_codex_status(
+            cache_path=args.pool_cache,
+            max_age_seconds=args.max_age_seconds,
+        )
+        if args.agentshell_all
+        else probe_status(
             cache_path=args.cache,
             threshold_percent=args.threshold_percent,
             timeout_seconds=args.timeout_seconds,

@@ -13,6 +13,7 @@ import re
 import signal
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 from typing import Any
@@ -21,6 +22,16 @@ from file_lock import fcntl_compat as fcntl
 
 
 ROOT = Path(__file__).resolve().parents[3]
+SRC = ROOT / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
+
+from agenticapp.codex_accounts import (  # noqa: E402
+    agentshell_codex_command,
+    codex_account_candidates,
+    mark_codex_account_runtime_unavailable,
+)
+
 PRIVATE = ROOT / "agentic_tools" / "wechat_gui_agent" / ".private"
 SESSION_DIR = PRIVATE / "codex_sessions"
 DEFAULT_REGISTRY = SESSION_DIR / "sessions.local.json"
@@ -69,7 +80,7 @@ def run_codex_session(
             result = codex_slot_timeout_result(previous_id)
         else:
             try:
-                result = run_codex_with_startup_retries(
+                result = run_codex_across_accounts(
                     prompt,
                     thread_id=previous_id,
                     model=model,
@@ -90,7 +101,7 @@ def run_codex_session(
                 fallback = codex_slot_timeout_result(previous_id)
             else:
                 try:
-                    fallback = run_codex_with_startup_retries(
+                    fallback = run_codex_across_accounts(
                         prompt,
                         thread_id="",
                         model=model,
@@ -135,6 +146,7 @@ def run_codex_with_startup_retries(
     timeout_seconds: int,
     workdir: Path,
     web_search: bool,
+    agentshell_account: str = "",
 ) -> dict[str, Any]:
     """Retry only failures proven to occur before a Codex turn starts."""
     max_retries = max(0, int(os.environ.get("WECHAT_CODEX_STARTUP_RETRIES", "2")))
@@ -154,6 +166,7 @@ def run_codex_with_startup_retries(
             timeout_seconds=timeout_seconds,
             workdir=workdir,
             web_search=web_search,
+            agentshell_account=agentshell_account,
         )
         if not codex_startup_retryable(result) or retry_index >= max_retries:
             break
@@ -164,6 +177,91 @@ def run_codex_with_startup_retries(
     if retry_reasons:
         result["startup_retry_reasons"] = retry_reasons
     return result
+
+
+def run_codex_across_accounts(
+    prompt: str,
+    *,
+    thread_id: str,
+    model: str,
+    reasoning_effort: str,
+    sandbox: str,
+    timeout_seconds: int,
+    workdir: Path,
+    web_search: bool,
+) -> dict[str, Any]:
+    """Try cached available accounts, but only before a turn or tool starts."""
+    accounts = codex_account_candidates()
+    attempts: list[dict[str, Any]] = []
+    result: dict[str, Any] = {}
+    for account in accounts or [""]:
+        result = run_codex_with_startup_retries(
+            prompt,
+            thread_id=thread_id,
+            model=model,
+            reasoning_effort=reasoning_effort,
+            sandbox=sandbox,
+            timeout_seconds=timeout_seconds,
+            workdir=workdir,
+            web_search=web_search,
+            agentshell_account=account,
+        )
+        result["agentshell_account"] = account
+        attempts.append(
+            {
+                "account": account,
+                "ok": bool(result.get("ok")),
+                "returncode": result.get("returncode"),
+                "execution_started": bool(result.get("execution_started")),
+                "tool_activity": bool(result.get("tool_activity")),
+            }
+        )
+        if account and codex_account_quota_rejected(result):
+            mark_codex_account_runtime_unavailable(account)
+        if result.get("ok") or not codex_account_switch_retryable(result):
+            break
+    result["account_attempts"] = attempts
+    result["account_failover_count"] = max(0, len(attempts) - 1)
+    return result
+
+
+def codex_account_switch_retryable(result: dict[str, Any]) -> bool:
+    # Codex emits turn.started before the server can reject quota.  Rotation is
+    # still safe until a tool item appears; the replacement resumes the same
+    # shared-history thread and cannot duplicate an external side effect.
+    if result.get("ok") or result.get("tool_activity"):
+        return False
+    text = " ".join(
+        str(result.get(key) or "")
+        for key in ("message", "stderr_tail", "stdout_tail", "error")
+    ).casefold()
+    return any(
+        marker in text
+        for marker in (
+            "usage limit",
+            "rate limit",
+            "quota",
+            "insufficient credit",
+            "out of credits",
+            "failed to refresh available models",
+            "failed to connect",
+            "transport channel closed",
+            "connection reset before headers",
+        )
+    )
+
+
+def codex_account_quota_rejected(result: dict[str, Any]) -> bool:
+    if result.get("ok") or result.get("tool_activity"):
+        return False
+    text = " ".join(
+        str(result.get(key) or "")
+        for key in ("message", "stderr_tail", "stdout_tail", "error")
+    ).casefold()
+    return any(
+        marker in text
+        for marker in ("usage limit", "rate limit", "quota", "insufficient credit", "out of credits")
+    )
 
 
 def codex_slot_timeout_result(thread_id: str) -> dict[str, Any]:
@@ -384,6 +482,7 @@ def run_codex_once(
     timeout_seconds: int,
     workdir: Path,
     web_search: bool = False,
+    agentshell_account: str = "",
 ) -> dict[str, Any]:
     with tempfile.NamedTemporaryFile("w+", encoding="utf-8", delete=False) as out:
         output_path = Path(out.name)
@@ -400,7 +499,24 @@ def run_codex_once(
             "execution_started": False,
             "tool_activity": False,
         }
-    command = [codex_bin]
+    try:
+        command = (
+            agentshell_codex_command(agentshell_account, [])
+            if agentshell_account
+            else [codex_bin]
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        output_path.unlink(missing_ok=True)
+        return {
+            "ok": False,
+            "message": f"Codex failed: {exc}",
+            "thread_id": thread_id,
+            "returncode": 127,
+            "stderr_tail": str(exc),
+            "stdout_tail": "",
+            "execution_started": False,
+            "tool_activity": False,
+        }
     if web_search:
         # `--search` is a global Codex option and must precede `exec`.
         command.append("--search")
@@ -702,4 +818,5 @@ def update_registry(
         "turn_count": (int(previous.get("turn_count") or 0) + 1) if same_thread else 1,
         "last_resumed": bool(result.get("resumed")),
         "last_fallback_started": bool(result.get("fallback_started")),
+        "last_agentshell_account": str(result.get("agentshell_account") or ""),
     }

@@ -18,7 +18,13 @@ import uuid
 from typing import Any, Callable, Iterator
 
 from .artifacts import ArtifactStore, artifact_kind_for_path
+from .aginti_shadow import enqueue_codex_shadow_review
 from .backends import load_backend_settings, load_model_policy, model_policy_for_effort
+from .codex_accounts import (
+    agentshell_codex_command,
+    codex_account_candidates,
+    mark_codex_account_runtime_unavailable,
+)
 
 
 try:  # pragma: no cover - Windows uses atomic writes without advisory locking.
@@ -275,9 +281,9 @@ def select_agent_policy(
         selected_backend = "auto"
     backend_was_auto = selected_backend == "auto"
     if backend_was_auto:
-        selected_backend = str(current_model_policy.get("primary_backend") or "aginti").strip().lower()
+        selected_backend = str(current_model_policy.get("primary_backend") or "codex").strip().lower()
         if selected_backend not in {"codex", "aginti"}:
-            selected_backend = "aginti"
+            selected_backend = "codex"
         if protein_structure_work:
             selected_backend = "codex"
     if selected_backend == "aginti" and model_was_auto:
@@ -767,7 +773,7 @@ def build_agent_prompt(
   }}
 - Include the directly usable/rendered files the user should inspect, not every intermediate file.
 - If no file is produced, use an empty artifacts list."""
-    return f"""You are the persistent AgInTi LabCanvas workspace agent. The web app and CLI are direct chat transports to you, not a keyword router.
+    return f"""You are the persistent LabCanvas workspace agent. The web app and CLI are direct chat transports to you, not a keyword router.
 
 User request:
 {message.strip()}
@@ -1141,7 +1147,7 @@ def run_backend_turn(
     root: Path,
     pid_callback: Callable[[int], Any] | None = None,
 ) -> dict[str, Any]:
-    if str(policy.get("backend") or "aginti") == "aginti":
+    if str(policy.get("backend") or "codex") == "aginti":
         return run_aginti_turn(
             prompt,
             policy=policy,
@@ -1165,6 +1171,12 @@ def run_backend_turn(
         or not bool(policy.get("fallback_to_aginti", True))
         or not backend_should_fallback(codex_result)
     ):
+        if codex_result.get("ok"):
+            codex_result["aginti_shadow"] = enqueue_codex_shadow_review(
+                prompt,
+                codex_result,
+                role="workspace",
+            )
         return codex_result
     aginti = run_aginti_turn(
         prompt,
@@ -1200,7 +1212,7 @@ def run_codex_turn(
     with file_lock(lock_path):
         registry = _load_json_dict(registry_path)
         previous_id = str(registry.get(key, {}).get("thread_id") or "")
-        result = _run_codex_process(
+        result = _run_codex_account_pool(
             prompt,
             codex_bin=codex_bin,
             thread_id=previous_id,
@@ -1209,8 +1221,8 @@ def run_codex_turn(
             root=root,
             pid_callback=pid_callback,
         )
-        if previous_id and not result.get("ok") and int(result.get("returncode") or 0) not in {124, 130, 143}:
-            result = _run_codex_process(
+        if previous_id and codex_saved_thread_unavailable(result):
+            result = _run_codex_account_pool(
                 prompt,
                 codex_bin=codex_bin,
                 thread_id="",
@@ -1233,7 +1245,7 @@ def run_codex_turn(
                 "model": fallback_model,
                 "reasoning_effort": str(policy.get("fallback_reasoning_effort") or policy.get("reasoning_effort") or "low"),
             }
-            result = _run_codex_process(
+            result = _run_codex_account_pool(
                 prompt,
                 codex_bin=codex_bin,
                 thread_id="",
@@ -1255,6 +1267,7 @@ def run_codex_turn(
                 "created_at": previous.get("created_at") or utc_now(),
                 "last_used_at": utc_now(),
                 "turn_count": int(previous.get("turn_count") or 0) + 1,
+                "last_agentshell_account": str(result.get("agentshell_account") or ""),
             }
             _write_json_atomic(registry_path, registry)
         result["resumed"] = bool(previous_id)
@@ -1278,7 +1291,25 @@ def model_unavailable_result(result: dict[str, Any]) -> bool:
     )
 
 
-def _run_codex_process(
+def codex_saved_thread_unavailable(result: dict[str, Any]) -> bool:
+    if result.get("ok") or result.get("execution_started") or result.get("tool_activity"):
+        return False
+    text = " ".join(
+        str(result.get(key) or "")
+        for key in ("message", "stderr_tail", "stdout_tail", "error")
+    ).casefold()
+    return any(
+        marker in text
+        for marker in (
+            "no saved session found",
+            "thread not found",
+            "conversation not found",
+            "unknown thread",
+        )
+    )
+
+
+def _run_codex_account_pool(
     prompt: str,
     *,
     codex_bin: str,
@@ -1288,9 +1319,90 @@ def _run_codex_process(
     root: Path,
     pid_callback: Callable[[int], Any] | None,
 ) -> dict[str, Any]:
+    accounts = codex_account_candidates()
+    attempts: list[dict[str, Any]] = []
+    result: dict[str, Any] = {}
+    for account in accounts or [""]:
+        result = _run_codex_process(
+            prompt,
+            codex_bin=codex_bin,
+            thread_id=thread_id,
+            policy=policy,
+            task_dir=task_dir,
+            root=root,
+            pid_callback=pid_callback,
+            agentshell_account=account,
+        )
+        result["agentshell_account"] = account
+        attempts.append(
+            {
+                "account": account,
+                "ok": bool(result.get("ok")),
+                "returncode": result.get("returncode"),
+                "execution_started": bool(result.get("execution_started")),
+                "tool_activity": bool(result.get("tool_activity")),
+            }
+        )
+        if account and codex_account_quota_rejected(result):
+            mark_codex_account_runtime_unavailable(account)
+        if result.get("ok") or not codex_account_switch_retryable(result):
+            break
+    result["account_attempts"] = attempts
+    result["account_failover_count"] = max(0, len(attempts) - 1)
+    return result
+
+
+def codex_account_switch_retryable(result: dict[str, Any]) -> bool:
+    # A quota rejection arrives after turn.started but before any tool item.
+    # Switching accounts is safe in that exact state and unsafe after tools.
+    if result.get("ok") or result.get("tool_activity"):
+        return False
+    text = " ".join(
+        str(result.get(key) or "")
+        for key in ("message", "stderr_tail", "stdout_tail", "error")
+    ).casefold()
+    return any(
+        marker in text
+        for marker in (
+            "usage limit",
+            "rate limit",
+            "quota",
+            "insufficient credit",
+            "out of credits",
+            "failed to refresh available models",
+            "failed to connect",
+            "transport channel closed",
+            "connection reset before headers",
+        )
+    )
+
+
+def codex_account_quota_rejected(result: dict[str, Any]) -> bool:
+    if result.get("ok") or result.get("tool_activity"):
+        return False
+    text = " ".join(
+        str(result.get(key) or "")
+        for key in ("message", "stderr_tail", "stdout_tail", "error")
+    ).casefold()
+    return any(
+        marker in text
+        for marker in ("usage limit", "rate limit", "quota", "insufficient credit", "out of credits")
+    )
+
+
+def _run_codex_process(
+    prompt: str,
+    *,
+    codex_bin: str,
+    thread_id: str,
+    policy: dict[str, Any],
+    task_dir: Path,
+    root: Path,
+    pid_callback: Callable[[int], Any] | None,
+    agentshell_account: str = "",
+) -> dict[str, Any]:
     output_path = task_dir / "codex-final.txt"
     command = [
-        codex_bin,
         "exec",
         "--json",
         "-m",
@@ -1304,12 +1416,17 @@ def _run_codex_process(
         "-o",
         str(output_path),
     ]
+    command = (
+        agentshell_codex_command(agentshell_account, command)
+        if agentshell_account
+        else [codex_bin, *command]
+    )
     if thread_id:
         command.extend(["resume", thread_id, "-"])
     else:
         command.append("-")
     env = os.environ.copy()
-    codex_dir = str(Path(codex_bin).parent)
+    codex_dir = str(Path(command[0]).parent)
     env["PATH"] = codex_dir + os.pathsep + env.get("PATH", "")
     return _communicate_process(
         command,
@@ -1847,6 +1964,7 @@ def _communicate_process(
             "message": "",
             "stderr_tail": (stderr or "timeout")[-4000:],
             "stdout_tail": (stdout or "")[-4000:],
+            **(codex_event_evidence(stdout) if backend == "codex" else {}),
         }
     message = ""
     if output_path and output_path.exists():
@@ -1862,6 +1980,30 @@ def _communicate_process(
         "stderr_tail": (stderr or "")[-4000:],
         "stdout_tail": (stdout or "")[-4000:],
         "command": [command[0], command[1] if len(command) > 1 else ""],
+        **(codex_event_evidence(stdout) if backend == "codex" else {}),
+    }
+
+
+def codex_event_evidence(events: str) -> dict[str, bool]:
+    execution_started = False
+    tool_activity = False
+    for line in str(events or "").splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, dict):
+            continue
+        event_type = str(event.get("type") or "")
+        if event_type.startswith("turn.") or event_type.startswith("item."):
+            execution_started = True
+        item = event.get("item") if isinstance(event.get("item"), dict) else {}
+        item_type = str(item.get("type") or "").casefold()
+        if item_type and item_type not in {"agent_message", "reasoning", "plan"}:
+            tool_activity = True
+    return {
+        "execution_started": execution_started,
+        "tool_activity": tool_activity,
     }
 
 

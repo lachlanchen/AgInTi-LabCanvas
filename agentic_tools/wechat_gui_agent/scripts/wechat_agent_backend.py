@@ -15,8 +15,9 @@ from typing import Any
 
 from codex_quota_status import (
     codex_credits_available,
-    current_status as current_codex_quota_status,
+    current_best_status as current_codex_quota_status,
 )
+from agenticapp.aginti_shadow import enqueue_codex_shadow_review  # noqa: E402
 from file_lock import exclusive_lock
 from wechat_codex_sessions import (
     DEFAULT_REGISTRY,
@@ -206,7 +207,7 @@ def select_agent_backend(config: dict[str, Any] | None = None) -> str:
         policy = json.loads(MODEL_POLICY_PATH.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError, TypeError):
         policy = {}
-    return normalize_backend(str(policy.get("primary_backend") or "aginti"))
+    return normalize_backend(str(policy.get("primary_backend") or "codex"))
 
 
 def normalize_backend(value: str) -> str:
@@ -214,14 +215,14 @@ def normalize_backend(value: str) -> str:
     aliases = {
         "aginti-flow": "aginti",
         "agintiflow": "aginti",
-        "labcanvas": "aginti",
+        "labcanvas": "codex",
         "claude-code": "claude",
         "claude_code": "claude",
         "anthropic": "claude",
         "codex-cli": "codex",
         "openai": "codex",
     }
-    return aliases.get(normalized, normalized if normalized in {"codex", "claude", "aginti"} else "aginti")
+    return aliases.get(normalized, normalized if normalized in {"codex", "claude", "aginti"} else "codex")
 
 
 def agent_context_model(
@@ -382,6 +383,12 @@ def run_agent_session(
         if result.get("ok") and usable_message:
             result["message"] = usable_message
             attempt_summaries.append(summarize_attempt(attempt, result))
+            if normalize_backend(str(result.get("backend") or attempt.get("backend") or "")) == "codex":
+                result["aginti_shadow"] = enqueue_codex_shadow_review(
+                    attempt_prompt,
+                    result,
+                    role=role,
+                )
             return attach_attempt_summary(result, attempt_summaries)
         if result.get("ok"):
             raw_message = str(result.get("message") or "")

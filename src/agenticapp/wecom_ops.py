@@ -164,7 +164,7 @@ WECOM_ALLOWED_USERIDS=
 # may request safe work while irreversible actions remain owner/allowlist-only.
 WECOM_GROUP_MEMBER_ACCESS=trusted
 
-WECOM_AGENT_BACKEND=aginti
+WECOM_AGENT_BACKEND=codex
 WECOM_ROUTE_MODEL=gpt-5.6-sol
 WECOM_ROUTE_EFFORT=low
 WECOM_ROUTE_TIMEOUT_SECONDS=35

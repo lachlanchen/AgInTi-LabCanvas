@@ -1246,7 +1246,7 @@ def agent_backend_runtime_status() -> dict[str, Any]:
         model_policy = json.loads(MODEL_POLICY_PATH.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError, TypeError):
         model_policy = {}
-    primary = str(model_policy.get("primary_backend") or "aginti").strip()
+    primary = str(model_policy.get("primary_backend") or "codex").strip()
     configured_wecom = str(os.environ.get("WECOM_AGENT_BACKEND") or "").strip()
     configured_wechat = str(os.environ.get("WECHAT_AGENT_BACKEND") or "").strip()
     requested = configured_wecom or configured_wechat or primary

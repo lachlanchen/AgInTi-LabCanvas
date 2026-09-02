@@ -1,5 +1,9 @@
 {
-  "primary_backend": "aginti",
+  "primary_backend": "codex",
+  "codex": {
+    "account_pool": "agentshell",
+    "session_policy": "resume one shared-history session per conversation and role"
+  },
   "aginti": {
     "primary_provider": "deepseek",
     "provider_chain": [
@@ -79,5 +83,13 @@
       "reasoning_effort": "xhigh"
     }
   },
-  "notes": "AgInTi is the automatic primary backend and resumes one session per conversation, using DeepSeek first and LocalLLM only as its same-session fallback. Codex remains available through explicit selection and specialist policy routes."
+  "aginti_learning": {
+    "enabled": true,
+    "mode": "shadow_review",
+    "source_backend": "codex",
+    "execute_tools": false,
+    "send_output": false,
+    "safe_task_only": true
+  },
+  "notes": "Codex is the automatic execution authority and resumes one shared-history session per conversation. AgentShell selects an account with available quota. AgInTi uses DeepSeek then LocalLLM as fallback and may review successful Codex work privately without tools, delivery, or external side effects."
 }

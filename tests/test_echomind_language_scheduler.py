@@ -806,7 +806,7 @@ Reading detail with corrected pinyin and romaji. Reading detail with corrected p
         self.assertIn("予約（よやく）", observed["prompt"])
         self.assertIn("plus romaji", observed["prompt"])
         self.assertIn("exactly one aligned core example", observed["prompt"])
-        self.assertEqual(agent_mock.call_args.kwargs["backend"], "aginti")
+        self.assertEqual(agent_mock.call_args.kwargs["backend"], "codex")
 
     def test_incomplete_periodic_lesson_is_agent_edited_before_delivery(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

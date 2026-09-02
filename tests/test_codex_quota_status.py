@@ -206,6 +206,29 @@ class CodexQuotaStatusTests(unittest.TestCase):
 
         self.assertEqual(resolved, str(codex.resolve()))
 
+    def test_account_pool_probe_uses_agentshell_without_inference(self) -> None:
+        module = load_module()
+        calls: list[dict] = []
+
+        def reader(**kwargs):
+            calls.append(kwargs)
+            return self.sample_response(codex_used=10)
+
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(
+            module, "agentshell_codex_command", side_effect=lambda account, args: ["agent-codex", "--account", account, *args]
+        ):
+            cache = Path(tmp) / "pool.json"
+            status = module.probe_account_pool(
+                cache_path=cache,
+                accounts=["lab", "personal"],
+                reader=reader,
+            )
+
+        self.assertTrue(status["ok"])
+        self.assertEqual(status["available_count"], 2)
+        self.assertEqual(calls[0]["command_prefix"], ["agent-codex", "--account", "lab"])
+        self.assertEqual(calls[1]["command_prefix"], ["agent-codex", "--account", "personal"])
+
 
 if __name__ == "__main__":
     unittest.main()

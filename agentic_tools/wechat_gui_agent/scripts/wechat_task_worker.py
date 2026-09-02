@@ -11339,7 +11339,7 @@ def default_worker_execution_contract(task: dict[str, Any], instruction: dict[st
         "worker_entrypoint": "wechat_task_worker.run_task_orchestrator",
         "agent_backend": select_agent_backend(task),
         "agent_entrypoint": "wechat_agent_backend.run_agent_session",
-        "agent_backend_fallback": "AgInTi follows the shared primary policy with a DeepSeek -> LocalLLM same-session handoff; Codex remains an explicit or specialist route",
+        "agent_backend_fallback": "Codex is primary; a safe unavailable turn falls back to AgInTi with a DeepSeek -> LocalLLM same-session handoff",
         "aginti_exec_mode": "resume_per_chat_worker_session_with_durable_goal_and_evidence",
         "codex_entrypoint": "wechat_codex_sessions.run_codex_session",
         "codex_exec_mode": "resume_per_chat_worker_session_when_selected",

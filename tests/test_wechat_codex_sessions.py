@@ -456,6 +456,12 @@ class WeChatCodexSessionTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             with mock.patch.object(sessions, "resolve_codex_binary", return_value="/usr/bin/codex"), mock.patch.object(
+                sessions, "codex_account_candidates", return_value=["lab"]
+            ), mock.patch.object(
+                sessions,
+                "agentshell_codex_command",
+                side_effect=lambda account, args: ["/usr/bin/agent-codex", "--account", account, *args],
+            ), mock.patch.object(
                 sessions,
                 "run_process_group",
                 side_effect=fake_run,
@@ -472,7 +478,123 @@ class WeChatCodexSessionTests(unittest.TestCase):
                 )
 
         self.assertTrue(result["ok"])
-        self.assertEqual(calls[0][:3], ["/usr/bin/codex", "--search", "exec"])
+        self.assertEqual(calls[0][:5], ["/usr/bin/agent-codex", "--account", "lab", "--search", "exec"])
+
+    def test_account_pool_switches_only_before_execution_starts(self) -> None:
+        sessions = load_sessions()
+        exhausted = {
+            "ok": False,
+            "message": "Codex usage limit reached",
+            "thread_id": "",
+            "returncode": 1,
+            "stderr_tail": "quota",
+            "stdout_tail": "",
+            "execution_started": True,
+            "tool_activity": False,
+        }
+        handled = {
+            "ok": True,
+            "message": "handled",
+            "thread_id": "thread-2",
+            "returncode": 0,
+            "stderr_tail": "",
+            "stdout_tail": "",
+            "execution_started": True,
+            "tool_activity": False,
+        }
+        with mock.patch.object(sessions, "codex_account_candidates", return_value=["company", "lab"]), mock.patch.object(
+            sessions, "run_codex_with_startup_retries", side_effect=[exhausted, handled]
+        ) as run:
+            result = sessions.run_codex_across_accounts(
+                "hello",
+                thread_id="",
+                model="gpt-5.6-sol",
+                reasoning_effort="low",
+                sandbox="read-only",
+                timeout_seconds=30,
+                workdir=ROOT,
+                web_search=False,
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["agentshell_account"], "lab")
+        self.assertEqual(result["account_failover_count"], 1)
+        self.assertEqual(run.call_count, 2)
+
+    def test_account_pool_recognizes_quota_in_structured_error(self) -> None:
+        sessions = load_sessions()
+        exhausted = {
+            "ok": False,
+            "message": "",
+            "error": "Codex usage limit reached",
+            "thread_id": "",
+            "returncode": 1,
+            "stderr_tail": "",
+            "stdout_tail": "",
+            "execution_started": True,
+            "tool_activity": False,
+        }
+        handled = {
+            "ok": True,
+            "message": "handled",
+            "thread_id": "thread-2",
+            "returncode": 0,
+            "stderr_tail": "",
+            "stdout_tail": "",
+            "execution_started": True,
+            "tool_activity": False,
+        }
+        with mock.patch.object(
+            sessions, "codex_account_candidates", return_value=["lab", "personal"]
+        ), mock.patch.object(
+            sessions, "run_codex_with_startup_retries", side_effect=[exhausted, handled]
+        ) as run, mock.patch.object(
+            sessions, "mark_codex_account_runtime_unavailable"
+        ) as mark_unavailable:
+            result = sessions.run_codex_across_accounts(
+                "hello",
+                thread_id="",
+                model="gpt-5.6-sol",
+                reasoning_effort="low",
+                sandbox="read-only",
+                timeout_seconds=30,
+                workdir=ROOT,
+                web_search=False,
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["agentshell_account"], "personal")
+        self.assertEqual(run.call_count, 2)
+        mark_unavailable.assert_called_once_with("lab")
+
+    def test_account_pool_does_not_switch_after_tool_activity(self) -> None:
+        sessions = load_sessions()
+        failure = {
+            "ok": False,
+            "message": "quota",
+            "thread_id": "thread-1",
+            "returncode": 1,
+            "stderr_tail": "quota",
+            "stdout_tail": "",
+            "execution_started": True,
+            "tool_activity": True,
+        }
+        with mock.patch.object(sessions, "codex_account_candidates", return_value=["company", "lab"]), mock.patch.object(
+            sessions, "run_codex_with_startup_retries", return_value=failure
+        ) as run:
+            result = sessions.run_codex_across_accounts(
+                "publish",
+                thread_id="thread-1",
+                model="gpt-5.6-sol",
+                reasoning_effort="medium",
+                sandbox="danger-full-access",
+                timeout_seconds=30,
+                workdir=ROOT,
+                web_search=False,
+            )
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(run.call_count, 1)
 
     def test_process_group_timeout_terminates_all_codex_descendants(self) -> None:
         sessions = load_sessions()

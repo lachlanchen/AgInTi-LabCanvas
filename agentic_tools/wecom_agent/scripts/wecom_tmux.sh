@@ -44,6 +44,7 @@ HEALTH_SNAPSHOT="$ROOT/output/transport-health/latest.json"
 HEALTH_GUARD_SIGNATURE="$ROOT/output/transport-health/health-guard.sha256"
 QUOTA_MONITOR="$ROOT/agentic_tools/wechat_gui_agent/scripts/codex_quota_status.py"
 QUOTA_LOG="$LOG_DIR/codex-quota.log"
+AGINTI_SHADOW_LOG="$LOG_DIR/aginti-shadow.log"
 MUTATION_LOCK="${WECOM_TMUX_MUTATION_LOCK:-$TOOL_ROOT/.private/wecom_tmux.lock}"
 mkdir -p "$LOG_DIR"
 
@@ -220,7 +221,12 @@ ensure_core_windows() {
   remove_dead_window quota
   if ! window_exists quota; then
     tmux new-window -t "$SESSION" -n quota \
-      "cd '$ROOT' && set -a && source '$PRIVATE_ENV' && set +a && exec python3 -u '$QUOTA_MONITOR' loop --interval-seconds \"\${LABCANVAS_CODEX_QUOTA_POLL_SECONDS:-60}\" --threshold-percent \"\${LABCANVAS_CODEX_QUOTA_WARNING_THRESHOLD_PERCENT:-5}\" --json >> '$QUOTA_LOG' 2>&1"
+      "cd '$ROOT' && set -a && source '$PRIVATE_ENV' && set +a && exec python3 -u '$QUOTA_MONITOR' loop --agentshell-all --interval-seconds \"\${LABCANVAS_CODEX_QUOTA_POLL_SECONDS:-60}\" --threshold-percent \"\${LABCANVAS_CODEX_QUOTA_WARNING_THRESHOLD_PERCENT:-5}\" --json >> '$QUOTA_LOG' 2>&1"
+  fi
+  remove_dead_window aginti-shadow
+  if ! window_exists aginti-shadow; then
+    tmux new-window -t "$SESSION" -n aginti-shadow \
+      "cd '$ROOT' && set -a && source '$PRIVATE_ENV' && set +a && exec env PYTHONPATH='$ROOT/src' python3 -u -m agenticapp.aginti_shadow loop >> '$AGINTI_SHADOW_LOG' 2>&1"
   fi
 }
 

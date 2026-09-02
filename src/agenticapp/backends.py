@@ -12,7 +12,7 @@ from typing import Any
 BIORENDER_MCP_URL = "https://mcp.services.biorender.com/mcp"
 MODEL_POLICY_PATH = Path(__file__).resolve().parents[2] / "configs" / "model-policy.json"
 DEFAULT_MODEL_POLICY: dict[str, Any] = {
-    "primary_backend": "aginti",
+    "primary_backend": "codex",
     "aginti": {
         "primary_provider": "deepseek",
         "provider_chain": ["deepseek", "localllm"],
