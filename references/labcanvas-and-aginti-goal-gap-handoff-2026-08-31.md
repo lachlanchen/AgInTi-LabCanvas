@@ -498,6 +498,44 @@ the exact three PDF hashes and mtimes. Delivery remains blocked only by the
 existing WeChat login and MIX 2S ADB authorization state; no report was
 regenerated.
 
+## 2026-09-02 AgInTi Response-Only Evidence Release
+
+AgInTiFlow `0.20.328` closes the general response-only evidence bypass found
+while repairing scheduled LabCanvas messages. Before this release, an explicit
+host-managed/response-only turn could bypass the normal completion-evidence
+gate and persist the first non-empty DeepSeek or LocalLLM answer, including
+unsupported publication, validation, metric, and forecast claims.
+
+The fix is deliberately implemented in AgInTiFlow rather than as LabCanvas
+chat policy. Under an explicit response-only evidence contract, AgInTi now:
+
+- evaluates source-bearing claims segment by segment in Chinese, English, and
+  Japanese;
+- does not allow a generic uncertainty sentence to launder a separate factual
+  claim;
+- permits clearly labeled source-free hypotheses and ordinary conversation;
+- permits claims backed by current scoped evidence or tool results;
+- attempts one same-session provider repair when the first response is unsafe;
+- fails closed with `source_free_evidence_required` when the repair remains
+  unsupported, without persisting or returning the fabricated answer as a
+  completed session.
+
+Source commit `58914c1744d72193162644cbfcb4244a0fec9434` and release commit
+`b605063b9ed53834b38b9a35d5d6e8f2580e11de` are pushed on AgInTiFlow `main`.
+The package is published as `@lazyingart/agintiflow@0.20.328`, npm `latest`
+resolves to that version, and both installed entry points (`aginti` and
+`aginti-cli`) report `0.20.328`. The full test suite, source checks, focused
+truthful-completion and provider-handoff smokes, package dry-run, package
+surface inspection, and production-dependency audit passed. The AgInTiFlow
+worktree was clean after release.
+
+LabCanvas also repaired the exact 2026-09-02 08:00 and 11:00 LabAgent
+message-only schedule records without rerunning their model work. Their stored
+results now contain no invented paper, date, metric, or validation claims and
+record an accepted message-only evidence decision. Delivery remains deferred
+where the WeCom transport is unavailable; the clean result identity is retained
+for exact-once delivery recovery.
+
 ## Remaining Gaps
 
 ### Completed: Unified Personal-WeChat Availability
@@ -554,10 +592,11 @@ representative tests for ordinary chat, research, files, schedules, CAD,
 publication supervision, and recovery. Compare raw provider output, AgInTi
 output, and routine evidence before deciding where to fix a failure.
 
-The current highest-priority core defect is DeepSeek DSML tool-call
-normalization. Until the AgInTi fix is validated and installed, LabCanvas must
-fail closed or hand off through a permitted provider; it must never deliver the
-raw envelope as an answer.
+The response-only evidence bypass is fixed and installed in AgInTiFlow
+`0.20.328`. Continue testing provider output, tool-call normalization, and
+completion evidence independently: LabCanvas must still fail closed or hand
+off through a permitted provider whenever an unrecognized raw envelope reaches
+the transport boundary.
 
 Do not start LocalLLM inference during an active maintenance fence. The current
 maintenance workflow now records completion, so normal provider handoff is
