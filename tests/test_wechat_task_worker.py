@@ -5076,6 +5076,117 @@ stderr: noisy internal trace
 
         self.assertEqual(guarded, result)
 
+    def test_message_only_inspiration_rejects_unbounded_chinese_year_forecast(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "inspiration-forecast",
+            "route_decision": {
+                "message_only": True,
+                "artifact_delivery": "forbidden",
+            },
+            "execution_contract": {
+                "artifact_delivery": "forbidden",
+                "research_evidence": {"required": True, "message_only": True},
+            },
+        }
+        result = {
+            "message": "预测：2026年底前至少完成2项闭环实验，并把它作为领先指标。",
+            "files": [],
+        }
+
+        issues = worker.message_only_research_evidence_issues(task, result)
+
+        self.assertIn("source_claim_without_fresh_evidence_manifest", issues)
+        self.assertIn("missing_hypothesis_boundary_for_unsourced_claim", issues)
+
+    def test_message_only_reprocess_reconciles_only_generic_audit_gap(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "scheduled-inspiration",
+            "source": {"local_type": "scheduled_group_inspiration"},
+            "route_decision": {
+                "scheduled_group_inspiration": True,
+                "message_only": True,
+                "artifact_delivery": "forbidden",
+            },
+            "execution_contract": {
+                "artifact_delivery": "forbidden",
+                "research_evidence": {"required": True, "message_only": True},
+            },
+            "reprocess_reason": "Return one corrected source-free hypothesis.",
+        }
+        result = {
+            "message": "这是一个尚未验证的假设：用盲法对照测试闭环刺激。",
+            "files": [],
+            "confirmation": "",
+        }
+        audit = {
+            "expected_item_ids": [
+                "task:scheduled-inspiration",
+                "reprocess:scheduled-inspiration",
+            ],
+            "covered_item_ids": ["task:scheduled-inspiration"],
+            "missing": [
+                {
+                    "item_id": "reprocess:scheduled-inspiration",
+                    "requirement": (
+                        "The checker did not confirm that this numbered message was covered."
+                    ),
+                    "kind": "action",
+                }
+            ],
+            "coverage_complete": False,
+            "repair_recommended": True,
+        }
+
+        reconciled = worker.reconcile_message_only_reprocess_coverage(
+            task, result, audit
+        )
+
+        self.assertTrue(reconciled["coverage_complete"])
+        self.assertFalse(reconciled["repair_recommended"])
+        self.assertEqual(reconciled["missing"], [])
+        self.assertIn(
+            "reprocess:scheduled-inspiration", reconciled["covered_item_ids"]
+        )
+
+    def test_message_only_reprocess_keeps_substantive_audit_failure(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "scheduled-inspiration",
+            "source": {"local_type": "scheduled_group_inspiration"},
+            "route_decision": {
+                "scheduled_group_inspiration": True,
+                "message_only": True,
+                "artifact_delivery": "forbidden",
+            },
+            "execution_contract": {
+                "artifact_delivery": "forbidden",
+                "research_evidence": {"required": True, "message_only": True},
+            },
+            "reprocess_reason": "Return one corrected source-free hypothesis.",
+        }
+        result = {"message": "尚未验证的假设：测试闭环刺激。", "files": []}
+        audit = {
+            "expected_item_ids": ["reprocess:scheduled-inspiration"],
+            "covered_item_ids": [],
+            "missing": [
+                {
+                    "item_id": "reprocess:scheduled-inspiration",
+                    "requirement": "Add the explicitly requested control experiment.",
+                    "kind": "reply",
+                }
+            ],
+            "coverage_complete": False,
+            "repair_recommended": True,
+        }
+
+        reconciled = worker.reconcile_message_only_reprocess_coverage(
+            task, result, audit
+        )
+
+        self.assertEqual(reconciled, audit)
+
     def test_aginti_reprocess_recovers_legacy_nested_pdf_rejections(self) -> None:
         worker = load_worker()
         task = {

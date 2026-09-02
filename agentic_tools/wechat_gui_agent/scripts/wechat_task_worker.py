@@ -5089,7 +5089,16 @@ MESSAGE_ONLY_UNVERIFIED_SOURCE_CLAIM_RE = re.compile(
     r"states?|shows?|reports?)|"
     r"(?:发表于|發表於|发表在|published\s+in)|"
     r"(?:已有|已经|已經|already)\s*.{0,24}(?:验证|驗證|证据|證據|verified)|"
-    r"\b(?:19|20)\d{2}\s*(?:年)?\b)",
+    r"(?<!\d)(?:19|20)\d{2}\s*(?:年)?)",
+    flags=re.IGNORECASE,
+)
+MESSAGE_ONLY_HYPOTHESIS_RE = re.compile(
+    r"(?:假设|假說|设想|設想|推测|推測|尚未验证|尚未驗證|待验证|待驗證|"
+    r"proposed\s+hypothesis|hypothesis|unverified\s+idea)",
+    flags=re.IGNORECASE,
+)
+MESSAGE_ONLY_FORECAST_RE = re.compile(
+    r"(?:预测|預測|forecast|领先指标|領先指標|未来\s*\d+\s*年|未來\s*\d+\s*年)",
     flags=re.IGNORECASE,
 )
 MESSAGE_ONLY_QUANTITATIVE_CLAIM_RE = re.compile(
@@ -5135,8 +5144,16 @@ def message_only_research_evidence_issues(
         return ["unverified_message_reference"] if identifiers - allowed else []
 
     issues: list[str] = []
-    if research_reference_identifiers(text) or MESSAGE_ONLY_UNVERIFIED_SOURCE_CLAIM_RE.search(text):
+    identifiers = research_reference_identifiers(text)
+    source_claim = bool(MESSAGE_ONLY_UNVERIFIED_SOURCE_CLAIM_RE.search(text))
+    quantitative_claim = bool(MESSAGE_ONLY_QUANTITATIVE_CLAIM_RE.search(text))
+    forecast_claim = bool(MESSAGE_ONLY_FORECAST_RE.search(text))
+    if identifiers or source_claim:
         issues.append("source_claim_without_fresh_evidence_manifest")
+    if (
+        identifiers or source_claim or quantitative_claim or forecast_claim
+    ) and not MESSAGE_ONLY_HYPOTHESIS_RE.search(text):
+        issues.append("missing_hypothesis_boundary_for_unsourced_claim")
     correction = str(task.get("reprocess_reason") or "")
     forbids_invented_metrics = bool(
         re.search(
@@ -5146,7 +5163,7 @@ def message_only_research_evidence_issues(
             flags=re.IGNORECASE,
         )
     )
-    if forbids_invented_metrics and MESSAGE_ONLY_QUANTITATIVE_CLAIM_RE.search(text):
+    if forbids_invented_metrics and quantitative_claim:
         issues.append("instruction_forbids_unverified_metrics")
     return unique_strings(issues)
 
@@ -10812,7 +10829,11 @@ def audit_and_repair_worker_completion(
             "missing": [],
         }
         return result
-    first = run_completion_audit(task, result)
+    first = reconcile_message_only_reprocess_coverage(
+        task,
+        result,
+        run_completion_audit(task, result),
+    )
     attempts = [completion_audit_record(first, stage="candidate")]
     repaired = False
     combined = result
@@ -10887,7 +10908,11 @@ def audit_and_repair_worker_completion(
             correction = enforce_message_only_research_evidence(task, correction)
             if completion_repair_result_usable(correction):
                 combined = merge_completion_results(combined, correction)
-                second = run_completion_audit(task, combined)
+                second = reconcile_message_only_reprocess_coverage(
+                    task,
+                    combined,
+                    run_completion_audit(task, combined),
+                )
                 attempts.append(
                     completion_audit_record(second, stage="corrected")
                 )
@@ -10979,6 +11004,58 @@ def completion_audit_should_defer(
         or existing_video_publish_result_is_nonterminal(task, result)
         or generated_video_result_is_nonterminal(task, result)
     )
+
+
+def reconcile_message_only_reprocess_coverage(
+    task: dict[str, Any],
+    result: dict[str, Any],
+    audit: dict[str, Any],
+) -> dict[str, Any]:
+    """Resolve only a generic undecided recovery row after quality validation."""
+
+    source = task.get("source") if isinstance(task.get("source"), dict) else {}
+    route = task.get("route_decision") if isinstance(task.get("route_decision"), dict) else {}
+    if not (
+        str(task.get("reprocess_reason") or "").strip()
+        and task_forbids_chat_artifact_delivery(task)
+        and (
+            str(source.get("local_type") or "") == "scheduled_group_inspiration"
+            or bool(route.get("scheduled_group_inspiration"))
+        )
+        and str(result.get("message") or "").strip()
+        and not message_only_research_evidence_issues(task, result)
+    ):
+        return audit
+    reprocess_id = f"reprocess:{str(task.get('id') or '')}"
+    missing = [item for item in audit.get("missing") or [] if isinstance(item, dict)]
+    reprocess_missing = [
+        item for item in missing if str(item.get("item_id") or "") == reprocess_id
+    ]
+    if not reprocess_missing or any(
+        str(item.get("requirement") or "")
+        != "The checker did not confirm that this numbered message was covered."
+        for item in reprocess_missing
+    ):
+        return audit
+
+    repaired = dict(audit)
+    repaired["missing"] = [
+        item for item in missing if str(item.get("item_id") or "") != reprocess_id
+    ]
+    repaired["covered_item_ids"] = unique_strings(
+        [*(str(item) for item in audit.get("covered_item_ids") or []), reprocess_id]
+    )
+    expected = [str(item) for item in audit.get("expected_item_ids") or []]
+    missing_ids = {
+        str(item.get("item_id") or "") for item in repaired["missing"]
+    }
+    repaired["coverage_complete"] = all(
+        item_id in repaired["covered_item_ids"] and item_id not in missing_ids
+        for item_id in expected
+    )
+    repaired["repair_recommended"] = bool(repaired["missing"])
+    repaired["reprocess_coverage_reconciled"] = True
+    return repaired
 
 
 def completion_expected_item_ids(task: dict[str, Any]) -> list[str]:
