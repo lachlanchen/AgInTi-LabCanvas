@@ -807,6 +807,7 @@ def repair_stored_result_contract(
         repaired = enforce_worker_result_contract(task, repaired, raw_text)
         repaired = prepare_result_files(repaired, raw_text, task=task)
         repaired = enforce_reader_facing_pdf_quality(task, repaired)
+        repaired = enforce_message_only_research_evidence(task, repaired)
         repaired = recover_stored_result_required_files(task, repaired, raw_text)
         resolved_coverage_ids = reconcile_repaired_artifact_coverage(
             task,
@@ -1529,6 +1530,7 @@ def process_one(queue: Path, chat: str, *, send: bool, send_targets: Path = DEFA
         result = prepare_result_files(result, result_text, task=task)
         result = recover_verified_shipinhao_delivery_result(task, result)
         result = enforce_reader_facing_pdf_quality(task, result)
+        result = enforce_message_only_research_evidence(task, result)
         result = audit_and_repair_worker_completion(task, result)
         result = enforce_worker_result_response_policy(task, result)
     except Exception as exc:
@@ -5076,6 +5078,108 @@ def capture_aginti_research_evidence(
         task["research_evidence_manifest"] = reference
         return reference
     return None
+
+
+MESSAGE_ONLY_UNVERIFIED_SOURCE_CLAIM_RE = re.compile(
+    r"(?:《[^》]{2,100}》|\b(?:Nature|Science|Cell|arXiv|bioRxiv|medRxiv)\b|"
+    r"(?:论文|論文|期刊|文献|文獻|预印本|預印本)|"
+    r"(?:研究|study|paper)\s*(?:显示|顯示|发现|發現|表明|证明|證明|"
+    r"shows?|reports?|found)|"
+    r"(?:报道|報道|报告|報告|来源|來源|source)\s*(?:指出|显示|顯示|提及|"
+    r"states?|shows?|reports?)|"
+    r"(?:发表于|發表於|发表在|published\s+in)|"
+    r"(?:已有|已经|已經|already)\s*.{0,24}(?:验证|驗證|证据|證據|verified)|"
+    r"\b(?:19|20)\d{2}\s*(?:年)?\b)",
+    flags=re.IGNORECASE,
+)
+MESSAGE_ONLY_QUANTITATIVE_CLAIM_RE = re.compile(
+    r"(?<![\w.])\d+(?:\.\d+)?\s*(?:%|ms|s|秒|分钟|分鐘|小时|小時|Hz|kHz|MHz|"
+    r"nm|um|μm|mm|cm|mM|μM|nM|倍|fold)\b",
+    flags=re.IGNORECASE,
+)
+
+
+def message_only_research_evidence_issues(
+    task: dict[str, Any], result: dict[str, Any]
+) -> list[str]:
+    """Reject unsourced factual research claims while allowing explicit hypotheses."""
+
+    execution = (
+        task.get("execution_contract")
+        if isinstance(task.get("execution_contract"), dict)
+        else {}
+    )
+    contract = (
+        execution.get("research_evidence")
+        if isinstance(execution.get("research_evidence"), dict)
+        else {}
+    )
+    if not (
+        contract.get("required")
+        and contract.get("message_only")
+        and task_forbids_chat_artifact_delivery(task)
+    ):
+        return []
+    text = str(result.get("message") or "").strip()
+    if not text or result_is_no_reply(result):
+        return []
+
+    manifest = load_task_research_evidence_manifest(task)
+    if manifest:
+        allowed = {
+            str(item)
+            for item in manifest.get("allowed_reference_identifiers") or []
+            if str(item).strip()
+        }
+        identifiers = research_reference_identifiers(text)
+        return ["unverified_message_reference"] if identifiers - allowed else []
+
+    issues: list[str] = []
+    if research_reference_identifiers(text) or MESSAGE_ONLY_UNVERIFIED_SOURCE_CLAIM_RE.search(text):
+        issues.append("source_claim_without_fresh_evidence_manifest")
+    correction = str(task.get("reprocess_reason") or "")
+    forbids_invented_metrics = bool(
+        re.search(
+            r"(?:do\s+not\s+invent|不要.{0,20}(?:编造|虛構|虚构)).{0,120}"
+            r"(?:metrics?|numbers?|benchmarks?|指标|指標|数值|數值)",
+            correction,
+            flags=re.IGNORECASE,
+        )
+    )
+    if forbids_invented_metrics and MESSAGE_ONLY_QUANTITATIVE_CLAIM_RE.search(text):
+        issues.append("instruction_forbids_unverified_metrics")
+    return unique_strings(issues)
+
+
+def enforce_message_only_research_evidence(
+    task: dict[str, Any], result: dict[str, Any]
+) -> dict[str, Any]:
+    """Withhold unsupported message-only research claims before chat delivery."""
+
+    issues = message_only_research_evidence_issues(task, result)
+    if not issues:
+        return result
+    task["message_only_research_quality"] = {
+        "status": "rejected",
+        "issues": issues,
+        "checked_at": datetime.now().isoformat(timespec="seconds"),
+    }
+    data = result.get("data") if isinstance(result.get("data"), dict) else {}
+    return {
+        "message": "",
+        "confirmation": "",
+        "files": [],
+        "raw": str(result.get("raw") or ""),
+        "no_reply": True,
+        "private_failure": {"kind": "unverified_research_claims"},
+        "data": {
+            **data,
+            "message_only_research_quality": {
+                "status": "rejected",
+                "issues": issues,
+            },
+        },
+    }
 
 
 def research_report_evidence_summary(text: str) -> dict[str, Any]:
@@ -10780,6 +10884,7 @@ def audit_and_repair_worker_completion(
                 correction, raw_correction, task=task
             )
             correction = enforce_reader_facing_pdf_quality(task, correction)
+            correction = enforce_message_only_research_evidence(task, correction)
             if completion_repair_result_usable(correction):
                 combined = merge_completion_results(combined, correction)
                 second = run_completion_audit(task, combined)

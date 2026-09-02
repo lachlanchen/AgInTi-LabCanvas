@@ -5004,6 +5004,78 @@ stderr: noisy internal trace
         self.assertEqual(scope["mode"], "task")
         self.assertEqual(scope["artifact_root"], "/tmp/message-only-initial")
 
+    def test_message_only_inspiration_rejects_unsourced_publication_claims(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "inspiration-evidence-guard",
+            "artifact_dir": "/tmp/inspiration-evidence-guard",
+            "route_decision": {
+                "message_only": True,
+                "artifact_delivery": "forbidden",
+            },
+            "execution_contract": {
+                "artifact_delivery": "forbidden",
+                "research_evidence": {
+                    "required": True,
+                    "message_only": True,
+                },
+            },
+            "reprocess_reason": "Do not invent papers, metrics, or citations.",
+        }
+        result = {
+            "message": (
+                "假设：可构建跨物种电活动网络。2025 年 Nature 预印本已有初步验证，"
+                "并建议把响应延迟设为 100ms。"
+            ),
+            "files": [],
+            "confirmation": "",
+            "raw": "candidate",
+        }
+
+        guarded = worker.enforce_message_only_research_evidence(task, result)
+
+        self.assertTrue(guarded["no_reply"])
+        self.assertEqual(
+            guarded["private_failure"]["kind"], "unverified_research_claims"
+        )
+        self.assertIn(
+            "source_claim_without_fresh_evidence_manifest",
+            guarded["data"]["message_only_research_quality"]["issues"],
+        )
+        self.assertIn(
+            "instruction_forbids_unverified_metrics",
+            guarded["data"]["message_only_research_quality"]["issues"],
+        )
+
+    def test_message_only_inspiration_allows_explicit_unsourced_hypothesis(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "inspiration-hypothesis",
+            "route_decision": {
+                "message_only": True,
+                "artifact_delivery": "forbidden",
+            },
+            "execution_contract": {
+                "artifact_delivery": "forbidden",
+                "research_evidence": {
+                    "required": True,
+                    "message_only": True,
+                },
+            },
+        }
+        result = {
+            "message": (
+                "这是一个尚未验证的假设：让光控细菌充当类器官的可逆扰动源。"
+                "先做一组有菌、一组无菌的盲法对照，比较刺激前后的传播方向是否稳定改变。"
+            ),
+            "files": [],
+            "confirmation": "",
+        }
+
+        guarded = worker.enforce_message_only_research_evidence(task, result)
+
+        self.assertEqual(guarded, result)
+
     def test_aginti_reprocess_recovers_legacy_nested_pdf_rejections(self) -> None:
         worker = load_worker()
         task = {
