@@ -3736,21 +3736,15 @@ def wecom_transport_settings(task: dict[str, Any] | None = None) -> tuple[str, s
         mobile = ready_wecom_android_transport()
         if mobile is not None:
             return mobile
-        config_path = ROOT / "agentic_tools" / "wecom_agent" / ".private" / "wecom_gui_bridge.local.json"
-        try:
-            config = json.loads(config_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            raise RuntimeError(f"WeCom GUI transport config is unavailable: {type(exc).__name__}") from exc
-        endpoint = f"http://127.0.0.1:{int(config.get('local_api_port') or 19580)}"
-        token = str(config.get("local_api_token") or "").strip()
-        if not token:
-            raise RuntimeError("WeCom GUI local API token is missing")
-        return endpoint, token
+        return wecom_gui_transport_settings()
     if transport_channel == "wecom_android":
         mobile = ready_wecom_android_transport(require_preferred=False)
-        if mobile is None:
-            raise RuntimeError("WeCom Android transport is unavailable")
-        return mobile
+        if mobile is not None:
+            return mobile
+        chat_id = str(source.get("wecom_chat_id") or "").strip()
+        if chat_id.startswith("gui:") and chat_id.removeprefix("gui:").strip():
+            return wecom_gui_transport_settings()
+        raise RuntimeError("WeCom Android transport is unavailable")
     if transport_channel != "wecom_bot_websocket":
         raise RuntimeError(f"Unsupported WeCom transport channel: {transport_channel}")
     endpoint = os.environ.get("WECOM_LOCAL_API_URL", "http://127.0.0.1:19578").strip()
@@ -3770,6 +3764,23 @@ def wecom_transport_settings(task: dict[str, Any] | None = None) -> tuple[str, s
         raise RuntimeError("Refusing non-local WeCom transport endpoint")
     if not token:
         raise RuntimeError("WECOM_LOCAL_API_TOKEN is missing")
+    return endpoint, token
+
+
+def wecom_gui_transport_settings() -> tuple[str, str]:
+    config_path = ROOT / "agentic_tools" / "wecom_agent" / ".private" / "wecom_gui_bridge.local.json"
+    try:
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"WeCom GUI transport config is unavailable: {type(exc).__name__}") from exc
+    try:
+        port = int(config.get("local_api_port") or 19580)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("WeCom GUI local API port is invalid") from exc
+    endpoint = f"http://127.0.0.1:{port}"
+    token = str(config.get("local_api_token") or "").strip()
+    if not token:
+        raise RuntimeError("WeCom GUI local API token is missing")
     return endpoint, token
 
 

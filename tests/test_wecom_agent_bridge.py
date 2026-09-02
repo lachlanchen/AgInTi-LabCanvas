@@ -3627,9 +3627,17 @@ class WeComAgentBridgeTests(unittest.TestCase):
 
         self.assertTrue(changed)
         command = bridge.run_xdotool.call_args.args[0]
-        self.assertEqual(command[:5], ["mousemove", "651", "552", "click", "1"])
+        self.assertEqual(command[:5], ["mousemove", "651", "467", "click", "1"])
         self.assertEqual(command.count("Up"), 2)
         self.assertEqual(command[-3:], ["key", "--clearmodifiers", "Return"])
+
+    def test_gui_conversation_list_box_includes_first_visible_row(self) -> None:
+        module = load_gui_bridge()
+        bridge = object.__new__(module.WeComGuiBridge)
+
+        box = bridge.conversation_list_box(module.Window("1", 467, 215, 986, 650))
+
+        self.assertEqual(box, (526, 260, 251, 546))
 
     def test_gui_selected_conversation_row_uses_blue_geometry_not_title_ocr(self) -> None:
         module = load_gui_bridge()

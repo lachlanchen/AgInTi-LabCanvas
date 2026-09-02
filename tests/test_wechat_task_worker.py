@@ -2009,6 +2009,53 @@ This hypothesis still needs validation.
                 [],
             )
 
+    def test_wecom_android_origin_falls_back_to_exact_desktop_gui_route(self) -> None:
+        worker = load_worker()
+        task = {
+            "source": {
+                "wecom_transport_channel": "wecom_android",
+                "wecom_chat_id": "gui:LabAgent",
+            }
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_path = (
+                root
+                / "agentic_tools"
+                / "wecom_agent"
+                / ".private"
+                / "wecom_gui_bridge.local.json"
+            )
+            config_path.parent.mkdir(parents=True)
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "local_api_port": 29580,
+                        "local_api_token": "desktop-token",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with (
+                mock.patch.object(worker, "ROOT", root),
+                mock.patch.object(worker, "ready_wecom_android_transport", return_value=None),
+            ):
+                settings = worker.wecom_transport_settings(task)
+
+        self.assertEqual(settings, ("http://127.0.0.1:29580", "desktop-token"))
+
+    def test_wecom_android_origin_without_exact_gui_route_fails_closed(self) -> None:
+        worker = load_worker()
+        task = {
+            "source": {
+                "wecom_transport_channel": "wecom_android",
+                "wecom_chat_id": "external-group-id-without-gui-route",
+            }
+        }
+        with mock.patch.object(worker, "ready_wecom_android_transport", return_value=None):
+            with self.assertRaisesRegex(RuntimeError, "Android transport is unavailable"):
+                worker.wecom_transport_settings(task)
+
     def test_unique_paths_keeps_each_delivery_artifact_once(self) -> None:
         worker = load_worker()
         paths = [Path("/tmp/report.zh.pdf"), Path("/tmp/report.en.pdf"), Path("/tmp/report.zh.pdf")]

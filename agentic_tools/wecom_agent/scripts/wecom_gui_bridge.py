@@ -1011,25 +1011,30 @@ class WeComGuiBridge:
 
     def open_from_visible_list(self, window: Window, chat: str) -> bool:
         screenshot = self.capture_screen("conversation-list-check")
+        list_box = self.conversation_list_box(window)
         crop_path = self.crop(
             screenshot,
-            (
-                window.x + int(window.width * 0.06),
-                window.y + int(window.height * 0.20),
-                int(window.width * 0.255),
-                int(window.height * 0.72),
-            ),
+            list_box,
             self.runtime_dir / "conversation-list-check.png",
         )
         match = self.find_ocr_line(crop_path, chat, scale=3)
         if match is None:
             return False
         self.click(
-            window.x + int(window.width * 0.06) + int(match["center_x"]),
-            window.y + int(window.height * 0.20) + int(match["center_y"]),
+            list_box[0] + int(match["center_x"]),
+            list_box[1] + int(match["center_y"]),
         )
         time.sleep(self.pause)
         return True
+
+    def conversation_list_box(self, window: Window) -> tuple[int, int, int, int]:
+        """Return the complete visible conversation-list surface."""
+        return (
+            window.x + int(window.width * 0.06),
+            window.y + int(window.height * 0.07),
+            int(window.width * 0.255),
+            int(window.height * 0.84),
+        )
 
     def current_allowlisted_chat(self, window: Window, *, exclude: str = "") -> str:
         for candidate in self.target_groups:
@@ -1047,14 +1052,10 @@ class WeComGuiBridge:
     ) -> bool:
         """Navigate between visible rows when Wine ignores a pointer selection."""
         screenshot = self.capture_screen("conversation-keyboard-fallback")
+        list_box = self.conversation_list_box(window)
         crop_path = self.crop(
             screenshot,
-            (
-                window.x + int(window.width * 0.06),
-                window.y + int(window.height * 0.20),
-                int(window.width * 0.255),
-                int(window.height * 0.72),
-            ),
+            list_box,
             self.runtime_dir / "conversation-keyboard-fallback.png",
         )
         target = self.find_ocr_line(crop_path, target_chat, scale=3)
@@ -1070,9 +1071,7 @@ class WeComGuiBridge:
         if steps < 1 or steps > 12:
             return False
         direction = "Down" if delta > 0 else "Up"
-        list_left = window.x + int(window.width * 0.06)
-        list_width = int(window.width * 0.255)
-        list_top = window.y + int(window.height * 0.20)
+        list_left, list_top, list_width, _list_height = list_box
         command = [
             "mousemove",
             str(list_left + int(list_width * 0.50)),

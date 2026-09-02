@@ -21,6 +21,7 @@ WECHAT_DISPLAY="${WECHAT_DISPLAY:-:97}"
 UNLOCK_WATCHDOG="${WECHAT_UNLOCK_WATCHDOG:-1}"
 UNLOCK_INTERVAL="${WECHAT_UNLOCK_INTERVAL:-20}"
 UNLOCK_ADB_SERIAL="${WECHAT_UNLOCK_ADB_SERIAL:-${ANDROID_SERIAL:-}}"
+UNLOCK_DRY_RUN="${WECHAT_UNLOCK_DRY_RUN:-0}"
 UNLOCK_FLUSH_DEFERRED="${WECHAT_UNLOCK_FLUSH_DEFERRED:-1}"
 CHAT_SYNC_WATCHDOG="${WECHAT_CHAT_SYNC_WATCHDOG:-1}"
 CHAT_SYNC_INTERVAL="${WECHAT_CHAT_SYNC_INTERVAL:-45}"
@@ -116,6 +117,7 @@ Environment:
   WECHAT_MEDIA_CHATS          optional comma-separated chat names to mirror
   WECHAT_CHAT_NAME            fallback chat name for media-sync events
   WECHAT_UNLOCK_WATCHDOG      1 to keep desktop WeChat unlocked by phone UI, default 1
+  WECHAT_UNLOCK_DRY_RUN       1 to probe desktop state without controlling Android, default 0
   WECHAT_UNLOCK_ADB_SERIAL    optional Android serial for phone-side unlock
   WECHAT_UNLOCK_INTERVAL      watchdog poll interval, default 20 seconds
   WECHAT_CHAT_SYNC_WATCHDOG   1 to dry-open configured chats so DB rows stay fresh, default 1
@@ -225,7 +227,9 @@ respawn_or_new_pane_by_start_command() {
 
 unlock_watchdog_command() {
   local args=(python3 -u agentic_tools/wechat_gui_agent/scripts/wechat_desktop_unlock_watchdog.py --display "$WECHAT_DISPLAY" --interval "$UNLOCK_INTERVAL" --loop)
-  if [[ -n "$UNLOCK_ADB_SERIAL" ]]; then
+  if [[ "$UNLOCK_DRY_RUN" != "0" ]]; then
+    args+=(--dry-run)
+  elif [[ -n "$UNLOCK_ADB_SERIAL" ]]; then
     args+=(--serial "$UNLOCK_ADB_SERIAL")
   fi
   if [[ "$UNLOCK_FLUSH_DEFERRED" != "0" ]]; then
