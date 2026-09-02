@@ -1099,6 +1099,8 @@ Requirements:
 - Longitudinal history may help identify recurring interests, terminology, and unresolved scientific tensions. It must never turn an old completed request into current work or override new human messages.
 - When a source appears in the new human messages, inspect its substantive content when available: identify the actual result, method or evidence, limitation, and an unresolved question. Do not merely repeat its title or abstract.
 - If a current factual claim is needed, verify it with reliable sources and include at most two compact links; do not invent citations.
+- Do not name a paper, journal, year, volume, page range, benchmark, product, or forecast unless it came from a source actually opened in this turn.
+- If source verification is unavailable, omit literature-style claims and present the point explicitly as a proposed hypothesis or experiment.
 - Keep it concise enough for a group message, but include why it matters and one possible next step.
 - Clearly separate a sourced fact from your own proposed idea.
 - Return only the concise chat message required by this scheduled turn.
@@ -1159,6 +1161,14 @@ Requirements:
             "required_artifacts": [],
             "artifact_delivery": "forbidden",
             "queue_mode": "single_worker_sequential",
+            "research_evidence": {
+                "required": True,
+                "live_search_required": True,
+                "minimum_traceable_sources": 1,
+                "state_uncertainty_and_limitations": True,
+                "include_actionable_next_steps": True,
+                "message_only": True,
+            },
         },
         "source": {
             "transport": "wecom",

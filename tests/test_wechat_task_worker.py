@@ -13,6 +13,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 import zipfile
@@ -1579,6 +1580,121 @@ This hypothesis still needs validation.
         assert result is not None
         self.assertEqual(result["files"], [str(compiled_pdf)])
         self.assertIn("类器官成像研究简报", result["message"])
+
+    def test_research_recovery_prefers_current_claim_report_over_stale_high_score_name(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            stale = root / "old-research-report-briefing.tex"
+            fresh = root / "2026-09-02-类器官代谢形态闭环研究简报.tex"
+            report_body = (
+                r"\documentclass{article}" "\n"
+                r"\begin{document}" "\n"
+                r"\section{Evidence}" "\n"
+                "DOI: 10.1000/example-one. DOI: 10.1000/example-two.\n"
+                r"\section{Methods and limitations}" "\n"
+                + ("Grounded methods, evidence, limitations, and next experiments. " * 30)
+                + "\n"
+                r"\end{document}" "\n"
+            )
+            stale.write_text(report_body, encoding="utf-8")
+            fresh.write_text(report_body, encoding="utf-8")
+            os.utime(stale, (1000, 1000))
+            os.utime(fresh, (2000, 2000))
+            compiled_pdf = fresh.with_suffix(".pdf")
+
+            def fake_compile(source: Path, output: Path | None = None) -> Path:
+                self.assertEqual(source, fresh)
+                target = output or source.with_suffix(".pdf")
+                target.write_bytes(b"%PDF-1.4\ncurrent-generation")
+                return target
+
+            task = {
+                "id": "fresh-report-recovery",
+                "artifact_dir": str(root),
+                "claimed_at": datetime.fromtimestamp(2100).isoformat(timespec="seconds"),
+                "artifact_recovery_only": True,
+                "reprocess_history": [
+                    {
+                        "previous_claimed_at": datetime.fromtimestamp(1900).isoformat(
+                            timespec="seconds"
+                        )
+                    }
+                ],
+                "routine": {"id": "research_summary"},
+                "route_decision": {
+                    "route_kind": "research_or_summary",
+                    "require_file_delivery": True,
+                },
+                "request": "Prepare and send the current research briefing PDF.",
+            }
+            with mock.patch.object(worker, "render_latex_pdf", side_effect=fake_compile):
+                result = worker.recover_completed_research_artifacts(task, force=True)
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result["files"], [str(compiled_pdf)])
+        self.assertEqual(task["worker_artifact_recovery"]["report"], str(fresh))
+
+    def test_research_recovery_falls_back_from_invalid_tex_to_current_markdown(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            tex = root / "current-research-briefing.tex"
+            markdown = root / "当前研究简报.md"
+            tex.write_text(
+                r"\documentclass{article}" "\n"
+                r"\begin{document}" "\n"
+                r"\section{Evidence}" "\n"
+                "DOI: 10.1000/example-one. DOI: 10.1000/example-two.\n"
+                r"\section{Methods}" "\n"
+                + ("Grounded evidence and limitations. " * 30)
+                + "\n"
+                r"\end{document}" "\n",
+                encoding="utf-8",
+            )
+            markdown.write_text(
+                "# 当前研究简报\n\n"
+                "## 证据与来源\n\nDOI: 10.1000/example-one. DOI: 10.1000/example-two.\n\n"
+                "## 方法、局限与下一步\n\n"
+                + ("可核验的证据、方法、局限和下一步实验。" * 50),
+                encoding="utf-8",
+            )
+            os.utime(tex, (2000, 2000))
+            os.utime(markdown, (2001, 2001))
+            compiled_pdf = markdown.with_suffix(".zh.pdf")
+
+            def fake_markdown_compile(source: Path, language: str) -> Path:
+                self.assertEqual(source, markdown)
+                self.assertEqual(language, "zh")
+                compiled_pdf.write_bytes(b"%PDF-1.4\nmarkdown-fallback")
+                return compiled_pdf
+
+            task = {
+                "id": "markdown-compile-fallback",
+                "artifact_dir": str(root),
+                "claimed_at": datetime.fromtimestamp(1900).isoformat(timespec="seconds"),
+                "routine": {"id": "research_summary"},
+                "route_decision": {
+                    "route_kind": "research_or_summary",
+                    "require_file_delivery": True,
+                },
+                "request": "Prepare and send the current research briefing PDF.",
+            }
+            with (
+                mock.patch.object(worker, "render_latex_pdf", return_value=None),
+                mock.patch.object(
+                    worker,
+                    "ensure_markdown_pdf_companion_for_language",
+                    side_effect=fake_markdown_compile,
+                ),
+            ):
+                result = worker.recover_completed_research_artifacts(task, force=True)
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result["files"], [str(compiled_pdf)])
+        self.assertEqual(task["worker_artifact_recovery"]["report"], str(markdown))
 
     def test_research_artifact_recovery_rejects_routine_notes_and_nonresearch(self) -> None:
         worker = load_worker()
@@ -4769,6 +4885,41 @@ stderr: noisy internal trace
         self.assertNotIn("old broad topic", scope_line)
         self.assertNotIn("historical-noise", prompt)
         self.assertNotIn("stale-output.pdf", prompt)
+
+    def test_aginti_message_only_reprocess_does_not_invent_pdf_or_file_mutation(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "message-only-reprocess",
+            "chat": "LabAgent",
+            "request": (
+                "Create one concise research inspiration with an evidence boundary "
+                "and one actionable experiment."
+            ),
+            "artifact_dir": "/tmp/message-only-reprocess",
+            "route_decision": {
+                "route_kind": "research_or_summary",
+                "message_only": True,
+                "artifact_delivery": "forbidden",
+            },
+            "execution_contract": {
+                "required_artifacts": [],
+                "artifact_delivery": "forbidden",
+            },
+            "routine": {"id": "research_summary", "title": "Research"},
+            "reprocess_requested_at": "2026-09-02T02:00:00",
+            "reprocess_reason": (
+                "Replace the prior invalid inspiration with one grounded natural message."
+            ),
+        }
+
+        packet = worker.aginti_worker_task_view(task)
+        scope = worker.aginti_worker_evidence_scope_request(task, packet)
+
+        self.assertIn("one concise research inspiration", scope)
+        self.assertIn("Return only the corrected natural chat response", scope)
+        self.assertIn("Do not create, attach, or return any file", scope)
+        self.assertNotIn("Materially revise a source file", scope)
+        self.assertNotIn("replacement PDF", scope)
 
     def test_aginti_reprocess_recovers_legacy_nested_pdf_rejections(self) -> None:
         worker = load_worker()
@@ -15349,6 +15500,360 @@ NVQNIF+NotoSansCJKjp-Regular-Identity-H CID Type 0C       Identity-H       yes y
 
         self.assertEqual(issues, [])
 
+    def test_research_pdf_rejects_unresolved_and_unverified_citations(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            artifact_dir = Path(tmp)
+            manifest_path = artifact_dir / "research-evidence-manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "status": "completed",
+                        "allowed_reference_identifiers": [
+                            "doi:10.1000/source-a",
+                            "doi:10.1000/source-b",
+                        ],
+                        "sources": [
+                            {
+                                "source_id": "S1",
+                                "reference_identifiers": ["doi:10.1000/source-a"],
+                            },
+                            {
+                                "source_id": "S2",
+                                "reference_identifiers": ["doi:10.1000/source-b"],
+                            },
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            task = {
+                "artifact_dir": str(artifact_dir),
+                "routine": {"id": "research_summary"},
+                "request": "Prepare and send a source-grounded PDF research report.",
+                "research_evidence_manifest": {"path": str(manifest_path)},
+                "execution_contract": {
+                    "research_evidence": {
+                        "required": True,
+                        "minimum_traceable_sources": 2,
+                        "state_uncertainty_and_limitations": True,
+                        "include_actionable_next_steps": True,
+                    }
+                },
+            }
+            report = artifact_dir / "report.pdf"
+            report.write_bytes(b"%PDF-1.4\n")
+            text = """
+            # Evidence and methods
+            Study design, samples, controls, results, and limitations are reported.
+            DOI: 10.1000/source-a; DOI: 10.1000/source-b; DOI: 10.1000/fabricated.
+            One unresolved result remains [?].
+            # Evidence boundaries and uncertainty
+            Direct evidence, inference, uncertainty, and hypotheses are separated.
+            # Next steps
+            The recommended experiment is an independent preregistered replication.
+            # References
+            Source A 10.1000/source-a; Source B 10.1000/source-b;
+            Fabricated 10.1000/fabricated.
+            """ + ("Source-level evidence and concrete result. " * 35)
+            with mock.patch.object(
+                worker,
+                "extract_pdf_text_for_quality",
+                return_value=(text, ""),
+            ):
+                issues = worker.reader_facing_pdf_quality_issues(task, report)
+
+        self.assertIn("unresolved_report_citations", issues)
+        self.assertIn("unverified_report_reference", issues)
+        self.assertNotIn("insufficient_verified_research_sources", issues)
+
+    def test_research_pdf_accepts_manifest_bound_references(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            artifact_dir = Path(tmp)
+            manifest_path = artifact_dir / "research-evidence-manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "status": "completed",
+                        "allowed_reference_identifiers": [
+                            "doi:10.1000/source-a",
+                            "url:https://example.org/source-b",
+                        ],
+                        "sources": [
+                            {
+                                "source_id": "S1",
+                                "reference_identifiers": ["doi:10.1000/source-a"],
+                            },
+                            {
+                                "source_id": "S2",
+                                "reference_identifiers": [
+                                    "url:https://example.org/source-b"
+                                ],
+                            },
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            task = {
+                "artifact_dir": str(artifact_dir),
+                "routine": {"id": "research_summary"},
+                "request": "Prepare and send a source-grounded PDF research report.",
+                "research_evidence_manifest": {"path": str(manifest_path)},
+                "execution_contract": {
+                    "research_evidence": {
+                        "required": True,
+                        "minimum_traceable_sources": 2,
+                        "state_uncertainty_and_limitations": True,
+                        "include_actionable_next_steps": True,
+                    }
+                },
+            }
+            report = artifact_dir / "report.pdf"
+            report.write_bytes(b"%PDF-1.4\n")
+            text = """
+            # Evidence and methods
+            Study design, samples, controls, quantitative results, and limitations are reported.
+            DOI: 10.1000/source-a and https://example.org/source-b.
+            # Evidence boundaries and uncertainty
+            Direct evidence, inference, uncertainty, and hypotheses are separated.
+            # Next steps
+            The recommended experiment is an independent preregistered replication.
+            # References
+            Source A 10.1000/source-a. Source B https://example.org/source-b.
+            """ + ("Source-level evidence and concrete result. " * 35)
+            with mock.patch.object(
+                worker,
+                "extract_pdf_text_for_quality",
+                return_value=(text, ""),
+            ):
+                issues = worker.reader_facing_pdf_quality_issues(task, report)
+
+        self.assertNotIn("unresolved_report_citations", issues)
+        self.assertNotIn("unverified_report_reference", issues)
+        self.assertNotIn("insufficient_verified_research_sources", issues)
+
+    def test_research_reference_parser_ignores_line_wrapped_partial_arxiv_url(self) -> None:
+        worker = load_worker()
+
+        identifiers = worker.research_reference_identifiers(
+            "arXiv:2404.11901 https://arxiv.org/abs/2404\n.11901"
+        )
+
+        self.assertEqual(identifiers, {"id:arxiv2404.11901"})
+        self.assertEqual(
+            worker.normalize_research_url("https://arxiv.org/abs/2404.11901"),
+            "id:arxiv2404.11901",
+        )
+        self.assertEqual(
+            worker.normalize_research_url("https://arxiv.org/abs/2404"),
+            "",
+        )
+
+    def test_research_pdf_counts_distinct_manifest_sources_not_identifiers(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            artifact_dir = Path(tmp)
+            manifest_path = artifact_dir / "research-evidence-manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "status": "completed",
+                        "allowed_reference_identifiers": [
+                            "doi:10.1000/source-a",
+                            "url:https://publisher.example/source-a",
+                        ],
+                        "sources": [
+                            {
+                                "source_id": "S1",
+                                "reference_identifiers": [
+                                    "doi:10.1000/source-a",
+                                    "url:https://publisher.example/source-a",
+                                ],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            task = {
+                "artifact_dir": str(artifact_dir),
+                "routine": {"id": "research_summary"},
+                "request": "Prepare and send a source-grounded PDF research report.",
+                "research_evidence_manifest": {"path": str(manifest_path)},
+                "execution_contract": {
+                    "research_evidence": {
+                        "required": True,
+                        "minimum_traceable_sources": 2,
+                    }
+                },
+            }
+            report = artifact_dir / "report.pdf"
+            report.write_bytes(b"%PDF-1.4\n")
+            text = """
+            # Evidence and methods
+            Study design, results, and limitations are reported from one source.
+            DOI: 10.1000/source-a and https://publisher.example/source-a.
+            # Evidence boundaries and uncertainty
+            Direct evidence and uncertainty are separated.
+            # References
+            Source A DOI 10.1000/source-a; https://publisher.example/source-a.
+            """ + ("Source-level method, finding, and limitation. " * 35)
+            with mock.patch.object(
+                worker,
+                "extract_pdf_text_for_quality",
+                return_value=(text, ""),
+            ):
+                issues = worker.reader_facing_pdf_quality_issues(task, report)
+
+        self.assertIn("insufficient_verified_research_sources", issues)
+
+    def test_fresh_aginti_research_artifact_becomes_exact_task_manifest(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            sessions = root / "sessions"
+            artifact_dir = sessions / "thread-1" / "artifacts"
+            artifact_dir.mkdir(parents=True)
+            task_dir = root / "task"
+            payload = {
+                "status": "completed",
+                "researchId": "research-1",
+                "fingerprint": "abc",
+                "query": "organoid imaging",
+                "audit": {
+                    "rejectedStatementCount": 0,
+                    "unknownSourceIds": [],
+                    "unsupportedSourceIds": [],
+                    "unknownEvidenceIds": [],
+                    "unsupportedEvidenceIds": [],
+                },
+                "sources": [
+                    {
+                        "id": "S1",
+                        "title": "Verified source",
+                        "url": "https://doi.org/10.1000/verified",
+                        "doi": "10.1000/verified",
+                        "authors": ["A. Author"],
+                    },
+                    {
+                        "id": "S2",
+                        "title": "Irrelevant source",
+                        "url": "https://example.org/irrelevant",
+                    },
+                ],
+                "evidence": [
+                    {
+                        "sourceId": "S1",
+                        "relevant": True,
+                        "summary": "Verified summary",
+                        "relevantQuestionIds": ["subq1"],
+                        "claims": [
+                            {
+                                "evidenceId": "S1-C1",
+                                "claim": "Verified claim",
+                                "confidence": "high",
+                                "quoteVerified": True,
+                                "searchExcerptMatched": False,
+                            }
+                        ],
+                        "limitations": ["One limitation"],
+                    },
+                    {"sourceId": "S2", "relevant": False, "claims": []},
+                ],
+                "coverage": {
+                    "questionCoverage": 1.0,
+                    "coveredQuestionIds": ["subq1"],
+                    "missingQuestions": [],
+                    "verifiedClaimCount": 1,
+                    "verifiedPrimarySourceCount": 1,
+                },
+                "plan": {"subquestions": [{"id": "subq1", "question": "Question"}]},
+                "synthesis": {"executiveSummarySourceIds": ["S1"]},
+            }
+            started_at = time.time()
+            source_path = artifact_dir / "deep-research-organoid.json"
+            source_path.write_text(json.dumps(payload), encoding="utf-8")
+            task = {
+                "artifact_dir": str(task_dir),
+                "execution_contract": {"research_evidence": {"required": True}},
+            }
+
+            reference = worker.capture_aginti_research_evidence(
+                task,
+                {
+                    "ok": True,
+                    "backend": "aginti",
+                    "thread_id": "thread-1",
+                },
+                started_at=started_at,
+                sessions_root=sessions,
+            )
+
+            self.assertIsNotNone(reference)
+            manifest = json.loads(
+                Path(task["research_evidence_manifest"]["path"]).read_text(
+                    encoding="utf-8"
+                )
+            )
+
+        self.assertEqual(manifest["source_count"], 1)
+        self.assertEqual(manifest["strong_source_count"], 1)
+        self.assertEqual(manifest["sources"][0]["source_id"], "S1")
+        self.assertIn("doi:10.1000/verified", manifest["allowed_reference_identifiers"])
+
+    def test_stale_aginti_research_artifact_is_not_reused(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            sessions = root / "sessions"
+            artifact_dir = sessions / "thread-1" / "artifacts"
+            artifact_dir.mkdir(parents=True)
+            source_path = artifact_dir / "deep-research-old.json"
+            source_path.write_text(json.dumps({"status": "completed"}), encoding="utf-8")
+            stale_at = time.time() - 120
+            os.utime(source_path, (stale_at, stale_at))
+            task = {
+                "artifact_dir": str(root / "task"),
+                "execution_contract": {"research_evidence": {"required": True}},
+            }
+
+            reference = worker.capture_aginti_research_evidence(
+                task,
+                {"ok": True, "backend": "aginti", "thread_id": "thread-1"},
+                started_at=time.time(),
+                sessions_root=sessions,
+            )
+
+        self.assertIsNone(reference)
+        self.assertNotIn("research_evidence_manifest", task)
+
+    def test_pdf_repair_context_uses_manifest_and_host_compiler_only(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            artifact_dir = Path(tmp)
+            manifest_path = artifact_dir / "research-evidence-manifest.json"
+            manifest_path.write_text(
+                json.dumps({"status": "completed"}), encoding="utf-8"
+            )
+            task = {
+                "artifact_dir": str(artifact_dir),
+                "research_evidence_manifest": {
+                    "path": str(manifest_path),
+                    "source_count": 3,
+                },
+            }
+
+            context = worker.completion_pdf_repair_context(task, {"data": {}})
+            view = worker.worker_agent_task_view(task)
+
+        self.assertEqual(
+            context["research_evidence_manifest"]["path"], str(manifest_path)
+        )
+        self.assertIn("Do not invoke LaTeX", context["required_result"])
+        self.assertIn("research_evidence_manifest", view)
+
     def test_research_evidence_accepts_per_source_result_claim_heading(self) -> None:
         worker = load_worker()
         report = """
@@ -16164,6 +16669,34 @@ NVQNIF+NotoSansCJKjp-Regular-Identity-H CID Type 0C       Identity-H       yes y
         self.assertNotIn("agent_session", claimed)
         self.assertEqual(stored["status"], "in_progress")
         self.assertIsNone(duplicate)
+
+    def test_legacy_group_inspiration_receives_message_only_evidence_contract(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "legacy-inspiration",
+            "source": {"local_type": "scheduled_group_inspiration"},
+            "route_decision": {"artifact_delivery": "required"},
+            "execution_contract": {"required_artifacts": ["pdf"]},
+        }
+
+        changed = worker.ensure_group_inspiration_runtime_contract(task)
+
+        self.assertTrue(changed)
+        self.assertTrue(task["route_decision"]["message_only"])
+        self.assertEqual(task["route_decision"]["artifact_delivery"], "forbidden")
+        self.assertEqual(task["execution_contract"]["required_artifacts"], [])
+        self.assertEqual(task["execution_contract"]["artifact_delivery"], "forbidden")
+        self.assertEqual(
+            task["execution_contract"]["research_evidence"],
+            {
+                "required": True,
+                "live_search_required": True,
+                "minimum_traceable_sources": 1,
+                "state_uncertainty_and_limitations": True,
+                "include_actionable_next_steps": True,
+                "message_only": True,
+            },
+        )
 
     def test_claim_next_pending_never_replays_legacy_or_delivered_schedule_failure(self) -> None:
         worker = load_worker()

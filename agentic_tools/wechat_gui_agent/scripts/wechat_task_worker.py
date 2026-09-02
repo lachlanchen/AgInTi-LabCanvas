@@ -1036,6 +1036,7 @@ def reprocess_task(
                 "reason": reason or "manual_reprocess",
                 "previous_status": task.get("status"),
                 "previous_worker_id": task.get("worker_id"),
+                "previous_claimed_at": task.get("claimed_at"),
                 "previous_completed_at": task.get("completed_at"),
             }
             result = task.get("result") if isinstance(task.get("result"), dict) else {}
@@ -1049,6 +1050,7 @@ def reprocess_task(
             if preserved_pdf_rejections:
                 task["pdf_quality_rejections"] = preserved_pdf_rejections
             repair_explicit_research_task_contract(task)
+            ensure_group_inspiration_runtime_contract(task)
             ensure_daily_research_runtime_contract(task)
             task["status"] = "pending"
             route_decision = (
@@ -1428,6 +1430,60 @@ def ensure_daily_research_runtime_contract(task: dict[str, Any]) -> bool:
     return changed
 
 
+def ensure_group_inspiration_runtime_contract(task: dict[str, Any]) -> bool:
+    """Migrate scheduled inspiration to a message-only evidence contract."""
+
+    source = task.get("source") if isinstance(task.get("source"), dict) else {}
+    route = (
+        dict(task.get("route_decision"))
+        if isinstance(task.get("route_decision"), dict)
+        else {}
+    )
+    if not (
+        isinstance(task.get("group_inspiration"), dict)
+        or str(source.get("local_type") or "") == "scheduled_group_inspiration"
+        or bool(route.get("scheduled_group_inspiration"))
+    ):
+        return False
+    changed = False
+    route_updates = {
+        "scheduled_group_inspiration": True,
+        "message_only": True,
+        "artifact_delivery": "forbidden",
+        "public_publish_allowed": False,
+    }
+    for key, value in route_updates.items():
+        if route.get(key) != value:
+            changed = True
+            route[key] = value
+    task["route_decision"] = route
+
+    execution = (
+        dict(task.get("execution_contract"))
+        if isinstance(task.get("execution_contract"), dict)
+        else {}
+    )
+    evidence = {
+        "required": True,
+        "live_search_required": True,
+        "minimum_traceable_sources": 1,
+        "state_uncertainty_and_limitations": True,
+        "include_actionable_next_steps": True,
+        "message_only": True,
+    }
+    if execution.get("research_evidence") != evidence:
+        changed = True
+        execution["research_evidence"] = evidence
+    if execution.get("required_artifacts") != []:
+        changed = True
+        execution["required_artifacts"] = []
+    if execution.get("artifact_delivery") != "forbidden":
+        changed = True
+        execution["artifact_delivery"] = "forbidden"
+    task["execution_contract"] = execution
+    return changed
+
+
 def process_one(queue: Path, chat: str, *, send: bool, send_targets: Path = DEFAULT_SEND_TARGETS, log_idle: bool = True) -> bool:
     promoted = reconcile_passive_video_publish_followups(queue)
     if promoted:
@@ -1462,6 +1518,7 @@ def process_one(queue: Path, chat: str, *, send: bool, send_targets: Path = DEFA
     task["queue_path"] = str(queue)
     initialize_generated_video_claim_baseline(task)
     repair_explicit_research_task_contract(task)
+    ensure_group_inspiration_runtime_contract(task)
     ensure_daily_research_runtime_contract(task)
     ensure_runtime_instruction_contract(task)
     try:
@@ -4512,17 +4569,34 @@ def recover_completed_research_artifacts(
     artifact_dir = Path(str(task.get("artifact_dir") or worker_artifact_dir(task))).expanduser().resolve()
     if not artifact_dir.is_dir():
         return None
-    report = select_substantive_research_report(artifact_dir)
-    if report is None:
+    claimed_at = research_report_generation_started_at(task)
+    reports = substantive_research_report_candidates(
+        artifact_dir,
+        fresh_after=claimed_at.timestamp() if claimed_at is not None else None,
+    )
+    if not reports:
         return recover_exact_task_pdf_without_markdown(
             task,
             artifact_dir,
             failure_text=failure_text,
             force=force,
         )
-    language = detect_markdown_primary_language(read_text_prefix(report, limit=24000))
-    report_pdf = preferred_research_report_pdf(report, language)
-    if report_pdf is None or not report_pdf.is_file() or report_pdf.stat().st_size <= 0:
+    report: Path | None = None
+    report_pdf: Path | None = None
+    for candidate in reports:
+        language = detect_markdown_primary_language(
+            read_text_prefix(candidate, limit=24000)
+        )
+        candidate_pdf = preferred_research_report_pdf(candidate, language)
+        if (
+            candidate_pdf is not None
+            and candidate_pdf.is_file()
+            and candidate_pdf.stat().st_size > 0
+        ):
+            report = candidate
+            report_pdf = candidate_pdf
+            break
+    if report is None or report_pdf is None:
         return recover_exact_task_pdf_without_markdown(
             task,
             artifact_dir,
@@ -4694,6 +4768,316 @@ def preferred_research_report_pdf(report: Path, language: str) -> Path | None:
     return ensure_markdown_pdf_companion_for_language(report, language)
 
 
+UNRESOLVED_REPORT_CITATION_RE = re.compile(
+    r"(?:\[\s*\?(?:\s*[,;]\s*\?)*\s*\]|\(\s*\?\s*\)|"
+    r"(?:undefined|unresolved)\s+(?:citation|reference))",
+    flags=re.I,
+)
+
+
+def normalize_research_doi(value: Any) -> str:
+    doi = str(value or "").strip().casefold()
+    doi = re.sub(r"^(?:doi\s*:\s*|https?://(?:dx\.)?doi\.org/)", "", doi)
+    doi = doi.rstrip(".,;:'\")]}>")
+    return f"doi:{doi}" if re.fullmatch(r"10\.\d{4,9}/[-._;()/:a-z0-9]+", doi) else ""
+
+
+def normalize_research_url(value: Any) -> str:
+    raw = str(value or "").strip().rstrip(".,;:'\")]}>")
+    if not re.match(r"^https?://", raw, flags=re.I):
+        return ""
+    doi = normalize_research_doi(raw)
+    if doi:
+        return doi
+    try:
+        parsed = urllib.parse.urlsplit(raw)
+    except ValueError:
+        return ""
+    host = (parsed.hostname or "").casefold()
+    if not host:
+        return ""
+    try:
+        port = parsed.port
+    except ValueError:
+        return ""
+    netloc = host if port in (None, 80, 443) else f"{host}:{port}"
+    path = re.sub(r"/{2,}", "/", parsed.path or "/").rstrip("/") or "/"
+    if host in {"arxiv.org", "www.arxiv.org", "export.arxiv.org"}:
+        modern_arxiv = re.fullmatch(
+            r"/(?:abs|pdf)/(\d{4}\.\d{4,5})(?:v\d+)?(?:\.pdf)?",
+            path,
+            flags=re.I,
+        )
+        if modern_arxiv:
+            return f"id:arxiv{modern_arxiv.group(1).casefold()}"
+        if re.fullmatch(r"/(?:abs|pdf)/\d{4}(?:\.pdf)?", path, flags=re.I):
+            return ""
+    return f"url:https://{netloc}{path}".casefold()
+
+
+def research_reference_identifiers(text: str) -> set[str]:
+    """Return canonical DOI, scholarly-ID, and stable URL identities."""
+    identifiers: set[str] = set()
+    for match in re.findall(
+        r"\b10\.\d{4,9}/[-._;()/:A-Z0-9]+", text, flags=re.IGNORECASE
+    ):
+        normalized = normalize_research_doi(match)
+        if normalized:
+            identifiers.add(normalized)
+    for match in re.findall(
+        r"\b(?:PMID\s*:?\s*\d+|PMC\d+|arXiv\s*:?\s*\d{4}\.\d{4,5}(?:v\d+)?)\b",
+        text,
+        flags=re.IGNORECASE,
+    ):
+        compact = re.sub(r"\s+", "", match).replace(":", "").casefold()
+        if compact.startswith("arxiv"):
+            compact = re.sub(r"v\d+$", "", compact)
+        identifiers.add(f"id:{compact}")
+    for raw_url in re.findall(r"https?://[^\s)>\]}]+", text, flags=re.IGNORECASE):
+        normalized = normalize_research_url(raw_url)
+        if normalized:
+            identifiers.add(normalized)
+    return identifiers
+
+
+def load_task_research_evidence_manifest(task: dict[str, Any]) -> dict[str, Any]:
+    reference = (
+        task.get("research_evidence_manifest")
+        if isinstance(task.get("research_evidence_manifest"), dict)
+        else {}
+    )
+    raw_path = str(reference.get("path") or "").strip()
+    if not raw_path:
+        return {}
+    artifact_root = Path(
+        str(task.get("artifact_dir") or worker_artifact_dir(task))
+    ).expanduser().resolve()
+    path = Path(raw_path).expanduser().resolve()
+    if not path.is_file() or not path.is_relative_to(artifact_root):
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return {}
+    if not isinstance(payload, dict) or payload.get("status") != "completed":
+        return {}
+    return payload
+
+
+def _deep_research_source_ids(value: Any) -> set[str]:
+    source_ids: set[str] = set()
+    if isinstance(value, dict):
+        for key, nested in value.items():
+            if key in {"sourceIds", "executiveSummarySourceIds"} and isinstance(nested, list):
+                source_ids.update(str(item) for item in nested if str(item).strip())
+            else:
+                source_ids.update(_deep_research_source_ids(nested))
+    elif isinstance(value, list):
+        for nested in value:
+            source_ids.update(_deep_research_source_ids(nested))
+    return source_ids
+
+
+def compact_aginti_research_evidence(payload: dict[str, Any]) -> dict[str, Any] | None:
+    """Keep only source-grounded evidence accepted by a completed research run."""
+    if str(payload.get("status") or "") != "completed":
+        return None
+    audit = payload.get("audit") if isinstance(payload.get("audit"), dict) else {}
+    if (
+        int(audit.get("rejectedStatementCount") or 0) > 0
+        or audit.get("unknownSourceIds")
+        or audit.get("unsupportedSourceIds")
+        or audit.get("unknownEvidenceIds")
+        or audit.get("unsupportedEvidenceIds")
+    ):
+        return None
+    sources_by_id = {
+        str(item.get("id") or ""): item
+        for item in payload.get("sources") or []
+        if isinstance(item, dict) and str(item.get("id") or "").strip()
+    }
+    synthesis_ids = _deep_research_source_ids(payload.get("synthesis") or {})
+    compact_sources: list[dict[str, Any]] = []
+    allowed_identifiers: set[str] = set()
+    strong_source_count = 0
+    excerpt_source_count = 0
+    for evidence in payload.get("evidence") or []:
+        if not isinstance(evidence, dict) or not evidence.get("relevant"):
+            continue
+        source_id = str(evidence.get("sourceId") or "")
+        source = sources_by_id.get(source_id)
+        if source is None:
+            continue
+        verified_claims: list[dict[str, Any]] = []
+        has_full_verification = False
+        has_excerpt_match = False
+        for claim in evidence.get("claims") or []:
+            if not isinstance(claim, dict):
+                continue
+            quote_verified = bool(claim.get("quoteVerified"))
+            excerpt_matched = bool(claim.get("searchExcerptMatched"))
+            if not (quote_verified or excerpt_matched):
+                continue
+            has_full_verification = has_full_verification or quote_verified
+            has_excerpt_match = has_excerpt_match or excerpt_matched
+            verified_claims.append(
+                {
+                    "evidence_id": str(claim.get("evidenceId") or ""),
+                    "claim": collapse_context_text(claim.get("claim"), max_len=900),
+                    "confidence": str(claim.get("confidence") or ""),
+                    "verification": (
+                        "source_text_verified" if quote_verified else "search_excerpt_matched"
+                    ),
+                }
+            )
+        if not verified_claims:
+            continue
+        evidence_level = (
+            "source_text_verified" if has_full_verification else "search_excerpt_matched"
+        )
+        strong_source_count += int(has_full_verification)
+        excerpt_source_count += int(not has_full_verification and has_excerpt_match)
+        identifiers: set[str] = set()
+        doi = normalize_research_doi(source.get("doi"))
+        if doi:
+            identifiers.add(doi)
+        arxiv_id = str(source.get("arxivId") or "").strip()
+        normalized_arxiv_id = re.sub(r"v\d+$", "", arxiv_id.casefold())
+        if normalized_arxiv_id:
+            identifiers.add(f"id:arxiv{normalized_arxiv_id}")
+        for key in ("url", "canonicalUrl"):
+            normalized = normalize_research_url(source.get(key))
+            if normalized:
+                identifiers.add(normalized)
+        allowed_identifiers.update(identifiers)
+        compact_sources.append(
+            {
+                "source_id": source_id,
+                "title": collapse_context_text(source.get("title"), max_len=500),
+                "url": str(source.get("canonicalUrl") or source.get("url") or ""),
+                "doi": str(source.get("doi") or ""),
+                "arxiv_id": arxiv_id,
+                "authors": [str(item) for item in (source.get("authors") or [])[:12]],
+                "venue": str(source.get("venue") or ""),
+                "published_at": str(source.get("publishedAt") or ""),
+                "source_type": str(source.get("sourceType") or ""),
+                "evidence_level": evidence_level,
+                "used_in_synthesis": source_id in synthesis_ids,
+                "relevant_question_ids": [
+                    str(item) for item in (evidence.get("relevantQuestionIds") or [])[:12]
+                ],
+                "summary": collapse_context_text(evidence.get("summary"), max_len=1600),
+                "verified_claims": verified_claims[:10],
+                "limitations": [
+                    collapse_context_text(item, max_len=700)
+                    for item in (evidence.get("limitations") or [])[:6]
+                    if str(item).strip()
+                ],
+                "reference_identifiers": sorted(identifiers),
+            }
+        )
+    if not compact_sources or not allowed_identifiers:
+        return None
+    coverage = payload.get("coverage") if isinstance(payload.get("coverage"), dict) else {}
+    plan = payload.get("plan") if isinstance(payload.get("plan"), dict) else {}
+    return {
+        "version": 1,
+        "status": "completed",
+        "source_kind": "aginti_deep_research",
+        "research_id": str(payload.get("researchId") or ""),
+        "fingerprint": str(payload.get("fingerprint") or ""),
+        "query": collapse_context_text(payload.get("query"), max_len=1800),
+        "captured_at": datetime.now().isoformat(timespec="seconds"),
+        "coverage": {
+            "question_coverage": coverage.get("questionCoverage"),
+            "covered_question_ids": list(coverage.get("coveredQuestionIds") or []),
+            "missing_questions": list(coverage.get("missingQuestions") or []),
+            "verified_claim_count": int(coverage.get("verifiedClaimCount") or 0),
+            "verified_primary_source_count": int(
+                coverage.get("verifiedPrimarySourceCount") or 0
+            ),
+        },
+        "research_questions": list(plan.get("subquestions") or [])[:12],
+        "source_count": len(compact_sources),
+        "strong_source_count": strong_source_count,
+        "excerpt_source_count": excerpt_source_count,
+        "allowed_reference_identifiers": sorted(allowed_identifiers),
+        "sources": compact_sources,
+    }
+
+
+def capture_aginti_research_evidence(
+    task: dict[str, Any],
+    result: dict[str, Any],
+    *,
+    started_at: float,
+    sessions_root: Path | None = None,
+) -> dict[str, Any] | None:
+    """Persist only fresh, completed AgInTi research evidence into this task."""
+    execution = (
+        task.get("execution_contract")
+        if isinstance(task.get("execution_contract"), dict)
+        else {}
+    )
+    evidence_contract = (
+        execution.get("research_evidence")
+        if isinstance(execution.get("research_evidence"), dict)
+        else {}
+    )
+    if not evidence_contract.get("required") or not result.get("ok"):
+        return None
+    if str(result.get("backend") or "").casefold() != "aginti":
+        return None
+    thread_id = str(result.get("thread_id") or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", thread_id):
+        return None
+    root = (sessions_root or (Path.home() / ".agintiflow" / "sessions")).resolve()
+    artifact_root = (root / thread_id / "artifacts").resolve()
+    if not artifact_root.is_dir() or not artifact_root.is_relative_to(root):
+        return None
+    candidates: list[Path] = []
+    for candidate in artifact_root.glob("deep-research-*.json"):
+        try:
+            if candidate.is_file() and candidate.stat().st_mtime >= started_at - 2.0:
+                candidates.append(candidate)
+        except OSError:
+            continue
+    for candidate in sorted(candidates, key=lambda item: item.stat().st_mtime, reverse=True):
+        try:
+            if candidate.stat().st_size > 20 * 1024 * 1024:
+                continue
+            payload = json.loads(candidate.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        manifest = compact_aginti_research_evidence(payload)
+        if manifest is None:
+            continue
+        task_root = Path(
+            str(task.get("artifact_dir") or worker_artifact_dir(task))
+        ).expanduser().resolve()
+        task_root.mkdir(parents=True, exist_ok=True)
+        manifest_path = task_root / "research-evidence-manifest.json"
+        tmp_path = manifest_path.with_suffix(".json.tmp")
+        tmp_path.write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        tmp_path.replace(manifest_path)
+        reference = {
+            "path": str(manifest_path),
+            "research_id": manifest["research_id"],
+            "source_count": manifest["source_count"],
+            "strong_source_count": manifest["strong_source_count"],
+            "excerpt_source_count": manifest["excerpt_source_count"],
+            "captured_at": manifest["captured_at"],
+        }
+        task["research_evidence_manifest"] = reference
+        return reference
+    return None
+
+
 def research_report_evidence_summary(text: str) -> dict[str, Any]:
     """Return bounded evidence signals used by supplemental recovery."""
     dois = {
@@ -4815,6 +5199,8 @@ def research_report_evidence_summary(text: str) -> dict[str, Any]:
     return {
         "traceable_sources": sorted(traceable_sources),
         "traceable_source_count": len(traceable_sources),
+        "reference_identifiers": sorted(research_reference_identifiers(text)),
+        "has_unresolved_citations": bool(UNRESOLVED_REPORT_CITATION_RE.search(text)),
         "has_evidence_section": has_evidence_section,
         "has_uncertainty": has_uncertainty,
         "has_methods_detail": has_methods_detail,
@@ -4825,8 +5211,26 @@ def research_report_evidence_summary(text: str) -> dict[str, Any]:
     }
 
 
-def select_substantive_research_report(artifact_dir: Path) -> Path | None:
-    candidates: list[tuple[int, Path]] = []
+def select_substantive_research_report(
+    artifact_dir: Path,
+    *,
+    fresh_after: float | None = None,
+) -> Path | None:
+    candidates = substantive_research_report_candidates(
+        artifact_dir,
+        fresh_after=fresh_after,
+    )
+    return candidates[0] if candidates else None
+
+
+def substantive_research_report_candidates(
+    artifact_dir: Path,
+    *,
+    fresh_after: float | None = None,
+) -> list[Path]:
+    """Rank exact-task report sources, preferring the current execution."""
+
+    candidates: list[tuple[int, float, Path]] = []
     source_paths = [
         *artifact_dir.rglob("*.md"),
         *artifact_dir.rglob("*.tex"),
@@ -4865,10 +5269,46 @@ def select_substantive_research_report(artifact_dir: Path) -> Path | None:
         if path.parent.name.casefold() in {"report", "reports"}:
             name_score += 5
         translated_penalty = 2 if re.search(r"\.(?:en|zh)\.md$", lowered) else 0
-        candidates.append((name_score * 100 + min(len(text) // 100, 80) - translated_penalty, path.resolve()))
+        try:
+            modified_at = path.stat().st_mtime
+        except OSError:
+            continue
+        candidates.append(
+            (
+                name_score * 100 + min(len(text) // 100, 80) - translated_penalty,
+                modified_at,
+                path.resolve(),
+            )
+        )
     if not candidates:
-        return None
-    return max(candidates, key=lambda item: (item[0], item[1].stat().st_mtime))[1]
+        return []
+    if fresh_after is not None:
+        fresh_candidates = [
+            item for item in candidates if item[1] >= fresh_after - 2.0
+        ]
+        if fresh_candidates:
+            candidates = fresh_candidates
+    return [
+        item[2]
+        for item in sorted(
+            candidates,
+            key=lambda item: (item[0], item[1]),
+            reverse=True,
+        )
+    ]
+
+
+def research_report_generation_started_at(task: dict[str, Any]) -> datetime | None:
+    """Return the claim that produced report sources eligible for recovery."""
+
+    if task.get("artifact_recovery_only"):
+        for item in reversed(task.get("reprocess_history") or []):
+            if not isinstance(item, dict):
+                continue
+            parsed = parse_iso_datetime(str(item.get("previous_claimed_at") or ""))
+            if parsed is not None:
+                return parsed
+    return parse_iso_datetime(str(task.get("claimed_at") or ""))
 
 
 def research_report_chat_message(report: Path) -> str:
@@ -8636,6 +9076,12 @@ def worker_agent_task_view(task: dict[str, Any]) -> dict[str, Any]:
         view["coverage_followup"] = compact_worker_agent_value(
             task["coverage_followup"], key="coverage_followup"
         )
+    if isinstance(task.get("research_evidence_manifest"), dict) and task.get(
+        "research_evidence_manifest"
+    ):
+        view["research_evidence_manifest"] = compact_worker_agent_value(
+            task["research_evidence_manifest"], key="research_evidence_manifest"
+        )
     if task.get("reprocess_requested_at") or task.get("reprocess_reason"):
         view["reprocess"] = {
             "requested_at": str(task.get("reprocess_requested_at") or ""),
@@ -9151,6 +9597,50 @@ def aginti_worker_evidence_scope_request(
             if str(issue).strip()
         ]
         issue_text = ", ".join(unique_strings(issues))
+        message_only = task_forbids_chat_artifact_delivery(task)
+        pdf_rebuild_required = bool(
+            issue_text
+            or ".pdf" in task_required_artifact_suffixes(task)
+            or completion_explicit_pdf_requested([{"text": reason}])
+        )
+        if message_only:
+            current_request = sanitize_worker_agent_text(
+                packet_view.get("current_request"), max_len=2400
+            )
+            return collapse_context_text(
+                " ".join(
+                    part
+                    for part in (
+                        current_request,
+                        f"Correct the prior attempt for this exact reason: {reason}."
+                        if reason
+                        else "Correct the prior attempt for this exact current task.",
+                        "Return only the corrected natural chat response. "
+                        "Do not create, attach, or return any file or artifact.",
+                    )
+                    if part
+                ),
+                max_len=3600,
+            )
+        if not pdf_rebuild_required:
+            current_request = sanitize_worker_agent_text(
+                packet_view.get("current_request"), max_len=2400
+            )
+            return collapse_context_text(
+                " ".join(
+                    part
+                    for part in (
+                        current_request,
+                        f"Correct the prior attempt for this exact reason: {reason}."
+                        if reason
+                        else "Correct the prior attempt for this exact current task.",
+                        "Preserve the current task's output and artifact contract; do not "
+                        "invent a PDF or file requirement.",
+                    )
+                    if part
+                ),
+                max_len=3600,
+            )
         return collapse_context_text(
             " ".join(
                 part
@@ -9605,6 +10095,7 @@ Bounded task packet:
         aginti_backend_prompt = prompt
     backend = select_agent_backend(task)
     model_policy = load_worker_model_policy(str(policy["reasoning_effort"]))
+    agent_started_at = time.time()
     result = run_codex_session(
         prompt,
         backend=backend,
@@ -9620,6 +10111,11 @@ Bounded task packet:
         fallback_model=model_policy.get("fallback_model", "gpt-5.6-sol"),
         fallback_reasoning_effort=model_policy.get("fallback_reasoning_effort", str(policy["reasoning_effort"])),
         backend_prompts={"aginti": aginti_backend_prompt},
+    )
+    capture_aginti_research_evidence(
+        task,
+        result,
+        started_at=agent_started_at,
     )
     record_worker_agent_session(task, result, requested_backend=backend)
     if not result["ok"]:
@@ -9823,6 +10319,18 @@ PDF_REPAIR_ISSUE_GUIDANCE: dict[str, str] = {
     "missing_reader_evidence_section": (
         "Add a clearly titled evidence/source section with traceable identifiers or URLs."
     ),
+    "unresolved_report_citations": (
+        "Remove unresolved citation placeholders such as `[?]`. Use explicit references from "
+        "the exact-task research evidence manifest instead of undefined citation keys."
+    ),
+    "unverified_report_reference": (
+        "Remove every DOI, scholarly ID, or source URL not present in the exact-task research "
+        "evidence manifest. Never invent or substitute a plausible reference."
+    ),
+    "insufficient_verified_research_sources": (
+        "Cite enough distinct sources from the exact-task research evidence manifest to satisfy "
+        "the task's minimum-source contract."
+    ),
     "missing_source_level_methods_results_limits": (
         "For each central source, state the study method or dataset, concrete result, and limitation."
     ),
@@ -9943,6 +10451,16 @@ def completion_pdf_repair_context(
         else {}
     )
     issue_labels = unique_strings(issue_labels)
+    evidence_reference = (
+        task.get("research_evidence_manifest")
+        if isinstance(task.get("research_evidence_manifest"), dict)
+        else {}
+    )
+    evidence_path_info: dict[str, str] = {}
+    if evidence_reference.get("path"):
+        evidence_path_info = task_local_agent_path(
+            Path(str(evidence_reference["path"])), artifact_root
+        )
     return {
         "artifact_root": str(artifact_root),
         "rejected_artifacts": rejected_artifacts,
@@ -9960,12 +10478,20 @@ def completion_pdf_repair_context(
         "report_quality_contract": compact_worker_agent_value(
             execution.get("report_quality") or {}, key="report_quality"
         ),
+        "research_evidence_manifest": {
+            **compact_worker_agent_value(
+                evidence_reference, key="research_evidence_manifest"
+            ),
+            **evidence_path_info,
+        }
+        if evidence_path_info
+        else {},
         "host_compiler_fallback": True,
         "required_result": (
-            "Revise a task-local reader-facing Markdown or TeX source, compile it when the "
-            "established routine is available, and return the verified replacement PDF. "
-            "If the backend cannot compile, it must still write the corrected source so the "
-            "host compiler can build and revalidate it in this same completion cycle."
+            "Revise a task-local reader-facing Markdown or TeX source using only references in "
+            "the exact-task research evidence manifest. Do not invoke LaTeX, make, package "
+            "managers, or document compilers in the agent session. The host compiler will build "
+            "and revalidate the corrected source in this same completion cycle."
         ),
     }
 
@@ -21398,6 +21924,8 @@ def reader_facing_pdf_quality_issues(
         if len(compact) < 900:
             issues.append("insufficient_substantive_research_content")
         evidence = research_report_evidence_summary(text)
+        if evidence["has_unresolved_citations"]:
+            issues.append("unresolved_report_citations")
         minimum_sources = max(
             1,
             int(evidence_contract.get("minimum_traceable_sources") or 2),
@@ -21414,6 +21942,37 @@ def reader_facing_pdf_quality_issues(
             "has_actionable_next_steps"
         ]:
             issues.append("missing_actionable_next_steps")
+        manifest = load_task_research_evidence_manifest(task)
+        if manifest:
+            allowed_identifiers = {
+                str(item)
+                for item in manifest.get("allowed_reference_identifiers") or []
+                if str(item).strip()
+            }
+            report_identifiers = set(evidence.get("reference_identifiers") or [])
+            if report_identifiers - allowed_identifiers:
+                issues.append("unverified_report_reference")
+            manifest_sources = [
+                item
+                for item in manifest.get("sources") or []
+                if isinstance(item, dict)
+            ]
+            if manifest_sources:
+                matched_source_count = sum(
+                    bool(
+                        report_identifiers
+                        & {
+                            str(identifier)
+                            for identifier in item.get("reference_identifiers") or []
+                            if str(identifier).strip()
+                        }
+                    )
+                    for item in manifest_sources
+                )
+            else:
+                matched_source_count = len(report_identifiers & allowed_identifiers)
+            if matched_source_count < minimum_sources:
+                issues.append("insufficient_verified_research_sources")
     report_quality = (
         execution.get("report_quality")
         if isinstance(execution.get("report_quality"), dict)

@@ -1455,6 +1455,21 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertEqual(task["route_decision"]["artifact_delivery"], "forbidden")
         self.assertEqual(task["execution_contract"]["required_artifacts"], [])
         self.assertEqual(task["execution_contract"]["artifact_delivery"], "forbidden")
+        self.assertTrue(
+            task["execution_contract"]["research_evidence"]["required"]
+        )
+        self.assertTrue(
+            task["execution_contract"]["research_evidence"][
+                "live_search_required"
+            ]
+        )
+        self.assertEqual(
+            task["execution_contract"]["research_evidence"][
+                "minimum_traceable_sources"
+            ],
+            1,
+        )
+        self.assertIn("source actually opened", task["request"])
         self.assertEqual(
             task["group_inspiration"]["historical_memory"][0]["kind"],
             "interest",
