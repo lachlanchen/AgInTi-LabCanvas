@@ -569,6 +569,25 @@ because the existing MIX 2S ADB identity is unauthorized. After reload, schedule
 health is green, WeChat and WeCom queues are empty, and the only health issues
 are the external WeChat login and Android authorization gates.
 
+## 2026-09-02 AgInTi Tool-Call Annotation Recovery
+
+AgInTiFlow `0.20.330` closes a provider-shaped tool-loop failure found in a
+normal project-inspection task. DeepSeek could attach a harmless bounded string
+`reason` to an otherwise valid `inspect_project` call, but the strict schema
+rejected that annotation before dispatch and repeated calls could terminate as
+`tool_contract_violation`. Source commit
+`ac6068b178b902ef0fffaf7839b90dbfafc6e1eb` now treats `reason` like the existing
+non-executable `description` annotation: it is removed only when the offered
+schema forbids additional properties and does not define that field. Structured,
+non-string, oversized, and executable unknown fields still fail closed.
+
+The direct contract regression and persisted runtime regression both pass, as do
+provider handoff, LocalLLM recovery, syntax, the full npm suite, audit, dry-run
+packaging, and real package-surface inspection. Release commit
+`270a12de375a8f0d7f0298107e2ebcd05b75c017` is pushed; npm `latest`, `aginti`, and
+`aginti-cli` independently verify `0.20.330`. The durable campaign scenario
+`inspect-project-annotation-093` is recorded as `passed_after_fix`.
+
 ## Remaining Gaps
 
 ### Completed: Unified Personal-WeChat Availability
