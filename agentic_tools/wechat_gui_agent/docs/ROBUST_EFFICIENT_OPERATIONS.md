@@ -764,8 +764,9 @@ The stable interface and recovery commands are documented in
   asks for them, or when the worker truly read substantial content and marks the
   report as worth sending. The daily self-analysis agent is the normal
   bilingual zh/en PDF path.
-- In link/read-later chats such as `鏈接`, forwarded Gongzhonghao/mp.weixin
-  article cards are `research_summary` tasks by default. Source-card routing
+- In every monitored chat, forwarded Gongzhonghao/mp.weixin article cards are
+  `research_summary` tasks by default. Link/read-later profiles retain the same
+  behavior for other ordinary web sources. Source-card routing
   must happen before CAD/PCB/3D keyword fallback because URL hashes can contain
   misleading substrings such as `3d`. Run `wechat_source_recovery.py` before the
   agent: mobile-WeChat HTTP extraction and private cache first, followed by the
@@ -779,6 +780,10 @@ The stable interface and recovery commands are documented in
   deduplicates queue creation and delivery; a differently worded analysis is
   not a second result. A later human follow-up question is a new turn and may
   reuse the saved source evidence normally.
+- Reprocessing preserves the exact request, message ledger, source identity,
+  route, and authorization boundaries, but reloads the current backend policy
+  from the source chat config. A terminal row cannot pin later retries to stale
+  Codex, AgInTi, DeepSeek, or LocalLLM settings after policy changes.
 - WeCom Android renders ordinary text under resource `j1l`, but a native
   Gongzhonghao card title under `mww`. Treat that row as
   `wechat_article_card`, preserve its exact sender and title, and route it to
@@ -807,8 +812,16 @@ The stable interface and recovery commands are documented in
   `PYTHONPATH=src python -m agenticapp wechat audio-intake --input <media> --output-dir <task-dir> --json`
   for a standalone check. Encoded app-message types must be reduced to their
   low 32-bit base type before deciding whether media resolution applies.
-- Shipinhao/Finder/视频号 research tasks should run the read-only source
+- In every monitored chat, an exact Shipinhao/Finder/视频号 source card or share
+  URL is an automatic verified download, transcription, concise-summary, and
+  chat-attachment task. A shared source never authorizes LazyEdit processing or
+  public publication. Shipinhao/Finder/视频号 research tasks should run the read-only source
   recovery, exact-media transcription, and comment-intelligence preflights.
+  For consecutive current messages, source recovery scans the complete current
+  coalesced batch but never `Recent history`; a follow-up instruction therefore
+  cannot hide the exact source link/card immediately before it. These bounded
+  source routes stay at medium effort unless their selected routine explicitly
+  requires more.
   Try the card's allowlisted Tencent media URL first. If it expired, keep the
   operation read-only and try `shipinhao_media_transcribe.py` public-mirror
   recovery: OCR the exact card cover with Tesseract and an optional EasyOCR

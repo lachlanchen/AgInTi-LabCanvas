@@ -273,6 +273,54 @@ class WeChatCodexSessionTests(unittest.TestCase):
         self.assertEqual(result["startup_retry_count"], 1)
         self.assertEqual(len(calls), 2)
 
+    def test_transport_failure_retries_after_turn_starts_without_tool_activity(self) -> None:
+        sessions = load_sessions()
+        calls = []
+
+        def fake_run(*_args: object, **_kwargs: object) -> dict[str, object]:
+            calls.append(True)
+            if len(calls) == 1:
+                return {
+                    "ok": False,
+                    "message": "",
+                    "thread_id": "thread-1",
+                    "returncode": 1,
+                    "stderr_tail": "failed to lookup address information: Try again",
+                    "stdout_tail": '{"type":"turn.started"}',
+                    "execution_started": True,
+                    "tool_activity": False,
+                }
+            return {
+                "ok": True,
+                "message": "handled",
+                "thread_id": "thread-1",
+                "returncode": 0,
+                "stderr_tail": "",
+                "stdout_tail": "",
+                "execution_started": True,
+                "tool_activity": False,
+            }
+
+        with mock.patch.object(
+            sessions,
+            "run_codex_once",
+            side_effect=fake_run,
+        ), mock.patch.object(sessions.time, "sleep"):
+            result = sessions.run_codex_with_startup_retries(
+                "hello",
+                thread_id="thread-1",
+                model="gpt-5.6-sol",
+                reasoning_effort="medium",
+                sandbox="danger-full-access",
+                timeout_seconds=30,
+                workdir=ROOT,
+                web_search=True,
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["startup_retry_count"], 1)
+        self.assertEqual(len(calls), 2)
+
     def test_startup_failure_does_not_retry_after_tool_activity(self) -> None:
         sessions = load_sessions()
         result = {
@@ -336,19 +384,85 @@ class WeChatCodexSessionTests(unittest.TestCase):
         self.assertFalse(result["fallback_started"])
         run.assert_called_once()
 
+    def test_resumed_session_restarts_once_after_empty_message_only_failure(self) -> None:
+        sessions = load_sessions()
+        with tempfile.TemporaryDirectory() as tmp:
+            registry = Path(tmp) / "sessions.local.json"
+            key = sessions.session_key("Shares", "worker")
+            registry.write_text(
+                json.dumps(
+                    {
+                        key: {
+                            "thread_id": "stale-thread",
+                            "chat_name": "Shares",
+                            "role": "worker",
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            failure = {
+                "ok": False,
+                "message": "",
+                "thread_id": "stale-thread",
+                "returncode": 1,
+                "stderr_tail": "",
+                "stdout_tail": "",
+                "execution_started": True,
+                "tool_activity": False,
+            }
+            success = {
+                "ok": True,
+                "message": "handled",
+                "thread_id": "fresh-thread",
+                "returncode": 0,
+                "stderr_tail": "",
+                "stdout_tail": "",
+                "execution_started": True,
+                "tool_activity": False,
+            }
+            with mock.patch.object(
+                sessions,
+                "run_codex_across_accounts",
+                side_effect=[failure, success],
+            ) as run:
+                result = sessions.run_codex_session(
+                    "handle the source",
+                    chat_name="Shares",
+                    role="worker",
+                    model="gpt-5.6-sol",
+                    reasoning_effort="medium",
+                    sandbox="danger-full-access",
+                    timeout_seconds=30,
+                    registry_path=registry,
+                )
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["fallback_started"])
+        self.assertFalse(result["resumed"])
+        self.assertEqual(run.call_count, 2)
+        self.assertEqual(run.call_args_list[0].kwargs["thread_id"], "stale-thread")
+        self.assertEqual(run.call_args_list[1].kwargs["thread_id"], "")
+
     def test_codex_event_evidence_distinguishes_message_from_tool(self) -> None:
         sessions = load_sessions()
         message_only = sessions.codex_event_evidence(
             '{"type":"turn.started"}\n'
+            '{"type":"item.completed","item":{"type":"user_message"}}\n'
             '{"type":"item.completed","item":{"type":"agent_message"}}\n'
         )
         with_tool = sessions.codex_event_evidence(
             '{"type":"turn.started"}\n'
             '{"type":"item.completed","item":{"type":"command_execution"}}\n'
         )
+        with_error = sessions.codex_event_evidence(
+            '{"type":"turn.started"}\n'
+            '{"type":"item.completed","item":{"type":"error"}}\n'
+        )
 
         self.assertEqual(message_only, {"execution_started": True, "tool_activity": False})
         self.assertEqual(with_tool, {"execution_started": True, "tool_activity": True})
+        self.assertEqual(with_error, {"execution_started": True, "tool_activity": False})
 
     def test_unrelated_chat_sessions_do_not_share_a_long_running_lock(self) -> None:
         sessions = load_sessions()

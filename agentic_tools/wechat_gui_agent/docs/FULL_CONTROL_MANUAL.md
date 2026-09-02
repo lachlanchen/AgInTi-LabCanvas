@@ -575,6 +575,18 @@ identity screenshots private and uncommitted; the worker may return the
 source-scoped reader-facing transcript when the current intake contract asks
 for it.
 
+These source defaults are profile-independent. An exact Gongzhonghao article
+in any monitored WeChat or WeCom chat enters read-only full-text recovery and
+concise analysis. An exact Shipinhao card or share URL enters verified MP4
+download, audio transcription, concise summary, and return delivery. Per-chat
+focus still shapes the answer, but cannot turn either source into title-only
+chat or infer public publication. Ordinary bare MP4 uploads remain passive
+save-only unless the current same-chat text explicitly asks for more.
+When current messages arrive consecutively, the resolver treats that bounded
+coalesced burst as one source batch: a later instruction retains the exact
+Shipinhao card/link from the row immediately before it, without searching old
+chat history for a substitute source.
+
 If desktop WeChat is unavailable and the source row came from the allowlisted
 Android intake, the worker invokes `wechat_android_source_recovery.py` instead
 of asking for a pasted link. It returns to the exact chat after audio-helper

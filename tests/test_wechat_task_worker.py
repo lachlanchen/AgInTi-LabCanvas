@@ -3008,6 +3008,43 @@ stderr: noisy internal trace
         self.assertNotIn(wrong_url, str(captured["source_text"]))
         self.assertEqual(captured["profile"]["object_id"], "exact-object-123")
 
+    def test_shipinhao_preflight_keeps_link_from_current_coalesced_batch(self) -> None:
+        worker = load_worker()
+        exact_link = "https://weixin.qq.com/sph/AaFvd1DVrm"
+        task = {
+            "id": "shipinhao-coalesced-followup",
+            "chat": "Shares鏈接",
+            "source": {"local_id": 281, "kind": "text", "local_type": 1},
+            "route_decision": {
+                "route_kind": "file_download_or_save",
+                "delivery_mode": "chat_attachment",
+                "public_publish_allowed": False,
+            },
+            "request": (
+                "Current coalesced request:\n"
+                f"{exact_link} 下载这个视频\n"
+                "公众号自动总结全文 GitHub 下载论文\n\n"
+                "Recent history:\nhttps://weixin.qq.com/sph/OldHistory"
+            ),
+            "context": [
+                {"local_id": 280, "kind": "text", "local_type": 1, "content": exact_link},
+                {
+                    "local_id": 281,
+                    "kind": "text",
+                    "local_type": 1,
+                    "content": "公众号自动总结全文 GitHub 下载论文",
+                },
+            ],
+        }
+
+        profile = worker.shipinhao_profile_for_task(task)
+        source_text = worker.shipinhao_source_text_for_task(task, profile)
+
+        self.assertTrue(profile["detected"])
+        self.assertEqual(profile["object_id"], "sph-AaFvd1DVrm")
+        self.assertIn(exact_link, source_text)
+        self.assertNotIn("OldHistory", source_text)
+
     def test_android_shipinhao_profile_is_bound_to_exact_source_message(self) -> None:
         worker = load_worker()
         task = {
@@ -3573,6 +3610,34 @@ stderr: noisy internal trace
         self.assertFalse(worker.has_public_publish_intent("https://weixin.qq.com/sph/Ae2UMH6gqr"))
         self.assertTrue(worker.has_public_publish_intent("Publish this video to Shipinhao"))
 
+    def test_worker_repairs_gongzhonghao_source_to_research_route(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "stale-article-route",
+            "request": (
+                "Current coalesced request:\n"
+                "公众号文章卡片\n<title>Exact article</title>\n"
+                "https://mp.weixin.qq.com/s/exact-article"
+            ),
+            "route_decision": {
+                "route_kind": "other_worker",
+                "public_publish_intent": False,
+                "public_publish_allowed": False,
+            },
+            "routine": {"id": "generic_worker"},
+        }
+
+        changed = worker.enforce_current_task_route_safety(task)
+
+        self.assertTrue(changed)
+        self.assertEqual(task["route_decision"]["route_kind"], "research_or_summary")
+        self.assertEqual(task["route_decision"]["source_policy"], "current_plus_explicit_refs")
+        self.assertTrue(task["route_decision"]["needs_recent_media"])
+        self.assertFalse(task["route_decision"]["public_publish_allowed"])
+        self.assertEqual(task["instruction_contract"]["route_kind"], "research_or_summary")
+        self.assertEqual(task["route_repair_reason"], "exact_gongzhonghao_source_requires_research")
+        self.assertNotIn("routine", task)
+
     def test_worker_repairs_existing_video_publish_misclassified_as_generation(self) -> None:
         worker = load_worker()
         with tempfile.TemporaryDirectory() as tmp:
@@ -3892,6 +3957,83 @@ stderr: noisy internal trace
         )
 
         self.assertEqual(policy["reasoning_effort"], "medium")
+
+    def test_worker_policy_uses_medium_routine_default_for_shipinhao_download(self) -> None:
+        worker = load_worker()
+        policy = worker.choose_worker_policy(
+            {
+                "request": (
+                    "Current coalesced request:\n"
+                    "https://weixin.qq.com/sph/exact 下载这个视频\n"
+                    "公众号自动总结全文 GitHub 下载论文\n\n"
+                    "Recent history:\nold source context"
+                ),
+                "routine": {
+                    "id": "file_download_save",
+                    "default_effort": "medium",
+                },
+                "route_decision": {
+                    "route_kind": "file_download_or_save",
+                    "public_publish_allowed": False,
+                },
+            }
+        )
+
+        self.assertEqual(policy["reasoning_effort"], "medium")
+
+    def test_worker_policy_uses_medium_source_route_before_routine_selection(self) -> None:
+        worker = load_worker()
+        policy = worker.choose_worker_policy(
+            {
+                "request": (
+                    "Current coalesced request:\n"
+                    "https://weixin.qq.com/sph/exact 下载这个视频\n"
+                    "公众号自动总结全文 GitHub 下载论文"
+                ),
+                "route_decision": {
+                    "route_kind": "file_download_or_save",
+                    "public_publish_allowed": False,
+                },
+            }
+        )
+
+        self.assertEqual(policy["reasoning_effort"], "medium")
+
+    def test_coverage_reconciler_never_requeues_canceled_superseded_echo(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            task = {
+                "id": "outbound-file-echo",
+                "chat": "Shares鏈接",
+                "status": "canceled_superseded",
+                "superseded_by": "source-delivery",
+                "superseded_reason": "exact outbound file echo",
+                "message_coverage": {
+                    "status": "incomplete",
+                    "covered_item_ids": [],
+                    "unresolved_item_ids": ["task:outbound-file-echo"],
+                },
+            }
+            parent = {
+                "id": "source-delivery",
+                "chat": "Shares鏈接",
+                "status": "done",
+                "message_coverage": {
+                    "status": "covered",
+                    "covered_item_ids": ["task:source-delivery"],
+                    "unresolved_item_ids": [],
+                },
+                "result": {"message": "source delivered", "files": []},
+            }
+            worker.write_tasks(queue, [task, parent])
+
+            requeued = worker.reconcile_numbered_message_coverage(queue)
+            saved = worker.read_tasks(queue)[0]
+
+        self.assertEqual(requeued, 0)
+        self.assertEqual(saved["status"], "canceled_superseded")
+        self.assertNotIn("coverage_requeue_count", saved)
 
     def test_scheduled_daily_research_uses_xhigh_despite_unrelated_protein_context(self) -> None:
         worker = load_worker()
@@ -6862,7 +7004,14 @@ stderr: noisy internal trace
         self.assertNotIn("agent_session", stored)
         self.assertNotIn("codex_session", stored)
         self.assertNotIn("artifact_dir", stored)
-        self.assertEqual(stored["execution_contract"], {"old": True})
+        self.assertTrue(stored["execution_contract"]["old"])
+        self.assertEqual(stored["agent_backend"], worker.select_agent_backend({}))
+        self.assertEqual(
+            stored["execution_contract"]["agent_backend"],
+            worker.select_agent_backend({}),
+        )
+        self.assertIn("backend_policy_refreshed_at", stored["execution_contract"])
+        self.assertEqual(stored["backend_policy_source"], "shared_model_policy")
         self.assertNotIn("send_errors", stored)
         self.assertNotIn("wecom_delivery", stored)
         self.assertNotIn("existing_video_publish_poststage", stored)
@@ -6880,6 +7029,67 @@ stderr: noisy internal trace
         self.assertEqual(stored["reprocess_reason"], "source resolver fixed")
         self.assertEqual(stored["reprocess_history"][0]["previous_status"], "send_retrying")
         self.assertIn("stale wrong result", stored["reprocess_history"][0]["previous_result_message_excerpt"])
+
+    def test_reprocess_task_refreshes_stale_backend_from_exact_source_config(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            private = root / "private"
+            private.mkdir()
+            config_id = "memo-direct-chatops.local.json"
+            (private / config_id).write_text(
+                json.dumps(
+                    {
+                        "chat_name": "MEMO",
+                        "message_table": "Msg_memo",
+                        "agent_backend": "codex",
+                        "codex": {
+                            "model": "gpt-5.6-sol",
+                            "reasoning_effort": "low",
+                            "sandbox": "read-only",
+                            "timeout_seconds": 25,
+                        },
+                        "agent_fallbacks": {"enabled": True},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            queue = root / "queue.jsonl"
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "stale-backend",
+                        "chat": "MEMO",
+                        "request": "Read this official-account article.",
+                        "source": {"config_id": config_id, "local_id": 91},
+                        "status": "worker_failed",
+                        "agent_backend": "aginti",
+                        "agent_backend_config": {
+                            "provider_chain": "deepseek,localllm",
+                        },
+                        "execution_contract": {
+                            "old": True,
+                            "agent_backend": "aginti",
+                        },
+                    }
+                ],
+            )
+
+            with mock.patch.object(worker, "PRIVATE", private):
+                stored = worker.reprocess_task(
+                    queue,
+                    "stale-backend",
+                    reason="retry with current source policy",
+                )
+
+        self.assertEqual(stored["status"], "pending")
+        self.assertEqual(stored["agent_backend"], "codex")
+        self.assertEqual(stored["agent_backend_config"]["model"], "gpt-5.6-sol")
+        self.assertIn("_backends", stored["agent_backend_config"])
+        self.assertEqual(stored["execution_contract"]["agent_backend"], "codex")
+        self.assertTrue(stored["execution_contract"]["old"])
+        self.assertEqual(stored["backend_policy_source"], f"source_config:{config_id}")
 
     def test_reprocess_task_can_request_deterministic_artifact_recovery(self) -> None:
         worker = load_worker()

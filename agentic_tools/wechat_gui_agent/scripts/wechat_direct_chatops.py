@@ -1883,7 +1883,14 @@ def response_skip_reason(config: dict[str, Any], state: dict[str, Any], row: dic
         if is_unified_backend_request(config, text):
             return ""
         if is_personal_organizer_chat(config):
-            return "" if organizer_response_candidate(config, text) else "no_trigger"
+            organizer = config.get("organizer") if isinstance(config.get("organizer"), dict) else {}
+            automatic_source = is_shipinhao_source_reference(text) or is_gongzhonghao_source_reference(text)
+            if bool(organizer.get("ack_on_save", False)) and not automatic_source and not organizer_response_candidate(config, text):
+                return "no_trigger"
+            # Organizer profiles are still full agent bridges. Do not discard a
+            # meaningful note or request before the per-chat agent can decide
+            # whether to answer, save it quietly, or invoke a routine.
+            return "" if meaningful_request_text(text, config.get("trigger_prefixes", [])) else "no_trigger"
         return "" if meaningful_request_text(text, config.get("trigger_prefixes", [])) else "no_trigger"
     return "" if any(prefix in text for prefix in config.get("trigger_prefixes", [])) else "no_trigger"
 
@@ -2889,6 +2896,11 @@ def immediate_task_route(
     file_download_task = is_file_download_or_save_task(combined)
     story_or_script_task = is_story_or_script_task(combined)
     link_inbox_summary_task = is_link_inbox_default_summary_task(config, row, combined, focus_rows=focus_rows)
+    source_texts = [combined, visible_message_text(row)]
+    source_texts.extend(visible_message_text(item) for item in (focus_rows or []))
+    shipinhao_source_task = any(is_shipinhao_source_reference(item) for item in source_texts)
+    gongzhonghao_source_task = any(is_gongzhonghao_source_reference(item) for item in source_texts)
+    automatic_source_task = shipinhao_source_task or gongzhonghao_source_task
     heuristic_candidate = heuristic_worker_route_candidate(
         config,
         combined,
@@ -2900,6 +2912,7 @@ def immediate_task_route(
         file_download_task=file_download_task,
         story_or_script_task=story_or_script_task,
         link_inbox_summary_task=link_inbox_summary_task,
+        automatic_source_task=automatic_source_task,
     )
     agent_first = (bridge_mode or agent_route_prefilter_mode(config) == "agent_first") and bool(config.get("agent_route_enabled", False))
     if agent_first:
@@ -2977,6 +2990,7 @@ def immediate_task_route(
         or contextual_media_task
         or quoted_media_task
         or link_inbox_summary_task
+        or automatic_source_task
         or bool(route_decision.get("needs_recent_media"))
     )
     source_rows = source_reference_rows(
@@ -3012,6 +3026,8 @@ def immediate_task_route(
     request_text = current_request or attachment_request_text(row)
     if link_inbox_summary_task:
         request_text = f"{request_text}\n\n{link_inbox_summary_instruction(row)}"
+    elif automatic_source_task:
+        request_text = f"{request_text}\n\n{automatic_wechat_source_instruction(row, combined)}"
     routine_contract = build_routine_contract(
         route_decision,
         request_text,
@@ -3061,7 +3077,7 @@ def immediate_task_route(
     )
     # The read-later worker is the one substantive responder. A transport ACK
     # for the same source adds noise and can look like a second analysis.
-    ack = "" if link_inbox_summary_task else task_ack_text(config, route_decision)
+    ack = "" if (link_inbox_summary_task or automatic_source_task) else task_ack_text(config, route_decision)
     return {"ack": ack, "task": task, "route_decision": route_decision}
 
 
@@ -3701,6 +3717,7 @@ def heuristic_worker_route_candidate(
     file_download_task: bool,
     story_or_script_task: bool,
     link_inbox_summary_task: bool = False,
+    automatic_source_task: bool = False,
 ) -> bool:
     lowered = str(text or "").lower()
     keywords = [str(item).lower() for item in config.get("slow_task_keywords", [])]
@@ -3714,6 +3731,7 @@ def heuristic_worker_route_candidate(
         or file_download_task
         or story_or_script_task
         or link_inbox_summary_task
+        or automatic_source_task
         or is_document_artifact_task(text)
         or is_unified_backend_request(config, text)
         or any(keyword and keyword in lowered for keyword in keywords)
@@ -3836,6 +3854,8 @@ Important distinction:
 - An explicit request to write a bug report, feature request, or integration handoff for LabCanvas, LazyEdit, Musia, Books, ZhJpBook, LALACHAN, ProteinStructure, or AgInTiFlow should route to cross_repo_feedback. Reproduce or inspect the gap, then use `labcanvas feedback`; a local report never authorizes a public GitHub issue, commit, or push.
 - If a safe request spans several stages, choose the route_kind for the first backend stage and set worker_needed=true; explain the other requested stages in reason.
 - Every monitored chat uses the same shared backend capability framework. The per-chat profile changes ordinary defaults and proactive schedules only. A safe explicit request always overrides the focus and may use CAD/PCB, Blender, figures, presentations, image/video generation, LazyEdit processing/publication, file/media handling, writing, Markdown, LaTeX, PDFs, or another available routine.
+- An exact Gongzhonghao/mp.weixin article source in any monitored chat should route to research_or_summary with worker_needed=true. Recover and read the article before giving one concise grounded analysis; a verification page is not a request for human confirmation.
+- An exact Shipinhao/Finder source card or share URL in any monitored chat should route to file_download_or_save with delivery_mode=chat_attachment. Resolve the exact identity, download and verify the MP4, transcribe readable audio, and return the verified video plus a useful natural transcript/summary. Never infer public publication from a source share.
 - Do not refuse or return chat_only for safe backend work just because the exact tool is not listed in examples. Use the closest route_kind, often other_worker, when a resumed Codex worker can finish or supervise it.
 - Generation is not publication. A request to generate/create/make a video means create/download/send back the artifact unless the current request also explicitly says publish/post to a public platform.
 - Uploading reference images/assets into a generation UI is not public publishing. Do not set public_publish_allowed=true for "upload all images" unless the destination is a public platform such as Shipinhao, YouTube, Instagram, or 视频号.
@@ -3963,6 +3983,7 @@ def fallback_route_decision(
     permission_question = is_publish_permission_question(lowered)
     publish_allowed = has_public_publish_intent(lowered)
     shipinhao_source_task = is_shipinhao_source_reference(text)
+    gongzhonghao_source_task = is_gongzhonghao_source_reference(text)
     link_inbox_summary_task = is_link_inbox_default_summary_task(config, row, text, focus_rows=focus_rows)
     contextual_media_task = is_contextual_media_task(config, text, row, context_rows, focus_rows=focus_rows) or (
         is_quote_reply_message(row) and references_recent_media(text)
@@ -3977,6 +3998,8 @@ def fallback_route_decision(
         route_kind = "file_intake"
     elif shipinhao_source_task and not publish_allowed:
         route_kind = "file_download_or_save"
+    elif gongzhonghao_source_task and not publish_allowed:
+        route_kind = "research_or_summary"
     elif link_inbox_summary_task:
         route_kind = "research_or_summary"
     elif is_grant_proposal_task(text):
@@ -4044,6 +4067,7 @@ def fallback_route_decision(
         or (route_kind in {"music_generation", "music_to_mv"} and references_recent_media(text))
         or (route_kind == "multilingual_book" and references_recent_media(text))
         or link_inbox_summary_task
+        or gongzhonghao_source_task
     )
     route = {
         "route_kind": route_kind,
@@ -4060,7 +4084,7 @@ def fallback_route_decision(
             )
             or route_kind == "career_strategy"
         ),
-        "source_policy": "current_plus_explicit_refs" if link_inbox_summary_task else ("recent_media" if needs_recent_media else "current_request_only"),
+        "source_policy": "current_plus_explicit_refs" if (link_inbox_summary_task or gongzhonghao_source_task) else ("recent_media" if needs_recent_media else "current_request_only"),
         "reason": "fallback heuristic route",
         "confidence": 0.45,
         "route_agent_model": "fallback",
@@ -4084,6 +4108,19 @@ def fallback_route_decision(
                 "external_action_allowed": True,
                 "source_policy": "current_plus_explicit_refs",
                 "reason": "exact Shipinhao source: resolve, transcribe, summarize, and return the verified media without public publication",
+            }
+        )
+    if gongzhonghao_source_task and not publish_allowed:
+        route.update(
+            {
+                "project": "generic",
+                "worker_needed": True,
+                "needs_recent_media": True,
+                "public_publish_intent": False,
+                "public_publish_allowed": False,
+                "external_action_allowed": True,
+                "source_policy": "current_plus_explicit_refs",
+                "reason": "exact Gongzhonghao source: recover and read the full article before concise grounded analysis",
             }
         )
     if bare_video_intake:
@@ -4202,6 +4239,7 @@ def enforce_route_safety(parsed: dict[str, Any], current_request: str, fallback:
     permission_question = is_publish_permission_question(current_request)
     publish_allowed = has_public_publish_intent(current_request)
     shipinhao_source_task = is_shipinhao_source_reference(current_request) and not publish_allowed
+    gongzhonghao_source_task = is_gongzhonghao_source_reference(current_request) and not publish_allowed
     needs_recent_media = bool(parsed.get("needs_recent_media"))
     if permission_question:
         route_kind = "publish_video"
@@ -4217,6 +4255,9 @@ def enforce_route_safety(parsed: dict[str, Any], current_request: str, fallback:
     if shipinhao_source_task:
         route_kind = "file_download_or_save"
         needs_recent_media = False
+    elif gongzhonghao_source_task:
+        route_kind = "research_or_summary"
+        needs_recent_media = True
     project = str(parsed.get("project") or fallback.get("project") or "unknown")
     fallback_project = str(fallback.get("project") or "")
     if route_kind == fallback_kind and fallback_project not in {"", "unknown"}:
@@ -4255,6 +4296,22 @@ def enforce_route_safety(parsed: dict[str, Any], current_request: str, fallback:
                 "reason": (
                     str(parsed.get("reason") or fallback.get("reason") or "")
                     + " | bare Shipinhao source kept on verified download/transcription delivery route"
+                ).strip(),
+            }
+        )
+    if gongzhonghao_source_task:
+        parsed.update(
+            {
+                "project": "generic",
+                "worker_needed": True,
+                "needs_recent_media": True,
+                "public_publish_intent": False,
+                "public_publish_allowed": False,
+                "external_action_allowed": True,
+                "source_policy": "current_plus_explicit_refs",
+                "reason": (
+                    str(parsed.get("reason") or fallback.get("reason") or "")
+                    + " | exact Gongzhonghao source kept on read-only full-text recovery and analysis route"
                 ).strip(),
             }
         )
@@ -5291,6 +5348,42 @@ def is_shipinhao_source_reference(text: str) -> bool:
             "<finderfeed",
             "[wechat video channel]",
         )
+    )
+
+
+def is_gongzhonghao_source_reference(text: str) -> bool:
+    """Recognize an exact official-account article without treating its name as an action."""
+    lowered = str(text or "").casefold()
+    return any(
+        marker in lowered
+        for marker in (
+            "mp.weixin.qq.com",
+            "[wechat official account]",
+            "公众号文章卡片",
+            "公眾號文章卡片",
+            "<sourcedisplayname>公众号",
+            "<sourcedisplayname>公眾號",
+        )
+    )
+
+
+def automatic_wechat_source_instruction(row: dict[str, Any], text: str) -> str:
+    """Return the universal source-card contract used outside dedicated inboxes."""
+    visible = visible_message_text(row)
+    if is_shipinhao_source_reference(text) or is_shipinhao_source_reference(visible):
+        return (
+            "Automatic Shipinhao/Finder source intake. Resolve the exact current card identity, download and verify the MP4, "
+            "transcribe any readable audio, and send the verified video back with one concise natural transcript/summary. "
+            "Use the existing read-only source recovery, media transcription, and native-card fallback routines. "
+            "Never infer LazyEdit processing or public publication permission from a shared source. "
+            f"Structured source text:\n{visible}"
+        )
+    return (
+        "Automatic Gongzhonghao/mp.weixin source intake. Run read-only source recovery, read the recovered full text when available, "
+        "and return one concise grounded analysis with the main point and useful highlights. Use exact title/account reconstruction "
+        "when direct extraction is incomplete; do not open an external browser or ask the user to verify a read-only source. "
+        "Keep Markdown/TeX working notes private and send a PDF only when the current request asks for one. "
+        f"Structured source text:\n{visible}"
     )
 
 
@@ -6724,7 +6817,8 @@ For personal organizer chat purpose:
 - Treat the group as a shared inbox for notes, memos, todos, groceries, calendar items, beat-board/story ideas, writing/language/money ideas, and lightweight requests.
 - The local organizer has already saved and tagged incoming messages. Do not mention the database or storage implementation.
 - A plain memo, title list, reading list, or idea fragment is not a failed tool task. Respond with a natural concise connection, interpretation, or useful acknowledgement when that helps; otherwise use NO_REPLY. Never answer an ordinary note with missing file, command, browser, artifact, visual, or publish evidence language.
-- Reply when the latest context asks you to save, organize, list, summarize, schedule, remind, plan, or clarify something. For plain side conversation, return NO_REPLY.
+- Every meaningful inbound message has reached this per-chat agent. Handle it from the full same-chat context: answer explicit requests, preserve useful memos, and respond naturally to ordinary conversation when a helpful human participant would. Use NO_REPLY only for a true duplicate, bot echo, or non-actionable noise, not merely because a message lacks a command keyword.
+- Exact Gongzhonghao article sources and Shipinhao/Finder source cards are automatic worker tasks in every profile. Do not replace full source reading/download with a title-only fast reply, and never infer public publication from a shared video source.
 - Reply to simple health-check messages such as "ping", "test", "best", "在吗", or "测试" with one short acknowledgement.
 - Keep confirmations short. Use ACK+TASK for export, long summaries, files, calendar planning, or backend work.
 - If a note is incomplete, acknowledge the saved item and ask one concise missing-detail question only when it is needed for action.

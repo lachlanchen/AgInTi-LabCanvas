@@ -1074,6 +1074,7 @@ def reprocess_task(
                 apply_reprocess_reason_contract(task, reason)
             if invalid_generated_video_reprocess_requested(task, reason):
                 reset_invalid_generated_video_reprocess(task, now_text)
+            refresh_reprocess_backend_policy(task, now_text)
             task["queue_path"] = str(queue)
             if artifact_recovery_only:
                 task["artifact_recovery_only"] = True
@@ -1093,6 +1094,46 @@ def reprocess_task(
             write_tasks(queue, tasks)
             return task
     raise SystemExit(f"No task found with id {task_id}")
+
+
+def refresh_reprocess_backend_policy(task: dict[str, Any], now_text: str) -> None:
+    """Refresh a retry's backend without changing its source or task context."""
+    source = task.get("source") if isinstance(task.get("source"), dict) else {}
+    config_id = Path(str(source.get("config_id") or "")).name
+    config_path = PRIVATE / config_id if config_id else None
+    current_config: dict[str, Any] = {}
+    policy_source = "shared_model_policy"
+
+    try:
+        from wechat_direct_chatops import agent_backend_config, load_config
+
+        if config_path is not None and config_path.is_file():
+            current_config = load_config(config_path)
+            policy_source = f"source_config:{config_id}"
+        backend = select_agent_backend(current_config)
+        if current_config:
+            task["agent_backend_config"] = agent_backend_config(
+                current_config,
+                backend,
+            )
+        else:
+            task.pop("agent_backend_config", None)
+    except (ImportError, OSError, TypeError, ValueError, json.JSONDecodeError, SystemExit):
+        backend = select_agent_backend({})
+        task.pop("agent_backend_config", None)
+        policy_source = "shared_model_policy_fallback"
+
+    task["agent_backend"] = backend
+    execution = (
+        dict(task.get("execution_contract"))
+        if isinstance(task.get("execution_contract"), dict)
+        else {}
+    )
+    execution["agent_backend"] = backend
+    execution["backend_policy_refreshed_at"] = now_text
+    task["execution_contract"] = execution
+    task["backend_policy_refreshed_at"] = now_text
+    task["backend_policy_source"] = policy_source
 
 
 def invalid_generated_video_reprocess_requested(task: dict[str, Any], reason: str) -> bool:
@@ -5745,12 +5786,13 @@ def reconcile_numbered_message_coverage(path: Path) -> int:
             task_id = str(task.get("id") or "")
             if not task_id:
                 continue
+            task_status = str(task.get("status") or "")
             parent_id = str(task.get("superseded_by") or "")
             parent = by_id.get(parent_id) if parent_id else task
             if not isinstance(parent, dict):
                 continue
             if (
-                str(task.get("status") or "") == "canceled_superseded"
+                task_status == "canceled_superseded"
                 and str(task.get("superseded_reason") or "")
                 == "newer_same_chat_generation_completed_and_delivered"
                 and generation_task_has_verified_delivery(parent)
@@ -5762,6 +5804,15 @@ def reconcile_numbered_message_coverage(path: Path) -> int:
                         now_text=now_text,
                     )
                     changed = True
+                continue
+            if task_status in {"canceled", "expired_stale"} or (
+                task_status == "canceled_superseded"
+                and bool(str(task.get("superseded_reason") or "").strip())
+            ):
+                # Cancellation is authoritative. Coverage repair may annotate
+                # a live/failed row once, but must never resurrect an explicit
+                # duplicate, outbound echo, or obsolete task. Legacy merged
+                # rows without a reason still enter the one-time repair below.
                 continue
             coverage = (
                 parent.get("message_coverage")
@@ -8909,36 +8960,78 @@ def enforce_current_task_route_safety(task: dict[str, Any]) -> bool:
         "weixin.qq.com/sph/" in current_request.casefold()
         or (profile.get("detected") and profile.get("object_id"))
     )
-    if not exact_finder_source or has_public_publish_intent(current_request):
+    if exact_finder_source and not has_public_publish_intent(current_request):
+        route = dict(task_route_decision(task))
+        changed = str(route.get("route_kind") or "") != "file_download_or_save" or bool(
+            route.get("public_publish_allowed")
+        )
+        route.update(
+            {
+                "route_kind": "file_download_or_save",
+                "project": "generic",
+                "worker_needed": True,
+                "needs_recent_media": False,
+                "delivery_mode": "chat_attachment",
+                "public_publish_intent": False,
+                "public_publish_allowed": False,
+                "external_action_allowed": True,
+                "source_policy": "current_plus_explicit_refs",
+                "reason": "exact Shipinhao source resolved from the current native card or share link; publication requires an explicit current action verb",
+            }
+        )
+        task["route_decision"] = route
+        instruction = dict(task.get("instruction_contract") or {})
+        instruction["route_kind"] = "file_download_or_save"
+        instruction["irreversible_actions_require_current_message_intent"] = True
+        task["instruction_contract"] = instruction
+        if changed:
+            task.pop("routine", None)
+            task.pop("routine_contract", None)
+            task["route_repaired_at"] = datetime.now().isoformat(timespec="seconds")
+            task["route_repair_reason"] = "exact_shipinhao_source_without_publish_action"
+        return changed
+
+    lowered = current_request.casefold()
+    exact_gongzhonghao_source = any(
+        marker in lowered
+        for marker in (
+            "mp.weixin.qq.com",
+            "[wechat official account]",
+            "公众号文章卡片",
+            "公眾號文章卡片",
+            "<sourcedisplayname>公众号",
+            "<sourcedisplayname>公眾號",
+        )
+    )
+    if not exact_gongzhonghao_source or has_public_publish_intent(current_request):
         return False
     route = dict(task_route_decision(task))
-    changed = str(route.get("route_kind") or "") != "file_download_or_save" or bool(
+    changed = str(route.get("route_kind") or "") != "research_or_summary" or bool(
         route.get("public_publish_allowed")
     )
     route.update(
         {
-            "route_kind": "file_download_or_save",
+            "route_kind": "research_or_summary",
             "project": "generic",
             "worker_needed": True,
-            "needs_recent_media": False,
-            "delivery_mode": "chat_attachment",
+            "needs_recent_media": True,
             "public_publish_intent": False,
             "public_publish_allowed": False,
             "external_action_allowed": True,
             "source_policy": "current_plus_explicit_refs",
-            "reason": "exact Shipinhao source resolved from the current native card or share link; publication requires an explicit current action verb",
+            "reason": "exact Gongzhonghao source resolved from the current article card or mp.weixin link; run read-only full-text recovery before analysis",
         }
     )
     task["route_decision"] = route
     instruction = dict(task.get("instruction_contract") or {})
-    instruction["route_kind"] = "file_download_or_save"
+    instruction["route_kind"] = "research_or_summary"
     instruction["irreversible_actions_require_current_message_intent"] = True
     task["instruction_contract"] = instruction
     if changed:
         task.pop("routine", None)
         task.pop("routine_contract", None)
         task["route_repaired_at"] = datetime.now().isoformat(timespec="seconds")
-        task["route_repair_reason"] = "exact_shipinhao_source_without_publish_action"
+        task["route_repair_reason"] = "exact_gongzhonghao_source_requires_research"
     return changed
 
 
@@ -12110,12 +12203,15 @@ def native_shipinhao_profile(task: dict[str, Any]) -> dict[str, Any]:
 
 
 def shipinhao_profile_for_task(task: dict[str, Any]) -> dict[str, Any]:
-    # Current source text is authoritative. Parsing the full historical packet
-    # first can accidentally select an older Finder XML row from the same chat.
+    # The whole current coalesced batch is authoritative. Its final row may be
+    # a follow-up instruction while the exact Finder URL/card is in the row
+    # immediately before it. Never expand this search into Recent history.
     focused = task_focus_text(task)
-    profile = extract_shipinhao_media_profile(focused)
-    if profile.get("detected") and profile.get("object_id"):
-        return profile
+    current_batch = extract_current_request_for_policy(str(task.get("request") or ""))
+    for candidate in unique_strings([focused, current_batch]):
+        profile = extract_shipinhao_media_profile(candidate)
+        if profile.get("detected") and profile.get("object_id"):
+            return profile
     native = native_shipinhao_profile(task)
     if native:
         return native
@@ -12123,7 +12219,16 @@ def shipinhao_profile_for_task(task: dict[str, Any]) -> dict[str, Any]:
 
 
 def shipinhao_source_text_for_task(task: dict[str, Any], profile: dict[str, Any]) -> str:
-    source_text = task_focus_text(task) or source_recovery_task_text(task)
+    current_batch = extract_current_request_for_policy(str(task.get("request") or ""))
+    focused = task_focus_text(task)
+    recovery_text = source_recovery_task_text(task)
+    source_text = focused or current_batch or recovery_text
+    expected_object_id = str(profile.get("object_id") or "")
+    for candidate in unique_strings([current_batch, focused, recovery_text]):
+        candidate_profile = extract_shipinhao_media_profile(candidate)
+        if str(candidate_profile.get("object_id") or "") == expected_object_id:
+            source_text = candidate
+            break
     if str(profile.get("source_kind") or "") != "android_native_message_card":
         return source_text
     synthetic = "".join(
@@ -20822,6 +20927,7 @@ def choose_worker_policy(task: dict[str, Any]) -> dict[str, Any]:
     text = worker_policy_text(task).lower()
     routine_id = task_routine_id(task)
     routine_effort = task_routine_default_effort(task)
+    route_kind = str(task_route_decision(task).get("route_kind") or "")
     scheduled_daily_research = bool(task.get("daily_research")) or bool(
         task_route_decision(task).get("scheduled_daily_research")
     )
@@ -20960,8 +21066,18 @@ def choose_worker_policy(task: dict[str, Any]) -> dict[str, Any]:
         effort = routine_effort
     elif protein_structure_task:
         effort = "ultra"
-    elif routine_id in {"research_summary", "story_script_generation"} and routine_effort:
+    elif routine_id in {
+        "file_download_save",
+        "research_summary",
+        "story_script_generation",
+    } and routine_effort:
         effort = routine_effort
+    elif route_kind in {"file_download_or_save", "research_or_summary"}:
+        # Source ingestion may contain words such as GitHub, download, video,
+        # or publish inside the source itself. The route already captures the
+        # intended bounded action, so those words must not inflate a normal
+        # recovery/analysis turn to xhigh before its routine is attached.
+        effort = "medium"
     elif is_generate_video_task(task) and not bool(task_route_decision(task).get("public_publish_allowed")):
         effort = "medium"
     elif any(keyword in text for keyword in xhigh_keywords) or len(text) > 5000:

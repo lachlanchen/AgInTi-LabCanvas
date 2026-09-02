@@ -4587,7 +4587,7 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertEqual(config["send_title_retry_seconds"], 3.2)
         self.assertEqual(config["organizer"], {"enabled": False})
 
-    def test_personal_organizer_response_candidates_are_intent_based(self) -> None:
+    def test_personal_organizer_sends_every_meaningful_message_to_agent(self) -> None:
         config = self.base_config()
         config["analysis_mode"] = ""
         config["chat_purpose"] = "personal_organizer"
@@ -4598,7 +4598,93 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertTrue(direct_chatops.should_respond(config, {}, self.row("best")))
         self.assertTrue(direct_chatops.should_respond(config, {}, self.row("ping")))
         self.assertTrue(direct_chatops.should_respond(config, {}, self.row("测试")))
-        self.assertFalse(direct_chatops.should_respond(config, {}, self.row("今天路上人很多")))
+        self.assertTrue(direct_chatops.should_respond(config, {}, self.row("今天路上人很多")))
+
+    def test_personal_organizer_routes_gongzhonghao_source_to_full_text_analysis(self) -> None:
+        config = self.backend_chat_config("MEMO写作—外语—挣钱", "personal_organizer")
+        config["agent_route_enabled"] = False
+        row = self.row(
+            "<msg><appmsg><type>5</type><title>Exact official account article</title>"
+            "<url>https://mp.weixin.qq.com/s/exact-article</url>"
+            "<sourcedisplayname>公众号</sourcedisplayname></appmsg></msg>",
+            local_type=49,
+            local_id=75,
+            server_id="srv-75",
+        )
+
+        route = direct_chatops.immediate_task_route(config, row, [row], focus_rows=[row])
+
+        self.assertIsNotNone(route)
+        assert route is not None
+        self.assertEqual(route["ack"], "")
+        self.assertEqual(route["route_decision"]["route_kind"], "research_or_summary")
+        self.assertEqual(route["route_decision"]["source_policy"], "current_plus_explicit_refs")
+        self.assertFalse(route["route_decision"]["public_publish_allowed"])
+        self.assertIn("Automatic Gongzhonghao/mp.weixin source intake", route["task"])
+        self.assertIn("read the recovered full text", route["task"])
+        self.assertIn("local_id=75", route["task"])
+
+    def test_route_agent_cannot_downgrade_gongzhonghao_source_to_chat_only(self) -> None:
+        config = self.backend_chat_config("MEMO写作—外语—挣钱", "personal_organizer")
+        config["agent_route_enabled"] = True
+        config["agent_bridge_mode"] = True
+        row = self.row(
+            "[WeChat official account]\nurl: https://mp.weixin.qq.com/s/exact-article",
+            local_type=49,
+            local_id=76,
+            server_id="srv-76",
+        )
+        original = direct_chatops.run_codex_session
+        try:
+            direct_chatops.run_codex_session = lambda *_args, **_kwargs: {  # type: ignore[assignment]
+                "ok": True,
+                "message": json.dumps(
+                    {
+                        "route_kind": "chat_only",
+                        "project": "unknown",
+                        "worker_needed": False,
+                        "needs_recent_media": False,
+                        "public_publish_intent": False,
+                        "public_publish_allowed": False,
+                        "external_action_allowed": False,
+                        "source_policy": "current_request_only",
+                        "reason": "mistakenly answered from the title only",
+                        "confidence": 0.2,
+                    }
+                ),
+            }
+            route = direct_chatops.immediate_task_route(config, row, [row], focus_rows=[row])
+        finally:
+            direct_chatops.run_codex_session = original  # type: ignore[assignment]
+
+        self.assertIsNotNone(route)
+        assert route is not None
+        self.assertEqual(route["route_decision"]["route_kind"], "research_or_summary")
+        self.assertTrue(route["route_decision"]["worker_needed"])
+        self.assertIn("full-text recovery and analysis route", route["route_decision"]["reason"])
+
+    def test_personal_organizer_shipinhao_source_downloads_without_publication(self) -> None:
+        config = self.backend_chat_config("🍓My devices", "personal_organizer")
+        config["agent_route_enabled"] = False
+        row = self.row(
+            "<finderFeed><objectId>exact-object</objectId><nickname>Exact Creator</nickname>"
+            "<desc>Exact video</desc></finderFeed>",
+            local_type=49,
+            local_id=77,
+            server_id="srv-77",
+        )
+
+        route = direct_chatops.immediate_task_route(config, row, [row], focus_rows=[row])
+
+        self.assertIsNotNone(route)
+        assert route is not None
+        self.assertEqual(route["ack"], "")
+        self.assertEqual(route["route_decision"]["route_kind"], "file_download_or_save")
+        self.assertEqual(route["route_decision"]["delivery_mode"], "chat_attachment")
+        self.assertFalse(route["route_decision"]["public_publish_allowed"])
+        self.assertIn("Automatic Shipinhao/Finder source intake", route["task"])
+        self.assertIn("download and verify the MP4", route["task"])
+        self.assertIn("Never infer LazyEdit processing or public publication", route["task"])
 
     def test_web_clip_inbox_routes_plain_links_for_summary(self) -> None:
         config = self.base_config()

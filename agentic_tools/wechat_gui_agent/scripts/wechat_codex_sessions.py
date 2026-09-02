@@ -92,7 +92,15 @@ def run_codex_session(
                 )
             finally:
                 release_codex_concurrency_slot(slot)
-        if previous_id and not result["ok"] and codex_saved_thread_unavailable(result):
+        retry_fresh_thread = bool(
+            previous_id
+            and not result["ok"]
+            and (
+                codex_saved_thread_unavailable(result)
+                or codex_empty_resumed_turn_failure(result)
+            )
+        )
+        if retry_fresh_thread:
             slot = acquire_codex_concurrency_slot(
                 registry_path,
                 timeout_seconds=timeout_seconds,
@@ -343,8 +351,19 @@ def codex_saved_thread_unavailable(result: dict[str, Any]) -> bool:
     )
 
 
+def codex_empty_resumed_turn_failure(result: dict[str, Any]) -> bool:
+    """Allow one fresh thread when resume produced no answer or side effect."""
+    if result.get("ok") or result.get("tool_activity"):
+        return False
+    if int(result.get("returncode") or 0) in {0, 124, 127}:
+        return False
+    if str(result.get("message") or "").strip():
+        return False
+    return bool(result.get("execution_started"))
+
+
 def codex_startup_retryable(result: dict[str, Any]) -> bool:
-    if result.get("ok") or result.get("execution_started") or result.get("tool_activity"):
+    if result.get("ok") or result.get("tool_activity"):
         return False
     if str(result.get("message") or "").strip():
         return False
@@ -357,10 +376,13 @@ def codex_startup_failure_reason(result: dict[str, Any]) -> str:
         for key in ("stderr_tail", "stdout_tail")
     ).casefold()
     markers = (
+        "error sending request for url",
         "failed to refresh available models",
+        "failed to lookup address information",
         "timeout waiting for child process to exit",
         "failed to connect to websocket",
         "failed to connect to responses_websocket",
+        "http/request failed",
         "connection reset before headers",
         "transport channel closed",
     )
@@ -749,12 +771,35 @@ def codex_event_evidence(events: str) -> dict[str, bool]:
             execution_started = True
         item = event.get("item") if isinstance(event.get("item"), dict) else {}
         item_type = str(item.get("type") or "").casefold()
-        if item_type and item_type not in {"agent_message", "reasoning", "plan"}:
+        if codex_item_is_tool_activity(item_type):
             tool_activity = True
     return {
         "execution_started": execution_started,
         "tool_activity": tool_activity,
     }
+
+
+def codex_item_is_tool_activity(item_type: str) -> bool:
+    """Identify external-action events without classifying errors as tools."""
+    normalized = str(item_type or "").strip().casefold()
+    if not normalized:
+        return False
+    return any(
+        marker in normalized
+        for marker in (
+            "command_execution",
+            "computer_call",
+            "custom_tool",
+            "file_change",
+            "function_call",
+            "image_generation",
+            "mcp_tool",
+            "tool_call",
+            "tool_output",
+            "tool_result",
+            "web_search",
+        )
+    )
 
 
 def session_key(chat_name: str, role: str) -> str:
