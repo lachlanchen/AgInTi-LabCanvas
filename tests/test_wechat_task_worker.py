@@ -11199,6 +11199,50 @@ stderr: noisy internal trace
 
         desktop.assert_not_called()
 
+    def test_personal_wechat_replay_recovers_exact_mirror_delivery(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mirror = root / "mirror.sqlite"
+            report = root / "shipinhao-transcript.txt"
+            report.write_text("00:00 transcript\n", encoding="utf-8")
+            message = "视频和逐字稿已经附上。"
+            created_at = "2026-09-02T19:50:50"
+            task = {
+                "id": "mirror-recovery",
+                "chat": "Shares鏈接",
+                "created_at": created_at,
+                "source": {"transport": "wechat"},
+            }
+            worker.record_event(
+                chat_name="Shares鏈接",
+                action="file_send",
+                direction="outbound",
+                status="sent",
+                db_path=mirror,
+                metadata={"file_identity": worker.file_transport_identity(report)},
+            )
+            worker.record_event(
+                chat_name="Shares鏈接",
+                action="send",
+                direction="outbound",
+                status="sent",
+                message=message,
+                db_path=mirror,
+            )
+
+            recovered = worker.reconcile_personal_wechat_delivery_from_mirror(
+                task,
+                files=[report],
+                text_fields={"message": message, "confirmation": ""},
+                db_path=mirror,
+            )
+
+        self.assertEqual(recovered["files"], [str(report.resolve())])
+        self.assertEqual(task["sent_file_paths"], [str(report.resolve())])
+        self.assertEqual(len(recovered["message_parts"]), 1)
+        self.assertEqual(len(task["sent_message_part_hashes"]), 1)
+
     def test_chat_visible_text_never_exposes_local_artifact_paths(self) -> None:
         worker = load_worker()
         report = Path("/home/lachlan/ProjectsLFS/AgenticApp/output/report.pdf")

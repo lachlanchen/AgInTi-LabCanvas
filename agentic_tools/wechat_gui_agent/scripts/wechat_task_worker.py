@@ -2991,6 +2991,12 @@ def send_result_once(
         task=task,
     )
     message = sanitize_chat_visible_text(message, visible_files, task=task)
+    if task is not None:
+        reconcile_personal_wechat_delivery_from_mirror(
+            task,
+            files=files_to_send,
+            text_fields={"message": message, "confirmation": confirmation},
+        )
     require_file_delivery = result_requires_file_delivery(task, result)
     file_errors = []
     sent_files = {str(path) for path in (task or {}).get("sent_file_paths", [])}
@@ -23090,7 +23096,133 @@ def android_file_send_can_fallback_to_desktop(exc: BaseException) -> bool:
     if os.environ.get("WECHAT_WORKER_FILE_DESKTOP_PREFLIGHT_FALLBACK", "1") == "0":
         return False
     message = str(exc).upper()
-    return "ANDROID_WECHAT_TITLE_GUARD" in message
+    return any(
+        marker in message
+        for marker in (
+            "ANDROID_WECHAT_TITLE_GUARD",
+            "ANDROID_WECHAT_PRECOMMIT_UNAVAILABLE",
+            "XDOTOOL SEARCH --NAME ^LABCANVAS\\ ANDROID\\ MIX\\ 2S",
+            "ANDROID DEVICE IS NOT AUTHORIZED",
+            "NO DEVICES/EMULATORS FOUND",
+        )
+    )
+
+
+def reconcile_personal_wechat_delivery_from_mirror(
+    task: dict[str, Any],
+    *,
+    files: list[Path],
+    text_fields: dict[str, str],
+    db_path: Path = DEFAULT_DB,
+) -> dict[str, Any]:
+    """Recover exact successful sends lost from an interrupted queue write.
+
+    The mirror is accepted only for the same chat, after this task was created,
+    and with an exact file identity or exact visible message part. This keeps a
+    crash after native submission from causing duplicate artifacts on replay.
+    """
+    if task_transport_kind(task) != "wechat":
+        return {"files": [], "message_parts": []}
+    chat = str(task.get("chat") or "").strip()
+    created_at = str(task.get("created_at") or "").strip()
+    if not chat or not created_at or not db_path.exists():
+        return {"files": [], "message_parts": []}
+
+    try:
+        with sqlite3.connect(db_path) as conn:
+            rows = conn.execute(
+                """
+                SELECT e.action, e.direction, e.status, e.message, e.metadata_json
+                FROM events AS e
+                JOIN chats AS c ON c.id = e.chat_id
+                WHERE c.name = ? AND e.created_at >= ?
+                  AND e.direction = 'outbound' AND e.status = 'sent'
+                ORDER BY e.id
+                """,
+                (chat, created_at),
+            ).fetchall()
+    except sqlite3.Error:
+        return {"files": [], "message_parts": []}
+
+    sent_identities: list[dict[str, Any]] = []
+    sent_messages: set[str] = set()
+    for action, _direction, _status, body, metadata_json in rows:
+        if action in {"file_send", "send_file"}:
+            try:
+                metadata = json.loads(metadata_json or "{}")
+            except json.JSONDecodeError:
+                metadata = {}
+            identity = metadata.get("file_identity")
+            if isinstance(identity, dict):
+                sent_identities.append(identity)
+        elif action == "send" and str(body or "").strip():
+            sent_messages.add(str(body))
+
+    recovered_files: list[str] = []
+    known_sent = {
+        str(Path(str(path)).expanduser().resolve())
+        for path in task.get("sent_file_paths") or []
+    }
+    for path in files:
+        resolved = path.expanduser().resolve()
+        resolved_text = str(resolved)
+        if resolved_text in known_sent or not resolved.is_file():
+            continue
+        identity = file_transport_identity(resolved)
+        if not any(exact_file_delivery_identity_matches(identity, sent) for sent in sent_identities):
+            continue
+        known_sent.add(resolved_text)
+        recovered_files.append(resolved_text)
+    if recovered_files:
+        task["sent_file_paths"] = sorted(known_sent)
+
+    recovered_parts: list[str] = []
+    known_hashes = {
+        str(value)
+        for value in task.get("sent_message_part_hashes") or []
+        if str(value)
+    }
+    for field, value in text_fields.items():
+        for part in split_chat_message(value):
+            if part not in sent_messages:
+                continue
+            fingerprint = hashlib.sha256(
+                f"{field}\0{part}".encode("utf-8")
+            ).hexdigest()
+            if fingerprint in known_hashes:
+                continue
+            known_hashes.add(fingerprint)
+            recovered_parts.append(fingerprint)
+    if recovered_parts:
+        task["sent_message_part_hashes"] = sorted(known_hashes)
+
+    if recovered_files or recovered_parts:
+        task.setdefault("delivery_recovery_history", []).append(
+            {
+                "at": datetime.now().isoformat(timespec="seconds"),
+                "source": "exact_personal_wechat_mirror",
+                "files": recovered_files,
+                "message_part_count": len(recovered_parts),
+            }
+        )
+    return {"files": recovered_files, "message_parts": recovered_parts}
+
+
+def exact_file_delivery_identity_matches(
+    current: dict[str, Any], sent: dict[str, Any]
+) -> bool:
+    """Match an outbound file without trusting a path or modification time."""
+    if str(current.get("name") or "") != str(sent.get("name") or ""):
+        return False
+    if int(current.get("size_bytes") or -1) != int(sent.get("size_bytes") or -2):
+        return False
+    current_sha = str(current.get("sha256") or "")
+    sent_sha = str(sent.get("sha256") or "")
+    if current_sha and sent_sha:
+        return current_sha == sent_sha
+    current_md5 = str(current.get("md5") or "")
+    sent_md5 = str(sent.get("md5") or "")
+    return bool(current_md5 and sent_md5 and current_md5 == sent_md5)
 
 
 def run_desktop_wechat_file_sender(file_path: Path, target: dict[str, Any]) -> None:
