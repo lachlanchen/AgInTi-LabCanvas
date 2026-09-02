@@ -536,6 +536,39 @@ record an accepted message-only evidence decision. Delivery remains deferred
 where the WeCom transport is unavailable; the clean result identity is retained
 for exact-once delivery recovery.
 
+AgInTiFlow `0.20.329` then closed a second provider-handoff gap. A resumed
+response-only session could hand off from DeepSeek quota to LocalLLM yet fail
+before inference when retained same-session context exceeded the local context
+window. Normal agent steps already had bounded context recovery, but the direct
+response branch did not. Source commit
+`7080a5ea33c5e2e2019a4239616b4e95dbc896d0` now compacts retained authoritative
+goal/evidence once, records the context-budget and compaction events, and retries
+the same response-only request without bypassing the source-free evidence
+guard. Release commit `69e027dcbc6aacf52b5c84a7fe414dc1d4f550d9` is pushed;
+npm `latest`, `aginti`, and `aginti-cli` all verify `0.20.329`. The focused
+handoff/context/truthfulness smokes, full npm suite, syntax checks, package
+inspection, audit, and clean-tree checks passed. If the compacted request still
+cannot fit, AgInTi fails closed.
+
+## 2026-09-02 EchoMind Daily PDF Recovery
+
+The due EchoMind report exposed a deterministic false rejection rather than a
+model-quality or transport defect. Source normalization removed whitespace
+before lexical tokenization, so an English sentence became one giant token and
+a faithful paraphrase could never overlap it. Commit `c2d6b94` preserves token
+boundaries while still normalizing punctuation and LaTeX/ruby notation. A
+mixed English/Japanese paraphrase regression covers the exact failure class,
+and the full LabCanvas suite passed with 1,815 tests.
+
+The required immediate invocation then generated and compiled one accepted
+three-page previous-day PDF. It passed deterministic source coverage and the
+independent trilingual audit after two bounded repair passes. The scheduler was
+reloaded onto the tested code and proved it reused the same accepted PDF rather
+than regenerating it. The artifact remains in exact-once pending-delivery state
+because the existing MIX 2S ADB identity is unauthorized. After reload, schedule
+health is green, WeChat and WeCom queues are empty, and the only health issues
+are the external WeChat login and Android authorization gates.
+
 ## Remaining Gaps
 
 ### Completed: Unified Personal-WeChat Availability
