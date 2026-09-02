@@ -4921,6 +4921,89 @@ stderr: noisy internal trace
         self.assertNotIn("Materially revise a source file", scope)
         self.assertNotIn("replacement PDF", scope)
 
+    def test_aginti_message_only_reply_repair_uses_host_managed_scope(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "message-only-reply-repair",
+            "chat": "LabAgent",
+            "request": "Create one concise grounded research inspiration.",
+            "artifact_dir": "/tmp/message-only-reply-repair",
+            "route_decision": {
+                "route_kind": "research_or_summary",
+                "message_only": True,
+                "artifact_delivery": "forbidden",
+            },
+            "execution_contract": {
+                "required_artifacts": [],
+                "artifact_delivery": "forbidden",
+            },
+            "routine": {"id": "research_summary", "title": "Research"},
+            "reprocess_requested_at": "2026-09-02T02:00:00",
+            "reprocess_reason": (
+                "Replace the invalid answer with one evidence-bounded hypothesis."
+            ),
+            "completion_audit_repair": {
+                "missing": [
+                    {
+                        "item_id": "task:message-only-reply-repair",
+                        "requirement": "Return one useful hypothesis and one experiment.",
+                        "kind": "reply",
+                    }
+                ],
+                "missing_items": [
+                    {
+                        "item_id": "history:old",
+                        "text": "Historical request: compile stale-history-report.pdf.",
+                    }
+                ],
+            },
+        }
+
+        prompt = worker.build_aginti_worker_prompt(task)
+        scope_line = next(
+            line
+            for line in prompt.splitlines()
+            if line.startswith("AGINTI_EVIDENCE_SCOPE_JSON:")
+        )
+        scope = json.loads(scope_line.split(":", 1)[1].strip())
+
+        self.assertEqual(scope["mode"], "host-managed-response")
+        self.assertNotIn("artifact_root", scope)
+        self.assertIn("one useful hypothesis and one experiment", scope["request"])
+        self.assertIn("one evidence-bounded hypothesis", scope["request"])
+        self.assertNotIn("stale-history-report.pdf", prompt)
+        self.assertNotIn('"missing_items"', prompt)
+
+    def test_aginti_initial_message_only_research_remains_tool_capable(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "message-only-initial",
+            "chat": "LabAgent",
+            "request": "Research one source and return a concise inspiration.",
+            "artifact_dir": "/tmp/message-only-initial",
+            "route_decision": {
+                "route_kind": "research_or_summary",
+                "message_only": True,
+                "artifact_delivery": "forbidden",
+            },
+            "execution_contract": {
+                "required_artifacts": [],
+                "artifact_delivery": "forbidden",
+            },
+            "routine": {"id": "research_summary", "title": "Research"},
+        }
+
+        prompt = worker.build_aginti_worker_prompt(task)
+        scope_line = next(
+            line
+            for line in prompt.splitlines()
+            if line.startswith("AGINTI_EVIDENCE_SCOPE_JSON:")
+        )
+        scope = json.loads(scope_line.split(":", 1)[1].strip())
+
+        self.assertEqual(scope["mode"], "task")
+        self.assertEqual(scope["artifact_root"], "/tmp/message-only-initial")
+
     def test_aginti_reprocess_recovers_legacy_nested_pdf_rejections(self) -> None:
         worker = load_worker()
         task = {

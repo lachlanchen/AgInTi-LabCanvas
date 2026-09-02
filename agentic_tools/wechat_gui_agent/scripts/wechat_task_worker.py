@@ -9465,17 +9465,53 @@ def bound_aginti_worker_packet(
     return essentials
 
 
+def completion_audit_repair_is_reply_only(value: Any) -> bool:
+    """Return true when an audit repair requires only a replacement message."""
+
+    if not isinstance(value, dict):
+        return False
+    missing = [item for item in value.get("missing") or [] if isinstance(item, dict)]
+    if not missing:
+        return False
+    return all(str(item.get("kind") or "").strip().casefold() == "reply" for item in missing)
+
+
+def aginti_worker_evidence_scope_mode(
+    task: dict[str, Any], packet_view: dict[str, Any]
+) -> str:
+    """Keep initial work tool-capable while making reply correction response-only."""
+
+    if not task_forbids_chat_artifact_delivery(task):
+        return "task"
+    if isinstance(packet_view.get("reprocess"), dict) and packet_view.get("reprocess"):
+        return "host-managed-response"
+    if completion_audit_repair_is_reply_only(
+        packet_view.get("completion_audit_repair")
+    ):
+        return "host-managed-response"
+    return "task"
+
+
 def build_aginti_worker_prompt(task: dict[str, Any]) -> str:
     """Give AgInTi one exact routine, not LabCanvas's entire tool handbook."""
 
     packet_view = aginti_worker_task_view(task)
+    evidence_scope_mode = aginti_worker_evidence_scope_mode(task, packet_view)
+    if evidence_scope_mode == "host-managed-response":
+        packet_view = dict(packet_view)
+        repair = packet_view.get("completion_audit_repair")
+        if isinstance(repair, dict):
+            repair = dict(repair)
+            repair.pop("missing_items", None)
+            repair.pop("artifact_repair", None)
+            packet_view["completion_audit_repair"] = repair
     packet = json.dumps(packet_view, ensure_ascii=False, indent=2)
     matched_routine_note = build_matched_workspace_routine_context(task)
     evidence_scope_payload = {
-        "mode": "task",
+        "mode": evidence_scope_mode,
         "request": aginti_worker_evidence_scope_request(task, packet_view),
     }
-    if packet_view.get("artifact_dir"):
+    if evidence_scope_mode == "task" and packet_view.get("artifact_dir"):
         evidence_scope_payload["artifact_root"] = str(packet_view["artifact_dir"])
     evidence_scope = json.dumps(
         evidence_scope_payload,
@@ -9526,6 +9562,35 @@ def aginti_worker_evidence_scope_request(
 
     repair = packet_view.get("completion_audit_repair")
     if isinstance(repair, dict) and repair:
+        if task_forbids_chat_artifact_delivery(
+            task
+        ) and completion_audit_repair_is_reply_only(repair):
+            missing_requirements = [
+                str(item.get("requirement") or "").strip()
+                for item in repair.get("missing") or []
+                if isinstance(item, dict)
+                and str(item.get("requirement") or "").strip()
+            ]
+            reprocess = packet_view.get("reprocess")
+            reason = (
+                sanitize_worker_agent_text(reprocess.get("reason"), max_len=1800)
+                if isinstance(reprocess, dict)
+                else ""
+            )
+            return collapse_context_text(
+                " ".join(
+                    part
+                    for part in (
+                        "Complete only these still-missing reply requirements: "
+                        + "; ".join(missing_requirements),
+                        f"Correction requirement: {reason}." if reason else "",
+                        "Return exactly one corrected natural chat response. "
+                        "Create, attach, or return no file or artifact.",
+                    )
+                    if part
+                ),
+                max_len=3600,
+            )
         artifact_repair = (
             repair.get("artifact_repair")
             if isinstance(repair.get("artifact_repair"), dict)
