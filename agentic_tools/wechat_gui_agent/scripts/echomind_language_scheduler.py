@@ -760,9 +760,9 @@ def _plain_anchor_text(value: str, *, japanese: bool = False) -> str:
     text = re.sub(r"\\(?:textbf|textit|emph)\{", "", text)
     return re.sub(
         r"[{}\s，。！？、,.!?;:：；'’\"“”「」『』（）()—–-]+",
-        "",
+        " ",
         text,
-    ).casefold()
+    ).strip().casefold()
 
 
 def _source_coverage_issues(value: str, source_messages: list) -> list[str]:

@@ -333,6 +333,32 @@ Romaji: Nodo ga itai node, ashita no gozen ni isha no yoyaku o shitai desu.
             scheduler.daily_pdf_contract_issues(unrelated, source_messages=[source]),
         )
 
+    def test_source_coverage_preserves_latin_word_boundaries_for_paraphrases(self) -> None:
+        source = mock.Mock(
+            body=(
+                "English: Could you taste the soup and tell me if it needs more salt? "
+                "If it's too bland, I'll add a little. "
+                "日本語：スープの味を見て、塩が足りないか教えてください。 "
+                "Romaji: Sūpu no aji o mite, shio ga tarinai ka oshiete kudasai."
+            )
+        )
+        body = (
+            "Could you taste the soup and tell me whether it needs more salt? "
+            "If it is too bland, I will add a little. "
+            r"\ruby{味}{あじ}を見て、塩が足りないか教えてください。 "
+            "Romaji: Sūpu no aji o mite, shio ga tarinai ka oshiete kudasai."
+        )
+
+        normalized = scheduler._plain_anchor_text("Could you taste the soup?")
+        self.assertEqual(
+            scheduler.lexical_terms(normalized),
+            {"could", "you", "taste", "the", "soup"},
+        )
+        self.assertEqual(
+            scheduler._source_coverage_issues(body, [source]),
+            [],
+        )
+
     def test_daily_pdf_semantic_audit_requires_all_quality_dimensions(self) -> None:
         self.assertIn("source_specificity", scheduler.DAILY_PDF_AUDIT_DIMENSIONS)
         self.assertIn("coherence", scheduler.DAILY_PDF_AUDIT_DIMENSIONS)
