@@ -751,6 +751,39 @@ This hypothesis still needs validation.
             self.assertNotIn("superseded_by", child)
             self.assertEqual(worker.reconcile_numbered_message_coverage(queue), 0)
 
+    def test_supplement_completion_audit_includes_prior_delivered_answer(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "batch-1",
+            "reprocess_reason": "numbered_message_not_covered",
+            "coverage_followup": {
+                "item_id": "task:batch-1",
+                "previous_message": "第一篇：余英时讨论君权与相权。",
+            },
+        }
+        result = {
+            "message": "补充第二篇：行动与反馈。",
+            "files": [],
+            "confirmation": "",
+        }
+
+        candidate = worker.completion_audit_candidate(task, result)
+
+        self.assertIn("余英时讨论君权与相权", candidate["message"])
+        self.assertIn("补充第二篇：行动与反馈", candidate["message"])
+        self.assertEqual(result["message"], "补充第二篇：行动与反馈。")
+        self.assertIsNot(candidate, result)
+
+    def test_normal_completion_audit_does_not_inject_old_message(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "normal-1",
+            "coverage_followup": {"previous_message": "old answer"},
+        }
+        result = {"message": "current answer", "files": []}
+
+        self.assertIs(worker.completion_audit_candidate(task, result), result)
+
     def test_numbered_covered_child_stays_superseded_with_receipt(self) -> None:
         worker = load_worker()
         with tempfile.TemporaryDirectory() as tmp:
@@ -1636,6 +1669,43 @@ This hypothesis still needs validation.
         self.assertEqual(result["files"], [str(compiled_pdf)])
         self.assertEqual(task["worker_artifact_recovery"]["report"], str(fresh))
 
+    def test_research_reprocess_does_not_recover_stale_rejected_artifacts(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            stale_source = root / "old-rejected-research-report.md"
+            stale_source.write_text(
+                "# Old report\n\n## Evidence\n\n"
+                "DOI: 10.1000/example-one. DOI: 10.1000/example-two.\n\n"
+                "## Methods and limitations\n\n"
+                + ("Old evidence, methods, limitations, and next steps. " * 40),
+                encoding="utf-8",
+            )
+            stale_pdf = stale_source.with_suffix(".pdf")
+            stale_pdf.write_bytes(b"%PDF-1.4\nold-rejected-report")
+            os.utime(stale_source, (1000, 1000))
+            os.utime(stale_pdf, (1000, 1000))
+            task = {
+                "id": "reprocess-stale-report",
+                "artifact_dir": str(root),
+                "claimed_at": datetime.fromtimestamp(2000).isoformat(timespec="seconds"),
+                "reprocess_requested_at": datetime.fromtimestamp(1900).isoformat(timespec="seconds"),
+                "routine": {"id": "research_summary"},
+                "route_decision": {
+                    "route_kind": "research_or_summary",
+                    "require_file_delivery": True,
+                },
+                "request": "Prepare and send a newly corrected research report PDF.",
+            }
+
+            result = worker.recover_completed_research_artifacts(
+                task,
+                "Worker failed via codex: transport error",
+                force=True,
+            )
+
+        self.assertIsNone(result)
+
     def test_research_recovery_falls_back_from_invalid_tex_to_current_markdown(self) -> None:
         worker = load_worker()
         with tempfile.TemporaryDirectory() as tmp:
@@ -1695,6 +1765,96 @@ This hypothesis still needs validation.
         assert result is not None
         self.assertEqual(result["files"], [str(compiled_pdf)])
         self.assertEqual(task["worker_artifact_recovery"]["report"], str(markdown))
+
+    def test_research_recovery_skips_compiled_pdf_that_fails_reader_quality(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            markdown = root / "complete-research-report.md"
+            tex = root / "incomplete-research-report.tex"
+            report_body = (
+                "## Evidence and methods\n\n"
+                "DOI: 10.1000/example-one. DOI: 10.1000/example-two.\n\n"
+                + ("Grounded results, limitations, synthesis, and next steps. " * 40)
+            )
+            markdown.write_text("# Complete report\n\n" + report_body, encoding="utf-8")
+            tex.write_text(
+                "\\documentclass{article}\n\\begin{document}\n"
+                "\\section{Evidence}\nDOI: 10.1000/example-one. DOI: 10.1000/example-two.\n"
+                + ("Incomplete converted report. " * 40)
+                + "\n\\end{document}\n",
+                encoding="utf-8",
+            )
+            bad_pdf = tex.with_suffix(".pdf")
+            bad_pdf.write_bytes(b"%PDF-1.4\nbad-conversion")
+            good_pdf = markdown.with_suffix(".pdf")
+            os.utime(markdown, (2000, 2000))
+            os.utime(tex, (2001, 2001))
+            os.utime(bad_pdf, (2002, 2002))
+
+            def fake_markdown_compile(source: Path, language: str) -> Path:
+                self.assertEqual(source, markdown)
+                good_pdf.write_bytes(b"%PDF-1.4\ncomplete-report")
+                return good_pdf
+
+            task = {
+                "id": "quality-fallback-report",
+                "artifact_dir": str(root),
+                "routine": {"id": "research_summary"},
+                "route_decision": {
+                    "route_kind": "research_or_summary",
+                    "require_file_delivery": True,
+                },
+                "request": "Prepare and send the complete research report PDF.",
+            }
+            with (
+                mock.patch.object(
+                    worker,
+                    "reader_facing_pdf_quality_issues",
+                    side_effect=lambda _task, path: ["missing_methods"] if path == bad_pdf else [],
+                ),
+                mock.patch.object(
+                    worker,
+                    "ensure_markdown_pdf_companion_for_language",
+                    side_effect=fake_markdown_compile,
+                ),
+            ):
+                result = worker.recover_completed_research_artifacts(task, force=True)
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result["files"], [str(good_pdf)])
+        self.assertEqual(task["worker_artifact_recovery"]["report"], str(markdown))
+
+    def test_markdown_recovery_does_not_reuse_same_stem_tex_pdf(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            markdown = root / "report.md"
+            tex = root / "report.tex"
+            shared_pdf = root / "report.pdf"
+            language_pdf = root / "report.zh.pdf"
+            markdown.write_text("# 完整报告\n", encoding="utf-8")
+            tex.write_text("\\documentclass{article}\n", encoding="utf-8")
+            shared_pdf.write_bytes(b"%PDF-1.4\ntex-output")
+            os.utime(markdown, (2000, 2000))
+            os.utime(tex, (2001, 2001))
+            os.utime(shared_pdf, (2002, 2002))
+
+            def fake_companion(source: Path, language: str) -> Path:
+                self.assertEqual(source, markdown)
+                self.assertEqual(language, "zh")
+                language_pdf.write_bytes(b"%PDF-1.4\nmarkdown-output")
+                return language_pdf
+
+            with mock.patch.object(
+                worker,
+                "ensure_markdown_pdf_companion_for_language",
+                side_effect=fake_companion,
+            ):
+                selected = worker.preferred_research_report_pdf(markdown, "zh")
+
+        self.assertEqual(selected, language_pdf)
 
     def test_research_artifact_recovery_rejects_routine_notes_and_nonresearch(self) -> None:
         worker = load_worker()
@@ -5268,6 +5428,139 @@ stderr: noisy internal trace
             task["message_only_research_quality"]["status"], "accepted"
         )
         self.assertEqual(task["message_only_research_quality"]["issues"], [])
+
+    def test_codex_message_only_research_accepts_resolved_doi_with_limitation(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            task = {
+                "id": "codex-resolved-doi",
+                "artifact_dir": tmp,
+                "agent_session": {"backend": "codex", "ok": True},
+                "route_decision": {
+                    "message_only": True,
+                    "artifact_delivery": "forbidden",
+                },
+                "execution_contract": {
+                    "artifact_delivery": "forbidden",
+                    "research_evidence": {"required": True, "message_only": True},
+                },
+            }
+            result = {
+                "message": (
+                    "2026年《Nature》研究报告了患者类器官筛选结果"
+                    "（https://doi.org/10.1038/s41586-026-10830-y）。"
+                    "证据目前仅来自有限样本，不能直接外推临床；下一步应在独立队列复现。"
+                ),
+                "files": [],
+                "confirmation": "",
+            }
+            evidence = {
+                "identifier": "doi:10.1038/s41586-026-10830-y",
+                "kind": "doi",
+                "canonical_url": "https://doi.org/10.1038/s41586-026-10830-y",
+                "http_status": 302,
+                "resolved_location_host": "www.nature.com",
+                "checked_at": "2026-09-03T09:00:00",
+                "evidence_level": "identifier_resolved",
+            }
+            with mock.patch.object(
+                worker,
+                "verify_scholarly_reference",
+                return_value=evidence,
+            ) as verifier:
+                guarded = worker.enforce_message_only_research_evidence(task, result)
+
+            self.assertEqual(guarded, result)
+            verifier.assert_called_once_with("doi:10.1038/s41586-026-10830-y")
+            manifest_path = Path(task["research_evidence_manifest"]["path"])
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                manifest["source_kind"], "codex_verified_scholarly_reference"
+            )
+            self.assertEqual(
+                manifest["allowed_reference_identifiers"],
+                ["doi:10.1038/s41586-026-10830-y"],
+            )
+            self.assertEqual(manifest_path.stat().st_mode & 0o777, 0o600)
+
+    def test_codex_resolved_identifier_still_requires_evidence_boundary(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            task = {
+                "id": "codex-resolved-without-boundary",
+                "artifact_dir": tmp,
+                "agent_session": {"backend": "codex", "ok": True},
+                "route_decision": {
+                    "message_only": True,
+                    "artifact_delivery": "forbidden",
+                },
+                "execution_contract": {
+                    "artifact_delivery": "forbidden",
+                    "research_evidence": {"required": True, "message_only": True},
+                },
+            }
+            result = {
+                "message": "2026年《Nature》研究证明了该方案。DOI: 10.1000/verified",
+                "files": [],
+            }
+            evidence = {
+                "identifier": "doi:10.1000/verified",
+                "kind": "doi",
+                "canonical_url": "https://doi.org/10.1000/verified",
+                "http_status": 302,
+                "resolved_location_host": "publisher.example",
+                "checked_at": "2026-09-03T09:00:00",
+                "evidence_level": "identifier_resolved",
+            }
+            with mock.patch.object(
+                worker,
+                "verify_scholarly_reference",
+                return_value=evidence,
+            ):
+                guarded = worker.enforce_message_only_research_evidence(task, result)
+
+            self.assertTrue(guarded["no_reply"])
+            self.assertIn(
+                "missing_uncertainty_boundary_for_resolved_reference",
+                guarded["data"]["message_only_research_quality"]["issues"],
+            )
+
+    def test_codex_message_only_research_rejects_unresolved_doi(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            task = {
+                "id": "codex-unresolved-doi",
+                "artifact_dir": tmp,
+                "agent_session": {"backend": "codex", "ok": True},
+                "route_decision": {
+                    "message_only": True,
+                    "artifact_delivery": "forbidden",
+                },
+                "execution_contract": {
+                    "artifact_delivery": "forbidden",
+                    "research_evidence": {"required": True, "message_only": True},
+                },
+            }
+            result = {
+                "message": (
+                    "假设：这项结果值得复现。DOI: 10.1000/not-registered。"
+                    "目前证据有限。"
+                ),
+                "files": [],
+            }
+            with mock.patch.object(
+                worker,
+                "verify_scholarly_reference",
+                return_value=None,
+            ):
+                guarded = worker.enforce_message_only_research_evidence(task, result)
+
+            self.assertTrue(guarded["no_reply"])
+            self.assertIn(
+                "source_claim_without_fresh_evidence_manifest",
+                guarded["data"]["message_only_research_quality"]["issues"],
+            )
+            self.assertNotIn("research_evidence_manifest", task)
 
     def test_message_only_inspiration_rejects_unbounded_chinese_year_forecast(self) -> None:
         worker = load_worker()
@@ -13600,7 +13893,11 @@ stderr: noisy internal trace
             "attempt 1: WECOM_GUI_SEND_UNCERTAIN: composer did not clear after Send"
         ]
 
-        self.assertFalse(worker.send_errors_indicate_deferable(errors))
+        self.assertTrue(worker.send_errors_indicate_deferable(errors))
+        self.assertEqual(
+            worker.send_deferred_reason_from_errors(errors),
+            "gui_postcommit_uncertain",
+        )
 
     def test_claim_next_deferred_send_repairs_legacy_wecom_composer_failure(self) -> None:
         worker = load_worker()
@@ -16071,6 +16368,66 @@ NVQNIF+NotoSansCJKjp-Regular-Identity-H CID Type 0C       Identity-H       yes y
 
         self.assertEqual(issues, [])
 
+    def test_scheduled_full_report_accepts_chinese_executable_validation_route(self) -> None:
+        worker = load_worker()
+        task = {
+            "routine": {"id": "research_summary"},
+            "route_decision": {"route_kind": "research_or_summary"},
+            "execution_contract": {
+                "research_evidence": {
+                    "required": True,
+                    "minimum_traceable_sources": 3,
+                    "state_uncertainty_and_limitations": True,
+                    "include_actionable_next_steps": True,
+                },
+                "report_quality": {
+                    "required_dimensions": [
+                        "source_level_methods_results_and_limitations",
+                        "cross_source_synthesis_and_tensions",
+                        "evidence_boundaries_and_uncertainty",
+                        "actionable_experiments_or_decisions",
+                        "complete_traceable_references",
+                    ]
+                },
+            },
+            "request": "Prepare the full daily report PDF.",
+        }
+        full_report = """
+        # 证据与方法
+        研究设计与实验系统：比较队列、样本、对照组和数据集。
+        主要结果与定量结果：准确率 82%，并报告 AUROC 0.86。
+        DOI: 10.1000/source-a DOI: 10.1000/source-b DOI: 10.1000/source-c
+        # 跨论文综合分析
+        三项研究的一致之处与分歧构成可检验张力。
+        # 证据边界与局限
+        直接证据、间接证据、假设和不确定性分开陈述。
+        # 30 天可执行验证路线
+        第 1 周建立独立队列，第 2 周完成正交扰动与救援，第 3 周按预注册阈值决策。
+        # 完整可追溯参考文献
+        1. Source A. doi:10.1000/source-a
+        2. Source B. doi:10.1000/source-b
+        3. Source C. doi:10.1000/source-c
+        """ + ("证据解释与决策影响。" * 100)
+        with tempfile.TemporaryDirectory() as tmp:
+            report = Path(tmp) / "daily-report.pdf"
+            report.write_bytes(b"%PDF-1.4\n")
+            with mock.patch.object(
+                worker,
+                "extract_pdf_text_for_quality",
+                return_value=(full_report, ""),
+            ):
+                issues = worker.reader_facing_pdf_quality_issues(task, report)
+
+        self.assertEqual(issues, [])
+
+    def test_research_pdf_does_not_treat_incidental_experiment_as_next_step(self) -> None:
+        worker = load_worker()
+        summary = worker.research_report_evidence_summary(
+            "研究方法包含一次实验。主要结果已报告，讨论部分只概述领域背景。"
+        )
+
+        self.assertFalse(summary["has_actionable_next_steps"])
+
     def test_research_pdf_rejects_unresolved_and_unverified_citations(self) -> None:
         worker = load_worker()
         with tempfile.TemporaryDirectory() as tmp:
@@ -18529,6 +18886,26 @@ NVQNIF+NotoSansCJKjp-Regular-Identity-H CID Type 0C       Identity-H       yes y
 
         self.assertEqual(worker.wechat_base_message_type(encoded_type), 49)
         self.assertTrue(worker.should_prepare_media_resolution(task))
+
+    def test_web_link_card_skips_unrelated_generic_media_resolution(self) -> None:
+        worker = load_worker()
+        encoded_type = (51 << 32) | 49
+        task = {
+            "source": {"local_type": encoded_type, "kind": "file/link"},
+            "route_decision": {
+                "route_kind": "research_or_summary",
+                "needs_recent_media": True,
+            },
+            "request": (
+                "Current coalesced request:\n"
+                "[WeChat link]\n"
+                "title: Example article\n"
+                "url: https://mp.weixin.qq.com/s/example\n\n"
+                "Recent history:\nolder text"
+            ),
+        }
+
+        self.assertFalse(worker.should_prepare_media_resolution(task))
 
     def test_publish_video_uses_exact_autopublish_preflight_not_generic_media_resolution(self) -> None:
         worker = load_worker()

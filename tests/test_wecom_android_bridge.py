@@ -2145,6 +2145,7 @@ Display #19 (activities from top to bottom):
                 side_effect=[raised_second_page, first_page]
             )
             runtime.tap_node = mock.Mock()
+            runtime.input_swipe = mock.Mock()
 
             with mock.patch.object(bridge.time, "sleep"):
                 found_menu, action = runtime.open_file_action(
@@ -2157,6 +2158,114 @@ Display #19 (activities from top to bottom):
         self.assertIs(found_menu, first_page)
         self.assertEqual(action.attrib.get("text"), "文件")
         runtime.tap_node.assert_called_once()
+        runtime.input_swipe.assert_called_once_with(972, 1021, 108, 1021, 350)
+
+    def test_open_file_action_swipes_horizontal_quick_action_carousel(self) -> None:
+        bridge = load_bridge()
+        composer = ET.fromstring(
+            """
+            <hierarchy><node package="com.tencent.wework">
+              <node text="LabAgent(6)" resource-id="com.tencent.wework:id/nsm"
+                    package="com.tencent.wework" />
+              <node text="" resource-id="com.tencent.wework:id/ijh"
+                    package="com.tencent.wework" clickable="true"
+                    bounds="[975,1992][1052,2069]" />
+            </node></hierarchy>
+            """
+        )
+        first_page = ET.fromstring(
+            """
+            <hierarchy><node package="com.tencent.wework">
+              <node text="" resource-id="com.tencent.wework:id/gor"
+                    class="androidx.recyclerview.widget.RecyclerView"
+                    package="com.tencent.wework" bounds="[0,1076][1080,1197]" />
+              <node text="企业名片" package="com.tencent.wework" />
+              <node text="快捷回复" package="com.tencent.wework" />
+            </node></hierarchy>
+            """
+        )
+        second_page = ET.fromstring(
+            """
+            <hierarchy><node package="com.tencent.wework">
+              <node text="" resource-id="com.tencent.wework:id/gor"
+                    class="androidx.recyclerview.widget.RecyclerView"
+                    package="com.tencent.wework" bounds="[0,1076][1080,1197]" />
+              <node text="文件" package="com.tencent.wework" clickable="true"
+                    bounds="[820,1106][1060,1189]" />
+            </node></hierarchy>
+            """
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(Path(tmp) / "state.sqlite"),
+                    "staging_dir": str(Path(tmp) / "staging"),
+                }
+            )
+            runtime.dump_hierarchy = mock.Mock(side_effect=[first_page, second_page])
+            runtime.tap_node = mock.Mock()
+            runtime.input_swipe = mock.Mock()
+
+            with mock.patch.object(bridge.time, "sleep"):
+                found_menu, action = runtime.open_file_action(
+                    "LabAgent", composer, attempts=1, polls_per_attempt=2
+                )
+
+        self.assertIs(found_menu, second_page)
+        self.assertEqual(action.attrib.get("text"), "文件")
+        runtime.input_swipe.assert_called_once_with(972, 1136, 108, 1136, 350)
+
+    def test_send_file_clears_owned_stale_draft_before_opening_picker(self) -> None:
+        bridge = load_bridge()
+        dirty = ET.fromstring(
+            """
+            <hierarchy><node package="com.tencent.wework">
+              <node text="LabAgent(6)" resource-id="com.tencent.wework:id/nsm"
+                    package="com.tencent.wework" />
+              <node text="@55555555" resource-id="com.tencent.wework:id/iju"
+                    class="android.widget.EditText" package="com.tencent.wework" />
+            </node></hierarchy>
+            """
+        )
+        clean = ET.fromstring(
+            """
+            <hierarchy><node package="com.tencent.wework">
+              <node text="LabAgent(6)" resource-id="com.tencent.wework:id/nsm"
+                    package="com.tencent.wework" />
+              <node text="" resource-id="com.tencent.wework:id/iju"
+                    class="android.widget.EditText" package="com.tencent.wework" />
+            </node></hierarchy>
+            """
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "report.pdf"
+            source.write_bytes(b"pdf")
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(Path(tmp) / "state.sqlite"),
+                    "staging_dir": str(Path(tmp) / "staging"),
+                }
+            )
+            runtime.stage_file = mock.Mock(
+                return_value=(source, bridge.sha256_file(source), "/sdcard/Download/report.pdf")
+            )
+            runtime.normalize_chat_surface = mock.Mock(side_effect=[dirty, clean])
+            runtime.recover_stale_automation_draft = mock.Mock(return_value=True)
+            runtime.open_file_action = mock.Mock(
+                side_effect=bridge.BridgeError("stop after draft assertion")
+            )
+
+            with self.assertRaisesRegex(bridge.BridgeError, "stop after draft assertion"):
+                runtime.send_file_locked("LabAgent", source, task_id="task-file")
+
+        runtime.recover_stale_automation_draft.assert_called_once_with(
+            "LabAgent", "@55555555"
+        )
+        runtime.open_file_action.assert_called_once_with("LabAgent", clean)
 
     def test_send_text_normalizes_chat_surface_before_composing(self) -> None:
         bridge = load_bridge()

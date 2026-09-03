@@ -239,6 +239,14 @@ def codex_account_switch_retryable(result: dict[str, Any]) -> bool:
     # shared-history thread and cannot duplicate an external side effect.
     if result.get("ok") or result.get("tool_activity"):
         return False
+    if (
+        int(result.get("returncode") or 0) not in {0, 124, 127}
+        and not str(result.get("message") or "").strip()
+    ):
+        # Some AgentShell/Codex failures arrive after turn.started but before
+        # either an answer or tool item, with no diagnostic marker. Rotating
+        # accounts is still side-effect safe in that exact state.
+        return True
     text = " ".join(
         str(result.get(key) or "")
         for key in ("message", "stderr_tail", "stdout_tail", "error")

@@ -2,6 +2,10 @@
   "primary_backend": "codex",
   "codex": {
     "account_pool": "agentshell",
+    "primary_model": "gpt-5.6-sol",
+    "low_quota_model": "gpt-5.3-codex-spark",
+    "low_quota_threshold_percent": 5,
+    "fallback_backend": "aginti",
     "session_policy": "resume one shared-history session per conversation and role"
   },
   "aginti": {
@@ -91,5 +95,5 @@
     "send_output": false,
     "safe_task_only": true
   },
-  "notes": "Codex is the automatic execution authority and resumes one shared-history session per conversation. AgentShell selects an account with available quota. AgInTi uses DeepSeek then LocalLLM as fallback and may review successful Codex work privately without tools, delivery, or external side effects."
+  "notes": "Codex is the automatic execution authority and resumes one shared-history session per conversation. AgentShell selects an account with available quota. GPT-5.6 SOL remains primary while normal Codex quota is at least 5 percent; below 5 percent, GPT-5.3 Codex Spark is preferred before AgInTi fallback. AgInTi uses DeepSeek then LocalLLM and may review successful Codex work privately without tools, delivery, or external side effects."
 }

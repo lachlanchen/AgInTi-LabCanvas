@@ -710,6 +710,48 @@ class WeChatCodexSessionTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertEqual(run.call_count, 1)
 
+    def test_account_pool_switches_after_opaque_empty_exit_without_tool_activity(self) -> None:
+        sessions = load_sessions()
+        empty_exit = {
+            "ok": False,
+            "message": "",
+            "thread_id": "thread-1",
+            "returncode": 1,
+            "stderr_tail": "",
+            "stdout_tail": '{"type":"turn.started"}',
+            "execution_started": True,
+            "tool_activity": False,
+        }
+        handled = {
+            "ok": True,
+            "message": "handled",
+            "thread_id": "thread-2",
+            "returncode": 0,
+            "stderr_tail": "",
+            "stdout_tail": "",
+            "execution_started": True,
+            "tool_activity": False,
+        }
+        with mock.patch.object(
+            sessions, "codex_account_candidates", return_value=["company", "lab"]
+        ), mock.patch.object(
+            sessions, "run_codex_with_startup_retries", side_effect=[empty_exit, handled]
+        ) as run:
+            result = sessions.run_codex_across_accounts(
+                "hello",
+                thread_id="thread-1",
+                model="gpt-5.6-sol",
+                reasoning_effort="low",
+                sandbox="read-only",
+                timeout_seconds=30,
+                workdir=ROOT,
+                web_search=False,
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["agentshell_account"], "lab")
+        self.assertEqual(run.call_count, 2)
+
     def test_process_group_timeout_terminates_all_codex_descendants(self) -> None:
         sessions = load_sessions()
         proc = mock.Mock()

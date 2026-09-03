@@ -3776,6 +3776,7 @@ class AndroidBridge:
                 # clickable parent spans the whole composer.
                 x, y = bounds_center(attachment_button.attrib.get("bounds", ""))
                 self.input_tap(x, y)
+            carousel_swiped = False
             for _ in range(max(1, polls_per_attempt)):
                 time.sleep(0.25)
                 current = self.dump_hierarchy(attempts=2)
@@ -3795,6 +3796,26 @@ class AndroidBridge:
                     # tap and remains protected by the shared GUI lock; a
                     # visible non-matching title above is still rejected.
                     return current, file_nodes[-1]
+                carousels = find_nodes(
+                    current,
+                    resource_id=f"{self.package}:id/gor",
+                    package=self.package,
+                )
+                if carousels and not carousel_swiped:
+                    left, top, right, bottom = parse_bounds(
+                        carousels[-1].attrib.get("bounds", "")
+                    )
+                    if right - left >= 300 and bottom > top:
+                        y = (top + bottom) // 2
+                        margin = max(40, min(120, (right - left) // 10))
+                        self.input_swipe(
+                            right - margin,
+                            y,
+                            left + margin,
+                            y,
+                            350,
+                        )
+                        carousel_swiped = True
         raise BridgeError("WeCom file action is unavailable after attachment-menu retry")
 
     def send_file_locked(
@@ -3841,6 +3862,18 @@ class AndroidBridge:
         resolved, digest, remote_path = self.stage_file(path)
         filename = Path(remote_path).name
         root = self.normalize_chat_surface(chat)
+        composers = find_composer_nodes(root, package=self.package)
+        if composers:
+            draft = composer_text(composers[-1])
+            if draft:
+                if not self.recover_stale_automation_draft(chat, draft):
+                    raise BridgeError("refusing to overwrite a non-empty WeCom draft")
+                root = self.normalize_chat_surface(chat)
+                composers = find_composer_nodes(root, package=self.package)
+                if not composers or composer_text(composers[-1]):
+                    raise BridgeError(
+                        "WeCom composer remained non-empty after automation-draft recovery"
+                    )
         component = self.component_record(key)
         if (
             component.get("status") == "committing" or allow_visible_recovery

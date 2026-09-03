@@ -43,6 +43,18 @@ class WeChatAgentBackendTests(unittest.TestCase):
             ),
             "model_did_not_execute",
         )
+        self.assertEqual(
+            backend.classify_backend_failure(
+                {
+                    "ok": False,
+                    "message": "",
+                    "returncode": 1,
+                    "execution_started": True,
+                    "tool_activity": False,
+                }
+            ),
+            "empty",
+        )
 
     def test_aginti_normal_worker_can_use_explicit_host_workspace(self) -> None:
         backend = load_backend()
@@ -72,14 +84,14 @@ class WeChatAgentBackendTests(unittest.TestCase):
             ["--permission-mode", "normal", "--sandbox-mode", "docker-workspace"],
         )
 
-    def test_low_normal_quota_prefers_spark_for_cached_lightweight_turn(self) -> None:
+    def test_under_five_percent_quota_prefers_spark_for_cached_turn(self) -> None:
         backend = load_backend()
         calls: list[dict[str, object]] = []
         with (
             mock.patch.object(
                 backend,
                 "current_codex_quota_status",
-                return_value={"ok": True, "remaining_percent": 24.9},
+                return_value={"ok": True, "remaining_percent": 4.9},
             ),
             mock.patch.object(
                 backend,
@@ -107,7 +119,7 @@ class WeChatAgentBackendTests(unittest.TestCase):
         self.assertEqual(calls[0]["reasoning_effort"], "low")
         self.assertEqual(result["backend_attempts"][0]["model"], "gpt-5.3-codex-spark")
 
-    def test_low_quota_preference_is_strict_cache_only_and_worker_safe(self) -> None:
+    def test_low_quota_preference_is_strict_cache_only_and_keeps_five_percent(self) -> None:
         backend = load_backend()
         unchanged = backend.quota_aware_codex_preference(
             backend="codex",
@@ -120,7 +132,7 @@ class WeChatAgentBackendTests(unittest.TestCase):
         with mock.patch.object(
             backend,
             "current_codex_quota_status",
-            return_value={"ok": True, "remaining_percent": 25.0},
+            return_value={"ok": True, "remaining_percent": 5.0},
         ) as quota:
             threshold = backend.quota_aware_codex_preference(
                 backend="codex",
@@ -131,6 +143,60 @@ class WeChatAgentBackendTests(unittest.TestCase):
             )
         self.assertEqual(threshold, ("gpt-5.6-sol", "low", None))
         self.assertFalse(quota.call_args.kwargs["refresh"])
+
+    def test_under_five_percent_quota_applies_to_worker_turns(self) -> None:
+        backend = load_backend()
+        with mock.patch.object(
+            backend,
+            "current_codex_quota_status",
+            return_value={"ok": True, "remaining_percent": 4.0},
+        ):
+            selected = backend.quota_aware_codex_preference(
+                backend="codex",
+                model="gpt-5.6-sol",
+                reasoning_effort="medium",
+                role="worker",
+                backend_config={},
+            )
+
+        self.assertEqual(selected[0], "gpt-5.3-codex-spark")
+        self.assertEqual(selected[1], "low")
+        self.assertEqual(selected[2]["threshold_percent"], 5.0)
+
+    def test_quota_selected_spark_falls_through_to_aginti(self) -> None:
+        backend = load_backend()
+        next_attempt = backend.next_backend_attempt(
+            {
+                "backend": "codex",
+                "model": "gpt-5.3-codex-spark",
+                "reasoning_effort": "low",
+                "role": "worker",
+                "timeout_seconds": 60,
+                "quota_preference": {
+                    "reason": "normal_codex_quota_below_threshold",
+                },
+            },
+            {
+                "ok": False,
+                "returncode": 1,
+                "stderr_tail": "quota exceeded",
+            },
+            backend_config={
+                "agent_fallbacks": {
+                    "fallback_to_aginti": True,
+                },
+                "_backends": {
+                    "aginti": {
+                        "model": "aginti-auto",
+                        "reasoning_effort": "low",
+                    }
+                },
+            },
+        )
+
+        self.assertIsNotNone(next_attempt)
+        self.assertEqual(next_attempt["backend"], "aginti")
+        self.assertEqual(next_attempt["fallback_reason"], "codex_quota")
 
     def test_unknown_preferred_model_retries_configured_codex_fallback(self) -> None:
         backend = load_backend()

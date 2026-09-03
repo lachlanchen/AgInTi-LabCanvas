@@ -39,8 +39,7 @@ CLAUDE_READONLY_BLOCK = "Bash,Edit,Write,MultiEdit,NotebookEdit"
 DEFAULT_FALLBACK_MODEL = "gpt-5.6-sol"
 DEFAULT_FALLBACK_REASONING_EFFORT = "low"
 DEFAULT_LOW_QUOTA_SPARK_MODEL = "gpt-5.3-codex-spark"
-DEFAULT_LOW_QUOTA_THRESHOLD_PERCENT = 25.0
-LOW_QUOTA_SPARK_ROLES = frozenset({"fast", "route"})
+DEFAULT_LOW_QUOTA_THRESHOLD_PERCENT = 5.0
 DEFAULT_AGINTI_PROVIDER_CHAIN = ("deepseek", "localllm")
 AGINTI_SESSION_RE = re.compile(r"^Session:\s*(web-agent-[0-9A-Za-z-]+)\s*$", re.MULTILINE)
 ANSI_ESCAPE_RE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
@@ -547,9 +546,7 @@ def quota_aware_codex_preference(
     if normalize_backend(backend) != "codex" or is_spark_model(selected_model):
         return selected_model, selected_effort, None
     fallback_config = fallback_config_dict(backend_config)
-    enabled = fallback_config.get("prefer_spark_below_normal_quota")
-    if enabled is None:
-        enabled = str(role or "") in LOW_QUOTA_SPARK_ROLES
+    enabled = fallback_config.get("prefer_spark_below_normal_quota", True)
     if not bool(enabled):
         return selected_model, selected_effort, None
     configured_roles = fallback_config.get("low_quota_spark_roles")
@@ -626,7 +623,12 @@ def next_backend_attempt(
                 "fallback_reason": "preferred_model_unavailable",
                 "model_fallback_used": True,
             }
-    if backend == "codex" and is_spark_model(str(attempt.get("model") or "")) and failure_kind in {"quota", "empty"}:
+    if (
+        backend == "codex"
+        and is_spark_model(str(attempt.get("model") or ""))
+        and failure_kind in {"quota", "empty"}
+        and not attempt.get("quota_preference")
+    ):
         return {
             **attempt,
             "backend": "codex",
@@ -787,6 +789,12 @@ def classify_backend_failure(result: dict[str, Any]) -> str:
         return "model_did_not_execute"
     if int(result.get("returncode") or 0) == 127 or any(marker in text for marker in UNAVAILABLE_FAILURE_MARKERS):
         return "unavailable"
+    if (
+        int(result.get("returncode") or 0) != 0
+        and not result.get("tool_activity")
+        and not user_facing_backend_message(result.get("message"))
+    ):
+        return "empty"
     return "other"
 
 

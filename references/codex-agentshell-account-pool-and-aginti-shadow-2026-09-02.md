@@ -25,6 +25,20 @@ Selection order is:
 4. Existing profiles without a fresh snapshot, after positively available
    profiles.
 
+LabCanvas model order is separate from account selection:
+
+1. Use `gpt-5.6-sol` through the best available AgentShell account while the
+   normal Codex allocation is at least 5 percent.
+2. Below 5 percent, use `gpt-5.3-codex-spark` for the next Codex turn. The
+   cached quota probe makes this decision without delaying message intake.
+3. If that quota-aware Spark attempt is unavailable, exhausted, empty, or
+   times out before tool activity, continue through the configured AgInTi
+   fallback. AgInTi uses DeepSeek first and LocalLLM second.
+
+An explicit model/backend selection remains authoritative. Once a tool has
+started, the worker keeps the exact task resumable instead of replaying an
+unknown side effect on another model or backend.
+
 Profiles proved exhausted by a real inference response are temporarily removed
 from selection even if the read-only quota snapshot is optimistic. The quota
 monitor preserves that temporary runtime rejection marker.
@@ -36,6 +50,12 @@ transport, or startup rejection only when no tool item has run. Codex may emit
 `turn.started` before a quota rejection; that event alone does not represent a
 side effect. Once tool activity appears, LabCanvas preserves the exact task for
 recovery instead of replaying it through another account or backend.
+
+A nonzero Codex exit with no answer and no tool activity is also a safe
+pre-execution failure. LabCanvas rotates to another AgentShell account for that
+case, then uses the configured backend fallback if every eligible Codex account
+fails the same way. A nonzero exit after tool activity is never replayed this
+way because its side effects may be unknown.
 
 Because AgentShell profiles use shared Codex history, the replacement account
 can resume the same conversation thread. The private session registry records
@@ -54,6 +74,24 @@ safer/faster approaches, and reusable agent improvements.
 This is evaluation evidence, not a second execution path. Codex output remains
 authoritative until AgInTi is explicitly selected or reached through the normal
 fallback contract.
+
+## Research And Batch Completion Guards
+
+For concise scheduled research messages, AgInTi may provide its structured deep
+research manifest. A successful Codex web-search answer can instead cite a DOI
+or modern arXiv identifier. LabCanvas resolves only those strict scholarly IDs
+through their canonical endpoints, without following an arbitrary model-supplied
+URL, and stores the result in a private mode-0600 task manifest. Identifier
+resolution proves that the cited record exists; it does not prove every claim
+about the paper. The chat answer must still state an uncertainty, limitation,
+or hypothesis boundary. Unresolved identifiers and unsupported general URLs
+remain blocked from delivery.
+
+When consecutive messages are handled as one batch, every source row retains a
+numbered completion identity. If one item needs a supplement, the next audit
+checks the already delivered answer together with the supplement, while the
+sender transmits only the new supplement. This prevents a recovery turn from
+forgetting earlier coverage or duplicating the entire batch.
 
 ## Commands
 

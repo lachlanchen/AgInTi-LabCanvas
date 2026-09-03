@@ -3876,6 +3876,39 @@ class WeComAgentBridgeTests(unittest.TestCase):
         bridge.composer_keys.assert_called_once_with(window, "alt+s")
         remember.assert_called_once()
 
+    def test_gui_delivery_status_reconciles_exact_text_and_file_components(self) -> None:
+        module = load_gui_bridge()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "report.pdf"
+            source.write_bytes(b"report")
+            state_db = root / "state.sqlite"
+            module.init_state_db(state_db)
+
+            bridge = object.__new__(module.WeComGuiBridge)
+            bridge.state_db = state_db
+            bridge.target_groups = ["LabAgent"]
+            bridge.validate_send_file = mock.Mock(return_value=source.resolve())
+            text = "daily report ready"
+            task_id = "task-1"
+            text_key = module.short_hash(f"LabAgent:{task_id}:0:{text}")
+            stat = source.resolve().stat()
+            file_key = module.short_hash(
+                f"LabAgent:{task_id}:file:0:{source.resolve()}:{stat.st_size}:{stat.st_mtime_ns}"
+            )
+            module.remember_delivery(state_db, text_key, "LabAgent", text)
+            module.remember_delivery(state_db, file_key, "LabAgent", str(source.resolve()))
+
+            payload = bridge.delivery_status(
+                "LabAgent", text, [source], task_id=task_id
+            )
+
+        self.assertTrue(payload["complete"])
+        self.assertEqual(payload["sent_messages"], [text])
+        self.assertEqual(payload["sent_files"], [str(source.resolve())])
+        self.assertEqual(payload["pending_messages"], [])
+        self.assertEqual(payload["pending_files"], [])
+
     def test_gui_file_delivery_never_sends_when_picker_composition_is_unverified(self) -> None:
         module = load_gui_bridge()
         with tempfile.TemporaryDirectory() as temporary:

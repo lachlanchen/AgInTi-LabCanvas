@@ -632,6 +632,68 @@ class WeChatTransportStallGuardTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertEqual(result["task_ids"], ["scheduler:organizer-delivery"])
 
+    def test_gui_timeout_health_includes_echomind_title_guard_failure(self) -> None:
+        now = datetime(2026, 9, 3, 0, 16, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            queue = root / "queue.jsonl"
+            queue.write_text("", encoding="utf-8")
+            scheduler = root / "echomind-language-schedule.state.json"
+            scheduler.write_text(
+                json.dumps(
+                    {
+                        "scheduler_phase": "lesson_retry_wait",
+                        "last_delivery_error_at": "2026-09-03T00:15:48+00:00",
+                        "last_delivery_error": (
+                            "RuntimeError: Opened chat title guard failed for "
+                            "EchoMind: OCR='Shares'."
+                        ),
+                        "pending_lesson": {"delivery_attempts": 1},
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = guard.recent_wechat_gui_timeout_health(
+                queue,
+                now=now,
+                client_started_at=now - timedelta(hours=1),
+                scheduler_state_paths=(scheduler,),
+            )
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(
+            result["task_ids"],
+            ["scheduler:echomind-language-schedule.state"],
+        )
+
+    def test_gui_timeout_health_ignores_echomind_failure_before_restart(self) -> None:
+        now = datetime(2026, 9, 3, 0, 30, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            queue = root / "queue.jsonl"
+            queue.write_text("", encoding="utf-8")
+            scheduler = root / "echomind-language-schedule.state.json"
+            scheduler.write_text(
+                json.dumps(
+                    {
+                        "last_delivery_error_at": "2026-09-03T00:15:48+00:00",
+                        "last_delivery_error": "Opened chat title guard failed for EchoMind",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = guard.recent_wechat_gui_timeout_health(
+                queue,
+                now=now,
+                client_started_at=now - timedelta(minutes=6),
+                scheduler_state_paths=(scheduler,),
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["task_ids"], [])
+
     def test_tmux_snapshot_filters_exact_session_and_keeps_all_windows(self) -> None:
         original = guard.run_command
         try:

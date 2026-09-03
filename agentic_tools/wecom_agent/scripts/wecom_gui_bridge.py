@@ -808,6 +808,48 @@ class WeComGuiBridge:
             "seeded": snapshot is not None,
         }
 
+    def delivery_status(
+        self,
+        chat: str,
+        text: str,
+        paths: list[Path],
+        *,
+        task_id: str,
+    ) -> dict[str, Any]:
+        """Resolve exact text/file components from the durable GUI ledger."""
+        if chat not in self.target_groups:
+            raise RuntimeError("refusing delivery status for a non-allowlisted WeCom GUI group")
+        sent_messages: list[str] = []
+        pending_messages: list[str] = []
+        for index, chunk in enumerate(chunk_text(text, 1800)):
+            delivery_key = short_hash(f"{chat}:{task_id}:{index}:{chunk}")
+            target = sent_messages if delivery_done(self.state_db, delivery_key, chat) else pending_messages
+            target.append(chunk)
+
+        sent_files: list[str] = []
+        pending_files: list[str] = []
+        for index, source in enumerate(paths):
+            path = self.validate_send_file(source)
+            stat = path.stat()
+            delivery_key = short_hash(
+                f"{chat}:{task_id}:file:{index}:{path}:{stat.st_size}:{stat.st_mtime_ns}"
+            )
+            target = sent_files if delivery_done(self.state_db, delivery_key, chat) else pending_files
+            target.append(str(path))
+
+        complete = not pending_messages and not pending_files
+        return {
+            "ok": True,
+            "complete": complete,
+            "transport": "wecom_gui",
+            "sent_messages": sent_messages,
+            "pending_messages": pending_messages,
+            "mentioned_users": [],
+            "sent_files": sent_files,
+            "sent_file_count": len(sent_files),
+            "pending_files": pending_files,
+        }
+
     def send_text_locked(self, chat: str, text: str, *, task_id: str) -> dict[str, Any]:
         chunks = chunk_text(text, 1800)
         sent: list[dict[str, Any]] = []
@@ -2179,7 +2221,7 @@ def make_api_handler(bridge: WeComGuiBridge):
             self.write_json(200, bridge.read_messages(chat, after=after, limit=limit))
 
         def do_POST(self) -> None:  # noqa: N802
-            if self.path != "/v1/send":
+            if self.path not in {"/v1/send", "/v1/delivery-status"}:
                 self.write_json(404, {"ok": False, "error": "not found"})
                 return
             if not self.authorized():
@@ -2206,7 +2248,11 @@ def make_api_handler(bridge: WeComGuiBridge):
                 if not message.strip() and not files:
                     self.write_json(400, {"ok": False, "error": "send requires message and/or files"})
                     return
-                self.write_json(200, bridge.send(chat, message, files, task_id=task_id))
+                if self.path == "/v1/delivery-status":
+                    result = bridge.delivery_status(chat, message, files, task_id=task_id)
+                else:
+                    result = bridge.send(chat, message, files, task_id=task_id)
+                self.write_json(200, result)
             except Exception as exc:
                 self.write_json(500, {"ok": False, "error": f"{type(exc).__name__}: {str(exc)[:500]}"})
 

@@ -2626,6 +2626,12 @@ def send_errors_indicate_gui_compose_verification(errors: list[str]) -> bool:
     )
 
 
+def send_errors_indicate_gui_postcommit_uncertain(errors: list[str]) -> bool:
+    """Keep a possibly committed GUI send out of automatic retry loops."""
+    text = "\n".join(str(error) for error in errors).lower()
+    return "wecom_gui_send_uncertain" in text
+
+
 def send_errors_indicate_wechat_android_send_failed(errors: list[str]) -> bool:
     """Recognize a verified pre-commit Android send failure.
 
@@ -2652,6 +2658,7 @@ def send_errors_indicate_deferable(errors: list[str]) -> bool:
         or send_errors_indicate_wechat_entry_required(errors)
         or send_errors_indicate_title_guard_failure(errors)
         or send_errors_indicate_gui_compose_verification(errors)
+        or send_errors_indicate_gui_postcommit_uncertain(errors)
         or send_errors_indicate_transient_transport(errors)
     )
 
@@ -2690,6 +2697,8 @@ def send_deferred_reason_from_errors(errors: list[str]) -> str:
         return "title_guard_failed"
     if send_errors_indicate_gui_compose_verification(errors):
         return "gui_compose_verification"
+    if send_errors_indicate_gui_postcommit_uncertain(errors):
+        return "gui_postcommit_uncertain"
     if send_errors_indicate_transient_transport(errors):
         return "wecom_transport_transient"
     return "wechat_locked"
@@ -4656,9 +4665,10 @@ def recover_completed_research_artifacts(
     if not artifact_dir.is_dir():
         return None
     claimed_at = research_report_generation_started_at(task)
+    fresh_after = claimed_at.timestamp() if claimed_at is not None else None
     reports = substantive_research_report_candidates(
         artifact_dir,
-        fresh_after=claimed_at.timestamp() if claimed_at is not None else None,
+        fresh_after=fresh_after,
     )
     if not reports:
         return recover_exact_task_pdf_without_markdown(
@@ -4666,10 +4676,11 @@ def recover_completed_research_artifacts(
             artifact_dir,
             failure_text=failure_text,
             force=force,
+            fresh_after=fresh_after,
         )
     report: Path | None = None
     report_pdf: Path | None = None
-    for candidate in reports:
+    for candidate_index, candidate in enumerate(reports):
         language = detect_markdown_primary_language(
             read_text_prefix(candidate, limit=24000)
         )
@@ -4679,6 +4690,11 @@ def recover_completed_research_artifacts(
             and candidate_pdf.is_file()
             and candidate_pdf.stat().st_size > 0
         ):
+            if (
+                candidate_index < len(reports) - 1
+                and reader_facing_pdf_quality_issues(task, candidate_pdf)
+            ):
+                continue
             report = candidate
             report_pdf = candidate_pdf
             break
@@ -4688,6 +4704,7 @@ def recover_completed_research_artifacts(
             artifact_dir,
             failure_text=failure_text,
             force=force,
+            fresh_after=fresh_after,
         )
 
     files = [report_pdf]
@@ -4758,6 +4775,7 @@ def recover_exact_task_pdf_without_markdown(
     *,
     failure_text: str = "",
     force: bool = False,
+    fresh_after: float | None = None,
 ) -> dict[str, Any] | None:
     """Recover one unambiguous reader-facing PDF from the exact task directory.
 
@@ -4780,6 +4798,11 @@ def recover_exact_task_pdf_without_markdown(
         if relative.parts and relative.parts[0] == "delivery":
             continue
         if len(relative.parts) > 3:
+            continue
+        try:
+            if fresh_after is not None and path.stat().st_mtime < fresh_after - 2.0:
+                continue
+        except OSError:
             continue
         ok, _reason = is_safe_outbound_file(path)
         if not ok:
@@ -4825,6 +4848,16 @@ def recover_exact_task_pdf_without_markdown(
 def preferred_research_report_pdf(report: Path, language: str) -> Path | None:
     """Reuse an agent-rendered PDF before invoking the matching host compiler."""
     exact_sibling = report.with_suffix(".pdf")
+    if report.suffix.casefold() == ".md":
+        competing_tex = report.with_suffix(".tex")
+        try:
+            if (
+                competing_tex.is_file()
+                and competing_tex.stat().st_mtime >= report.stat().st_mtime
+            ):
+                return ensure_markdown_pdf_companion_for_language(report, language)
+        except OSError:
+            pass
     try:
         if (
             exact_sibling.is_file()
@@ -4919,7 +4952,11 @@ def research_reference_identifiers(text: str) -> set[str]:
         if compact.startswith("arxiv"):
             compact = re.sub(r"v\d+$", "", compact)
         identifiers.add(f"id:{compact}")
-    for raw_url in re.findall(r"https?://[^\s)>\]}]+", text, flags=re.IGNORECASE):
+    for raw_url in re.findall(
+        r"https?://[^\s)>\]}，。；、！？）》」』】]+",
+        text,
+        flags=re.IGNORECASE,
+    ):
         normalized = normalize_research_url(raw_url)
         if normalized:
             identifiers.add(normalized)
@@ -4948,6 +4985,179 @@ def load_task_research_evidence_manifest(task: dict[str, Any]) -> dict[str, Any]
     if not isinstance(payload, dict) or payload.get("status") != "completed":
         return {}
     return payload
+
+
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Expose canonical scholarly redirects without following model-supplied targets."""
+
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: Any,
+        code: int,
+        msg: str,
+        headers: Any,
+        newurl: str,
+    ) -> None:
+        return None
+
+
+def verify_scholarly_reference(identifier: str) -> dict[str, Any] | None:
+    """Resolve a strict DOI/arXiv identity without fetching an arbitrary cited URL."""
+
+    canonical = str(identifier or "").strip().casefold()
+    if canonical.startswith("doi:"):
+        doi = canonical.removeprefix("doi:")
+        if not normalize_research_doi(doi):
+            return None
+        endpoint = "https://doi.org/" + urllib.parse.quote(
+            doi,
+            safe="/():.;_-",
+        )
+        reference_kind = "doi"
+    elif re.fullmatch(r"id:arxiv\d{4}\.\d{4,5}", canonical):
+        arxiv_id = canonical.removeprefix("id:arxiv")
+        endpoint = f"https://arxiv.org/abs/{arxiv_id}"
+        reference_kind = "arxiv"
+    else:
+        return None
+
+    try:
+        configured_timeout = float(
+            os.environ.get("WECHAT_RESEARCH_REFERENCE_TIMEOUT_SECONDS", "8")
+        )
+    except ValueError:
+        configured_timeout = 8.0
+    timeout = min(15.0, max(2.0, configured_timeout))
+    request = urllib.request.Request(
+        endpoint,
+        headers={
+            "Accept": "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.1",
+            "User-Agent": "AgInTi-LabCanvas/1.0 scholarly-reference-verifier",
+        },
+        method="HEAD",
+    )
+    opener = urllib.request.build_opener(_NoRedirectHandler())
+    status = 0
+    location = ""
+    try:
+        with opener.open(request, timeout=timeout) as response:
+            status = int(getattr(response, "status", 0) or response.getcode() or 0)
+            location = str(response.headers.get("Location") or "").strip()
+    except urllib.error.HTTPError as exc:
+        status = int(exc.code or 0)
+        location = str(exc.headers.get("Location") or "").strip()
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError):
+        return None
+    if not 200 <= status < 400:
+        return None
+    if 300 <= status < 400 and not location:
+        return None
+    return {
+        "identifier": canonical,
+        "kind": reference_kind,
+        "canonical_url": endpoint,
+        "http_status": status,
+        "resolved_location_host": (
+            (urllib.parse.urlsplit(location).hostname or "") if location else ""
+        ),
+        "checked_at": datetime.now().isoformat(timespec="seconds"),
+        "evidence_level": "identifier_resolved",
+    }
+
+
+def capture_codex_reference_evidence(
+    task: dict[str, Any], result: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Persist bounded DOI/arXiv resolution evidence for one Codex chat answer."""
+
+    if not message_only_research_evidence_contract_applies(task):
+        return None
+    session = (
+        task.get("agent_session")
+        if isinstance(task.get("agent_session"), dict)
+        else {}
+    )
+    if str(session.get("backend") or "").casefold() != "codex":
+        return None
+    text = str(result.get("message") or "").strip()
+    if not text or result_is_no_reply(result):
+        return None
+    message_fingerprint = hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+    prior = (
+        task.get("codex_reference_verification")
+        if isinstance(task.get("codex_reference_verification"), dict)
+        else {}
+    )
+    if prior.get("message_fingerprint") == message_fingerprint:
+        return None
+
+    candidates = sorted(
+        identifier
+        for identifier in research_reference_identifiers(text)
+        if identifier.startswith("doi:")
+        or re.fullmatch(r"id:arxiv\d{4}\.\d{4,5}", identifier)
+    )[:3]
+    verified = [
+        evidence
+        for identifier in candidates
+        if (evidence := verify_scholarly_reference(identifier)) is not None
+    ]
+    task["codex_reference_verification"] = {
+        "message_fingerprint": message_fingerprint,
+        "candidate_count": len(candidates),
+        "verified_count": len(verified),
+        "checked_at": datetime.now().isoformat(timespec="seconds"),
+    }
+    if not verified:
+        return None
+
+    task_root = Path(
+        str(task.get("artifact_dir") or worker_artifact_dir(task))
+    ).expanduser().resolve()
+    task_root.mkdir(parents=True, exist_ok=True)
+    manifest = {
+        "version": 1,
+        "status": "completed",
+        "source_kind": "codex_verified_scholarly_reference",
+        "captured_at": datetime.now().isoformat(timespec="seconds"),
+        "source_count": len(verified),
+        "strong_source_count": 0,
+        "excerpt_source_count": 0,
+        "allowed_reference_identifiers": [
+            str(item["identifier"]) for item in verified
+        ],
+        "sources": [
+            {
+                "source_id": f"C{index}",
+                "reference_identifiers": [str(item["identifier"])],
+                **item,
+            }
+            for index, item in enumerate(verified, start=1)
+        ],
+        "evidence_boundary": (
+            "The canonical scholarly identifier resolved. This does not independently "
+            "verify every semantic claim made about the source."
+        ),
+    }
+    manifest_path = task_root / "research-evidence-manifest.json"
+    tmp_path = manifest_path.with_suffix(".json.tmp")
+    tmp_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    tmp_path.chmod(0o600)
+    tmp_path.replace(manifest_path)
+    manifest_path.chmod(0o600)
+    reference = {
+        "path": str(manifest_path),
+        "source_count": len(verified),
+        "strong_source_count": 0,
+        "excerpt_source_count": 0,
+        "captured_at": manifest["captured_at"],
+    }
+    task["research_evidence_manifest"] = reference
+    return reference
 
 
 def _deep_research_source_ids(value: Any) -> set[str]:
@@ -5181,6 +5391,13 @@ MESSAGE_ONLY_HYPOTHESIS_RE = re.compile(
     r"proposed\s+hypothesis|hypothesis|unverified\s+idea)",
     flags=re.IGNORECASE,
 )
+MESSAGE_ONLY_UNCERTAINTY_RE = re.compile(
+    r"(?:局限|限制|不确定|不確定|证据.{0,12}(?:有限|不足)|證據.{0,12}(?:有限|不足)|"
+    r"(?:不能|不可|不应|不應).{0,24}(?:外推|证明|證明|视为|視為)|"
+    r"仅.{0,30}(?:样本|樣本|证据|證據)|(?:尚需|仍需|需要).{0,16}(?:验证|驗證|复现|復現)|"
+    r"limitation|uncertain|limited\s+evidence|cannot\s+be\s+generalized)",
+    flags=re.IGNORECASE,
+)
 MESSAGE_ONLY_FORECAST_RE = re.compile(
     r"(?:预测|預測|forecast|领先指标|領先指標|未来\s*\d+\s*年|未來\s*\d+\s*年)",
     flags=re.IGNORECASE,
@@ -5229,7 +5446,20 @@ def message_only_research_evidence_issues(
             if str(item).strip()
         }
         identifiers = research_reference_identifiers(text)
-        return ["unverified_message_reference"] if identifiers - allowed else []
+        issues = ["unverified_message_reference"] if identifiers - allowed else []
+        if str(manifest.get("source_kind") or "") == "codex_verified_scholarly_reference":
+            source_claim = bool(MESSAGE_ONLY_UNVERIFIED_SOURCE_CLAIM_RE.search(text))
+            quantitative_claim = bool(MESSAGE_ONLY_QUANTITATIVE_CLAIM_RE.search(text))
+            forecast_claim = bool(MESSAGE_ONLY_FORECAST_RE.search(text))
+            has_boundary = bool(
+                MESSAGE_ONLY_HYPOTHESIS_RE.search(text)
+                or MESSAGE_ONLY_UNCERTAINTY_RE.search(text)
+            )
+            if (
+                identifiers or source_claim or quantitative_claim or forecast_claim
+            ) and not has_boundary:
+                issues.append("missing_uncertainty_boundary_for_resolved_reference")
+        return unique_strings(issues)
 
     issues: list[str] = []
     identifiers = research_reference_identifiers(text)
@@ -5266,6 +5496,8 @@ def enforce_message_only_research_evidence(
     text = str(result.get("message") or "").strip()
     if not text or result_is_no_reply(result):
         return result
+    if not load_task_research_evidence_manifest(task):
+        capture_codex_reference_evidence(task, result)
     issues = message_only_research_evidence_issues(task, result)
     if not issues:
         task["message_only_research_quality"] = {
@@ -5398,7 +5630,10 @@ def research_report_evidence_summary(text: str) -> dict[str, Any]:
         re.search(
             r"(?:next\s+steps?|recommended\s+(?:experiment|action|decision)|"
             r"actionable|下一步|建议实验|建議實驗|行动建议|行動建議|"
-            r"决策建议|決策建議|优先实验|優先實驗)",
+            r"决策建议|決策建議|优先实验|優先實驗|"
+            r"(?:可执行|可執行|可操作|行动|行動|实施|實施|实验|實驗|"
+            r"验证|驗證|研究)(?:的)?(?:路线|路線|路线图|路線圖|路径|路徑|"
+            r"计划|計劃|方案))",
             text,
             flags=re.I,
         )
@@ -5502,11 +5737,9 @@ def substantive_research_report_candidates(
     if not candidates:
         return []
     if fresh_after is not None:
-        fresh_candidates = [
+        candidates = [
             item for item in candidates if item[1] >= fresh_after - 2.0
         ]
-        if fresh_candidates:
-            candidates = fresh_candidates
     return [
         item[2]
         for item in sorted(
@@ -5788,6 +6021,7 @@ def reconcile_numbered_message_coverage(path: Path) -> int:
                 continue
             task_status = str(task.get("status") or "")
             parent_id = str(task.get("superseded_by") or "")
+            superseded_reason = str(task.get("superseded_reason") or "").strip()
             parent = by_id.get(parent_id) if parent_id else task
             if not isinstance(parent, dict):
                 continue
@@ -5807,12 +6041,14 @@ def reconcile_numbered_message_coverage(path: Path) -> int:
                 continue
             if task_status in {"canceled", "expired_stale"} or (
                 task_status == "canceled_superseded"
-                and bool(str(task.get("superseded_reason") or "").strip())
+                and bool(superseded_reason)
+                and superseded_reason != "merged_as_same_chat_interruption"
             ):
                 # Cancellation is authoritative. Coverage repair may annotate
-                # a live/failed row once, but must never resurrect an explicit
-                # duplicate, outbound echo, or obsolete task. Legacy merged
-                # rows without a reason still enter the one-time repair below.
+                # an intentionally merged same-chat interruption once, but
+                # must never resurrect an explicit duplicate, outbound echo,
+                # manual handoff, or obsolete task. Legacy merged rows without
+                # a reason also enter the one-time repair below.
                 continue
             coverage = (
                 parent.get("message_coverage")
@@ -10918,7 +11154,10 @@ def recover_completion_pdf_artifact(
             )
             return combined, None, False
         merged = merge_completion_results(combined, recovered)
-        recovered_audit = run_completion_audit(task, merged)
+        recovered_audit = run_completion_audit(
+            task,
+            completion_audit_candidate(task, merged),
+        )
         attempts.append(
             completion_audit_record(recovered_audit, stage=stage)
         )
@@ -10982,7 +11221,7 @@ def audit_and_repair_worker_completion(
     first = reconcile_message_only_reprocess_coverage(
         task,
         result,
-        run_completion_audit(task, result),
+        run_completion_audit(task, completion_audit_candidate(task, result)),
     )
     attempts = [completion_audit_record(first, stage="candidate")]
     repaired = False
@@ -11061,7 +11300,10 @@ def audit_and_repair_worker_completion(
                 second = reconcile_message_only_reprocess_coverage(
                     task,
                     combined,
-                    run_completion_audit(task, combined),
+                    run_completion_audit(
+                        task,
+                        completion_audit_candidate(task, combined),
+                    ),
                 )
                 attempts.append(
                     completion_audit_record(second, stage="corrected")
@@ -11115,6 +11357,33 @@ def audit_and_repair_worker_completion(
     if coverage["unresolved_item_ids"]:
         combined = disclose_unresolved_completion(combined, coverage)
     return combined
+
+
+def completion_audit_candidate(
+    task: dict[str, Any],
+    result: dict[str, Any],
+) -> dict[str, Any]:
+    """Include prior delivered text when auditing a one-item supplement turn."""
+
+    followup = (
+        task.get("coverage_followup")
+        if isinstance(task.get("coverage_followup"), dict)
+        else {}
+    )
+    if (
+        str(task.get("reprocess_reason") or "") != "numbered_message_not_covered"
+        or not followup
+    ):
+        return result
+    previous = str(followup.get("previous_message") or "").strip()
+    if not previous:
+        return result
+    current = str(result.get("message") or "").strip()
+    candidate = dict(result)
+    candidate["message"] = "\n\n".join(
+        part for part in (previous, current) if part
+    )
+    return candidate
 
 
 def completion_audit_missing_pdf_artifact(audit: dict[str, Any]) -> bool:
@@ -14325,6 +14594,18 @@ def should_prepare_media_resolution(task: dict[str, Any]) -> bool:
     source = task.get("source") if isinstance(task.get("source"), dict) else {}
     source_kind = str(source.get("kind") or "").lower()
     source_type = wechat_base_message_type(source.get("local_type"))
+    if source_kind == "file/link" and source_type == 49:
+        request = str(task.get("request") or "")
+        source_url = current_request_metadata_field(request, "url") or re.search(
+            r"https?://[^\s<>]+",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if source_url and not current_request_file_extension(request):
+            # Web cards are handled by the dedicated article/Finder recovery
+            # stages. A generic media scan here can pick unrelated chat
+            # thumbnails and spend several vision calls before the real read.
+            return False
     return source_kind in {"image", "video", "file", "file/link", "voice", "audio"} or source_type in {3, 34, 43, 49}
 
 

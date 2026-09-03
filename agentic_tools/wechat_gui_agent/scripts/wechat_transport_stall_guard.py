@@ -1124,9 +1124,9 @@ def recent_wechat_gui_timeout_health(
     window_seconds: float = 900.0,
     scheduler_state_paths: tuple[Path, ...] | None = None,
 ) -> dict[str, Any]:
-    """Detect a completed GUI timeout against the currently running client.
+    """Detect a completed GUI-input failure against the running client.
 
-    A timeout older than the current client process is resolved evidence and
+    A failure older than the current client process is resolved evidence and
     must not trigger another restart. One current timeout is enough to raise a
     health fault; the outer guard still requires repeated health checks before
     performing the profile-preserving restart.
@@ -1138,7 +1138,7 @@ def recent_wechat_gui_timeout_health(
         started = wechat_client_started_at(now=current)
     if scheduler_state_paths is None:
         scheduler_state_paths = (
-            (WECHAT_ORGANIZER_DELIVERY,)
+            (WECHAT_ORGANIZER_DELIVERY, ECHOMIND_SCHEDULE_STATE)
             if path == WECHAT_QUEUE
             else ()
         )
@@ -1189,7 +1189,7 @@ def recent_wechat_gui_timeout_health(
             else:
                 fragments.append(str(item))
         text = " ".join(fragments).lower()
-        if "gui_send_timeout" not in text and "wechat_send_timeout" not in text:
+        if not wechat_gui_input_failure_text(text):
             continue
         stalled.append(task_id)
         newest_timeout = max(newest_timeout, attempted) if newest_timeout else attempted
@@ -1198,10 +1198,11 @@ def recent_wechat_gui_timeout_health(
             state = json.loads(state_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
-        if not isinstance(state, dict) or str(state.get("status") or "") != "delivery_failed":
+        if not isinstance(state, dict):
             continue
         attempted = parse_timestamp(
-            state.get("last_delivery_attempt_at")
+            state.get("last_delivery_error_at")
+            or state.get("last_delivery_attempt_at")
             or state.get("updated_at")
         )
         if attempted is None or (current - attempted).total_seconds() > window_seconds:
@@ -1209,8 +1210,12 @@ def recent_wechat_gui_timeout_health(
         if started is not None and attempted <= started:
             continue
         send = state.get("send") if isinstance(state.get("send"), dict) else {}
-        text = " ".join(str(item) for item in send.get("errors") or []).lower()
-        if "gui_send_timeout" not in text and "wechat_send_timeout" not in text:
+        fragments = [
+            str(state.get("last_delivery_error") or ""),
+            *(str(item) for item in send.get("errors") or []),
+        ]
+        text = " ".join(fragments).lower()
+        if not wechat_gui_input_failure_text(text):
             continue
         stalled.append(f"scheduler:{state_path.stem}")
         newest_timeout = max(newest_timeout, attempted) if newest_timeout else attempted
@@ -1221,6 +1226,21 @@ def recent_wechat_gui_timeout_health(
         "newest_timeout_at": newest_timeout.isoformat(timespec="seconds") if newest_timeout else "",
         "task_ids": stalled[:20],
     }
+
+
+def wechat_gui_input_failure_text(text: str) -> bool:
+    """Recognize failures that prove the visible client ignored GUI input."""
+
+    normalized = str(text or "").casefold()
+    return any(
+        marker in normalized
+        for marker in (
+            "gui_send_timeout",
+            "wechat_send_timeout",
+            "opened chat title guard failed",
+            "wechat_gui_input_stalled",
+        )
+    )
 
 
 def process_counts(wechat: dict[str, Any], wecom: dict[str, Any]) -> dict[str, int]:
@@ -1357,7 +1377,7 @@ def build_snapshot(*, max_sender_seconds: float = 180.0) -> dict[str, Any]:
         issue(
             "wechat_gui_delivery_stalled",
             "degraded",
-            f"{len(gui_delivery.get('task_ids') or [])} current-client GUI timeout(s)",
+            f"{len(gui_delivery.get('task_ids') or [])} current-client GUI input failure(s)",
         )
     if not schedules["echomind"]["running"]:
         issue("schedule_echomind_missing", "degraded", "EchoMind language scheduler is absent")
