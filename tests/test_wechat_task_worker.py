@@ -4478,6 +4478,58 @@ stderr: noisy internal trace
             ["medium", "high", "xhigh"],
         )
 
+    def test_run_worker_codex_accepts_concise_ordinary_chat_without_retry(self) -> None:
+        worker = load_worker()
+        response = json.dumps(
+            {
+                "message": "可以，安排上；会明确写成 LabAgent 生成，不冒充马老师本人。",
+                "files": [],
+                "confirmation": "",
+            },
+            ensure_ascii=False,
+        )
+        task = {
+            "chat": "wecom:group:labagent",
+            "request": "可以，让马老师每天鼓励他一下",
+            "routine": {"id": "general_worker", "default_effort": "medium"},
+            "route_decision": {
+                "route_kind": "other_worker",
+                "message_role": "ordinary_chat",
+                "require_file_delivery": False,
+                "external_fact_grounding_required": False,
+            },
+        }
+
+        with mock.patch.object(
+            worker, "run_worker_codex_once", return_value=response
+        ) as run, mock.patch.object(
+            worker, "recover_completed_research_artifacts", return_value=None
+        ):
+            result = worker.run_worker_codex(task)
+
+        self.assertEqual(result, response)
+        self.assertEqual(run.call_count, 1)
+        self.assertFalse(task["worker_result_exhausted"])
+        self.assertEqual(len(task["worker_policy_attempts"]), 1)
+
+    def test_concise_chat_does_not_bypass_required_artifact_retry(self) -> None:
+        worker = load_worker()
+        response = json.dumps(
+            {"message": "报告完成。", "files": [], "confirmation": ""},
+            ensure_ascii=False,
+        )
+        task = {
+            "routine": {"id": "general_worker"},
+            "route_decision": {
+                "message_role": "ordinary_chat",
+                "require_file_delivery": True,
+                "external_fact_grounding_required": False,
+            },
+            "execution_contract": {"required_artifacts": ["pdf"]},
+        }
+
+        self.assertTrue(worker.worker_result_needs_escalation(response, task=task))
+
     def test_run_worker_codex_retries_through_xhigh(self) -> None:
         worker = load_worker()
         calls: list[str] = []

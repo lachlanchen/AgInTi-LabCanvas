@@ -8942,7 +8942,9 @@ def run_worker_codex(task: dict[str, Any]) -> str:
     task["worker_policy"] = best_policy
     task["worker_policy_selected_attempt"] = best_attempt
     task["worker_policy_attempts"] = attempts
-    task["worker_result_exhausted"] = worker_result_needs_escalation(best_result)
+    task["worker_result_exhausted"] = worker_result_needs_escalation(
+        best_result, task=task
+    )
     task.pop("worker_retry_context", None)
     return best_result
 
@@ -21654,7 +21656,7 @@ def worker_sandbox() -> str:
 def escalated_policy(policy: dict[str, Any], result: str, *, task: dict[str, Any] | None = None) -> dict[str, Any] | None:
     if task is not None and is_generate_video_task(task) and generated_video_result_has_progress(result):
         return None
-    if not worker_result_needs_escalation(result):
+    if not worker_result_needs_escalation(result, task=task):
         return None
     effort = str(policy.get("reasoning_effort") or "medium")
     try:
@@ -21699,7 +21701,29 @@ def generated_video_result_has_progress(result: str) -> bool:
     return any(marker in text for marker in markers)
 
 
-def worker_result_needs_escalation(result: str) -> bool:
+def task_accepts_concise_conversation_result(task: dict[str, Any] | None) -> bool:
+    """Let ordinary conversation be concise without weakening task gates."""
+
+    if not isinstance(task, dict):
+        return False
+    route = task_route_decision(task)
+    if str(route.get("message_role") or "") not in {
+        "ordinary_chat",
+        "peer_conversation",
+    }:
+        return False
+    if bool(route.get("external_fact_grounding_required")):
+        return False
+    if task_contract_requires_file_delivery(task):
+        return False
+    if task_is_research_summary(task) or task.get("daily_research"):
+        return False
+    return task_routine_id(task) in {"", "general_worker"}
+
+
+def worker_result_needs_escalation(
+    result: str, *, task: dict[str, Any] | None = None
+) -> bool:
     raw = str(result or "").strip()
     if not raw:
         return True
@@ -21725,6 +21749,8 @@ def worker_result_needs_escalation(result: str) -> bool:
         return False
     if worker_result_is_explicit_failure(text):
         return True
+    if task_accepts_concise_conversation_result(task):
+        return False
     return len(text) < 80
 
 
