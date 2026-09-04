@@ -28,6 +28,8 @@ CLI_BRIDGE_LOG="$LOG_DIR/external-cli.log"
 CLI_TRANSPORT_GUARD="$TOOL_ROOT/scripts/wecom_cli_transport_guard.py"
 GUI_BRIDGE_CONFIG="$TOOL_ROOT/.private/wecom_gui_bridge.local.json"
 GUI_BRIDGE="$TOOL_ROOT/scripts/wecom_gui_bridge.py"
+TINY11_GUI_BRIDGE="$TOOL_ROOT/scripts/wecom_tiny11_gui_bridge.py"
+TINY11_TRANSPORT="$TOOL_ROOT/scripts/wecom_tiny11_transport.py"
 GUI_BRIDGE_LOG="$LOG_DIR/external-gui.log"
 WINDOWS_CLIENT="$TOOL_ROOT/scripts/wecom_windows_client.sh"
 ANDROID_BRIDGE_CONFIG="$TOOL_ROOT/.private/wecom_android_bridge.local.json"
@@ -273,7 +275,31 @@ gui_enabled() {
     && python3 -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1])).get("enabled", True) else 1)' "$GUI_BRIDGE_CONFIG"
 }
 
+gui_backend() {
+  python3 - "$GUI_BRIDGE_CONFIG" <<'PY'
+import json
+import sys
+
+try:
+    payload = json.load(open(sys.argv[1], encoding="utf-8"))
+except (OSError, json.JSONDecodeError):
+    print("wine")
+else:
+    print(str(payload.get("backend") or "wine").strip().casefold())
+PY
+}
+
 ensure_gui_client_window() {
+  if [[ "$(gui_backend)" == "tiny11" ]]; then
+    kill_window_if_present wecom-client
+    remove_dead_window tiny11-transport
+    if ! window_exists tiny11-transport; then
+      tmux new-window -t "$SESSION" -n tiny11-transport \
+        "cd '$ROOT' && exec python3 '$TINY11_TRANSPORT' --config '$GUI_BRIDGE_CONFIG' supervise >> '$GUI_BRIDGE_LOG' 2>&1"
+    fi
+    return 0
+  fi
+  kill_window_if_present tiny11-transport
   remove_dead_window wecom-client
   if ! window_exists wecom-client; then
     tmux new-window -t "$SESSION" -n wecom-client \
@@ -282,9 +308,13 @@ ensure_gui_client_window() {
 }
 
 start_gui_bridge_window() {
+  local bridge="$GUI_BRIDGE"
+  if [[ "$(gui_backend)" == "tiny11" ]]; then
+    bridge="$TINY11_GUI_BRIDGE"
+  fi
   kill_window_if_present external-gui
   tmux new-window -t "$SESSION" -n external-gui \
-    "cd '$ROOT' && exec python3 '$GUI_BRIDGE' --config '$GUI_BRIDGE_CONFIG' loop >> '$GUI_BRIDGE_LOG' 2>&1"
+    "cd '$ROOT' && exec python3 '$bridge' --config '$GUI_BRIDGE_CONFIG' loop >> '$GUI_BRIDGE_LOG' 2>&1"
 }
 
 ensure_gui_windows() {

@@ -893,6 +893,7 @@ class WeComGuiBridge:
         errors: list[dict[str, str]] = []
         for index, source in enumerate(paths):
             staging_dir: Path | None = None
+            staged: Path | None = None
             try:
                 path = self.validate_send_file(source)
                 stat = path.stat()
@@ -943,8 +944,17 @@ class WeComGuiBridge:
                 errors.append({"path": str(source), "error": f"{type(exc).__name__}: {str(exc)[:300]}"})
             finally:
                 if staging_dir is not None:
-                    shutil.rmtree(staging_dir, ignore_errors=True)
+                    self.cleanup_staged_file(staged_file=staged, staging_dir=staging_dir)
         return {"ok": not errors, "sent_messages": [], "sent_files": sent_files, "errors": errors}
+
+    def cleanup_staged_file(
+        self,
+        *,
+        staged_file: Path | None,
+        staging_dir: Path,
+    ) -> None:
+        del staged_file
+        shutil.rmtree(staging_dir, ignore_errors=True)
 
     def pace_gui_send(self, kind: str) -> None:
         """Space GUI attempts without making callers retry against the desktop."""
@@ -2725,6 +2735,11 @@ def ocr_identifier_confusable_key(value: str) -> str:
     return "".join("1" if char in {"1", "l", "I"} else char for char in str(value).casefold())
 
 
+def ocr_identifier_lossy_key(value: str) -> str:
+    """Model the bounded character loss commonly seen in attachment labels."""
+    return re.sub(r"1+", "1", ocr_identifier_confusable_key(value))
+
+
 def filename_identity_terms(filename: str) -> list[str]:
     path = Path(str(filename))
     stem = normalize_text(path.stem)
@@ -2749,7 +2764,13 @@ def filename_ocr_count(filename: str, ocr_text: str) -> int:
     direct = max((normalized.count(term) for term in terms), default=0)
     confusable = ocr_identifier_confusable_key(normalized)
     normalized_terms = [ocr_identifier_confusable_key(term) for term in terms]
-    return max(direct, max((confusable.count(term) for term in normalized_terms), default=0))
+    lossy = ocr_identifier_lossy_key(normalized)
+    lossy_terms = [ocr_identifier_lossy_key(term) for term in terms]
+    return max(
+        direct,
+        max((confusable.count(term) for term in normalized_terms), default=0),
+        max((lossy.count(term) for term in lossy_terms), default=0),
+    )
 
 
 def filename_matches_ocr(filename: str, ocr_text: str) -> bool:

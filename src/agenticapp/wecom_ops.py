@@ -28,6 +28,7 @@ WECOM_WORKER = TOOL_ROOT / "scripts" / "wecom_worker_loop.sh"
 EXTERNAL_CONFIG = PRIVATE / "wecom_cli_bridge.local.json"
 EXTERNAL_RUNTIME = PRIVATE / "wecom-cli-runtime"
 GUI_BRIDGE = TOOL_ROOT / "scripts" / "wecom_gui_bridge.py"
+TINY11_GUI_BRIDGE = TOOL_ROOT / "scripts" / "wecom_tiny11_gui_bridge.py"
 GUI_CONFIG = PRIVATE / "wecom_gui_bridge.local.json"
 ANDROID_BRIDGE = TOOL_ROOT / "scripts" / "wecom_android_bridge.py"
 ANDROID_CONFIG = PRIVATE / "wecom_android_bridge.local.json"
@@ -497,7 +498,14 @@ def cmd_gui(args: argparse.Namespace) -> int:
         print_payload(payload, args.json)
         return 0 if payload["ok"] else 1
 
-    command = [sys.executable, str(GUI_BRIDGE), "--config", str(GUI_CONFIG), args.action]
+    bridge = GUI_BRIDGE
+    try:
+        gui_config = json.loads(GUI_CONFIG.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        gui_config = {}
+    if str(gui_config.get("backend") or "wine").strip().casefold() == "tiny11":
+        bridge = TINY11_GUI_BRIDGE
+    command = [sys.executable, str(bridge), "--config", str(GUI_CONFIG), args.action]
     if args.action == "init":
         if args.chat:
             command.extend(["--chat", args.chat])

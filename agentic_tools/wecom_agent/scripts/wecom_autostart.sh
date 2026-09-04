@@ -68,7 +68,8 @@ repair_once() {
 status() {
   local rc=0
   "$TMUX_SUPERVISOR" status || rc=$?
-  "$TOOL_ROOT/scripts/wecom_windows_client.sh" status --json || rc=$?
+  PYTHONPATH="$ROOT/src${PYTHONPATH:+:$PYTHONPATH}" \
+    python3 -m agenticapp wecom gui status --json || rc=$?
   printf 'autostart_log=%s\n' "$LOG_FILE"
   return "$rc"
 }

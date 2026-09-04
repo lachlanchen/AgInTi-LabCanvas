@@ -2,29 +2,44 @@
 
 The GUI relay is a localhost-only transport for explicitly allowlisted external
 WeCom groups when Tencent does not grant the tenant's official `wecom-cli msg`
-permission. It controls only the isolated WeCom Wine client. It never reads or
-sends through personal WeChat.
+permission. Production uses the authenticated native WeCom client in the
+dedicated Tiny11 KVM. A legacy Wine backend remains available for recovery, but
+is not started when `backend` is `tiny11`. Neither backend reads or sends
+through personal WeChat.
 
 ## Setup and Lifecycle
 
 ```bash
-PYTHONPATH=src python -m agenticapp wecom client start --json
 PYTHONPATH=src python -m agenticapp wecom gui init --chat LabAgent
-PYTHONPATH=src python -m agenticapp wecom gui init --chat AgentTest --allow-search-fallback
 PYTHONPATH=src python -m agenticapp wecom gui restart --json
 PYTHONPATH=src python -m agenticapp wecom gui status --json
 ```
 
 The ignored config is
 `agentic_tools/wecom_agent/.private/wecom_gui_bridge.local.json`. It contains
-the exact group allowlist, display, state paths, localhost port, and bearer
-token. The client supervisor and relay run in the
-`labcanvas-wecom:wecom-client` and `labcanvas-wecom:external-gui` tmux windows
-and are restored by the normal WeCom launcher. The default viewer is:
+the exact group allowlist, backend, state paths, localhost port, bearer token,
+and ignored Tiny11 SSH/helper settings. The production transport and relay run
+in `labcanvas-wecom:tiny11-transport` and
+`labcanvas-wecom:external-gui`. The existing user service restores them after a
+reboot. The native viewer is:
 
 ```text
-http://127.0.0.1:6192/vnc.html?host=127.0.0.1&port=6192&autoconnect=1&resize=scale
+http://127.0.0.1:6143/
 ```
+
+noVNC is for human login and visual recovery only. Normal operation is:
+
+```text
+Ubuntu LabCanvas -> 127.0.0.1 SSH forward -> interactive Windows helper
+Ubuntu artifact -> SCP/SFTP + SHA-256 check -> private Windows inbox
+Windows helper -> native WeCom pointer/keyboard/clipboard -> exact chat
+```
+
+The helper binds only to Windows localhost, runs in the logged-in interactive
+session through `LabCanvas-WeCom-Bridge`, preserves the current fullscreen or
+restored window geometry, and discovers the live WeCom window each time. The
+Ubuntu relay derives native fixed-sidebar regions from the current dimensions;
+it does not depend on one saved window size.
 
 ## Stable CLI
 
@@ -107,7 +122,7 @@ outbox item or deliver worker output.
   message but GUI verification is uncertain, the next poll must not re-ingest
   the request or send the acknowledgement again.
 - Incoming grey bubbles are located visually, then read with WeCom's native
-  context-menu Copy action and `CF_UNICODETEXT` through the Wine clipboard.
+  context-menu Copy action and Unicode clipboard.
   This preserves case and digit-bearing identifiers such as `col1a1` exactly.
 - The sender label immediately above each inbound bubble is normalized into a
   private visual fingerprint. That fingerprint, rather than fallible OCR text,
@@ -118,13 +133,11 @@ outbox item or deliver worker output.
 - OCR is a bounded fallback only. Mixed, Chinese, and identifier-oriented
   passes may recover a failed copy, but OCR-derived text is never allowed to
   overwrite a successful native copy.
-- Unicode text is pasted through a native Wine clipboard helper, read back from
-  the composer, and recorded only after the composer clears on Send. Composer
-  select-all plus paste/copy are emitted in one X11 key command so Wine cannot
-  drop focus between short-lived key processes.
-- Use visible X11/VNC pointer navigation. The local Wine helper may emit normal
-  SendInput keystrokes only for the focused composer; it does not post private
-  messages into proprietary windows. Never send a blind `Escape`: it can close
+- Unicode text is pasted through the selected backend's native clipboard, read
+  back from the composer, and recorded only after the composer clears on Send.
+- Use visible native pointer and keyboard input. The helper does not inject
+  private messages into proprietary process internals. Never send a blind
+  `Escape`: it can close
   the main client or trigger another verification cycle. Context menus are
   dismissed with a neutral pointer click.
 - If Wine recognizes a visible conversation row but ignores its pointer click,
@@ -141,18 +154,13 @@ outbox item or deliver worker output.
 - The client supervisor treats every existing WeCom process as the sole owner
   of the persistent profile. Hidden/layered/security windows are not restart
   signals, and process crashes use bounded exponential relaunch backoff.
-- Files must be regular, allowlisted artifacts inside this repository. One file
-  is hard-linked or copied into a private one-file C-drive directory, selected
-  through `More -> File -> Local File`, checked by a visible filename prefix in
-  that isolated directory, and then checked by exact full-name readback from the
-  picker's `File name` field. The Wine client truncates long composer/history
-  labels, so the later checks combine the already-proven picker identity with a
-  visible filename prefix and a newly appearing attachment card; they do not
-  demand an impossible untruncated label. Typing a full path alone is not
-  selection. The relay navigates to the directory, selects its sole row, clicks
-  the picker's Send button to stage it, then separately clicks the composer's
-  Send button and verifies a new chat-history item. Drag-and-drop is not a
-  delivery fallback.
+- Files must be regular, allowlisted artifacts inside this repository. Tiny11
+  copies each file over SFTP into a task-scoped private Windows inbox, verifies
+  byte size and SHA-256 remotely, puts that exact path on the native file-drop
+  clipboard, verifies its attachment card, sends it, and verifies a newly
+  visible history card before recording delivery. Temporary Windows and Ubuntu
+  staging directories are removed afterward. The legacy Wine backend retains
+  its isolated native-picker flow.
 - Wine WeCom may ignore the X11 click that opens `More`. That single click uses
   the controlled `wecom_win32_input` `SendInput` helper. If an interrupted send
   left native pickers, document hosts, file-error `Reminder` windows, or the
@@ -237,11 +245,13 @@ same task orchestrator.
 ```bash
 tmux capture-pane -pt labcanvas-wecom:external-gui -S -120
 PYTHONPATH=src python -m agenticapp wecom gui status --json
-PYTHONPATH=src python -m agenticapp wecom client status --json
+python3 agentic_tools/wecom_agent/scripts/wecom_tiny11_transport.py \
+  --config agentic_tools/wecom_agent/.private/wecom_gui_bridge.local.json status
 PYTHONPATH=src python -m agenticapp wecom gui restart --json
 ```
 
-If `client_visible` is false, restore the Wine client and login first. A true
+If `client_visible` is false, open `http://127.0.0.1:6143/` and restore or log
+in to the native client. A true
 `client_visible` value alone is not ready state; confirm that a GUI poll opens
 and title-verifies every allowlisted chat before expecting reconnect recovery.
 If the client keeps a `device_environment_abnormal` warning but native file
@@ -251,13 +261,11 @@ clear the quarantine: text sends and inbound polling remain blocked, while each
 file must pass exact native-picker identity, composer filename, and new history
 card verification. QR-login and explicit security-verification states never
 use this fallback.
-The
-supervisor only starts the normal client against its persisted profile. It
+The supervisor only starts the dedicated VM and normal client against its
+persisted disk. It
 never invokes account-switch mode: a hidden layered window or crash is not
 proof that authentication expired, and switching can invalidate a reusable
-session. If an operator intentionally needs a fresh QR window, run the explicit
-`agentic_tools/wecom_agent/scripts/wecom_windows_client.sh login` action. If a
-chat is not visible, place it in the conversation list or enable the exact-title
+session. If a chat is not visible, place it in the conversation list or enable the exact-title
 fallback above. A pre-Send composer verification
 failure is safe to retry with the same `task_id`. A failure after clicking Send
 is reported as uncertain and is not retried automatically, preventing duplicate

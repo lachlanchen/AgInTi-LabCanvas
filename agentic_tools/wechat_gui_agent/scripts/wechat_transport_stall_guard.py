@@ -394,7 +394,11 @@ def expected_wecom_windows(snapshot: dict[str, Any]) -> tuple[list[str], list[st
     if config_enabled(ANDROID_CONFIG):
         required.append("android-relay")
     if config_enabled(GUI_CONFIG):
-        required.extend(["wecom-client", "external-gui"])
+        gui_config = read_json(GUI_CONFIG)
+        if str(gui_config.get("backend") or "wine").strip().casefold() == "tiny11":
+            required.extend(["tiny11-transport", "external-gui"])
+        else:
+            required.extend(["wecom-client", "external-gui"])
     if cli_transport_health()["required"]:
         required.append("external")
     missing = [name for name in required if not window_live(snapshot, name)]
