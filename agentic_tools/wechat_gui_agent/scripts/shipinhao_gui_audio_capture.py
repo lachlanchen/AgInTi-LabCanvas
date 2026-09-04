@@ -65,6 +65,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--player-open-timeout", type=float, default=8.0)
     parser.add_argument("--audio-stream-timeout", type=float, default=12.0)
     parser.add_argument("--expected-duration-seconds", type=float, default=0.0)
+    parser.add_argument(
+        "--recover-share-link-first",
+        action="store_true",
+        help="Try the exact native player's read-only Copy Link action before audio capture.",
+    )
     parser.add_argument("--lock-timeout", type=float, default=0.0)
     parser.add_argument("--interval", type=float, default=1.5)
     parser.add_argument("--loss-polls", type=int, default=3)
@@ -91,6 +96,7 @@ def main() -> int:
             "max_seconds": max(5.0, args.max_seconds),
             "audio_stream_timeout": max(2.0, args.audio_stream_timeout),
             "expected_duration_seconds": max(0.0, args.expected_duration_seconds),
+            "recover_share_link_first": bool(args.recover_share_link_first),
         }
         if args.chat.strip():
             cover_image = args.cover_image
@@ -126,7 +132,7 @@ def main() -> int:
         if args.chat.strip():
             result["source_chat"] = args.chat.strip()
     print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True) if args.json else result.get("manifest_path", result["status"]))
-    return 0 if result.get("status") == "verified" else 2
+    return 0 if result.get("status") in {"verified", "share_link_recovered"} else 2
 
 
 def capture_exact_card_from_chat(
@@ -149,6 +155,7 @@ def capture_exact_card_from_chat(
     max_seconds: float,
     audio_stream_timeout: float,
     expected_duration_seconds: float,
+    recover_share_link_first: bool = False,
     cover_image: Path | None = None,
 ) -> dict[str, Any]:
     """Open one source-bound card from its chat, then capture its exact player."""
@@ -214,6 +221,29 @@ def capture_exact_card_from_chat(
                 evidence=open_evidence,
             )
         try:
+            share_link_result: dict[str, Any] = {}
+            if recover_share_link_first:
+                share_link_result = recover_share_link_from_player(
+                    player=player,
+                    env=env,
+                    output_dir=output_dir,
+                    identity_terms=identity_terms,
+                    min_term_matches=min_term_matches,
+                )
+                if share_link_result.get("status") == "verified":
+                    return {
+                        "status": "share_link_recovered",
+                        "read_only": True,
+                        "public_actions": False,
+                        "visual_identity_verified": True,
+                        "source_chat": chat,
+                        "object_id": object_id,
+                        "title": title,
+                        "author": author,
+                        "share_url": share_link_result["share_url"],
+                        "share_url_sha256": share_link_result["share_url_sha256"],
+                        "card_open": open_evidence,
+                    }
             result = capture_exact_player(
                 object_id=object_id,
                 title=title,
@@ -230,6 +260,12 @@ def capture_exact_card_from_chat(
                 gui_lock_held=True,
                 player_window_id=str(player["id"]),
             )
+            if share_link_result:
+                result["share_link_recovery"] = {
+                    key: share_link_result.get(key)
+                    for key in ("status", "error_code", "menu_detected")
+                    if share_link_result.get(key) not in {None, ""}
+                }
             result["source_chat"] = chat
             result["card_open"] = open_evidence
             manifest_path = Path(str(result.get("manifest_path") or ""))
@@ -246,6 +282,142 @@ def capture_exact_card_from_chat(
         finally:
             close_channels_players(env, excluded_window_ids=main_window_ids)
             gui.focus(env, main_window)
+
+
+def recover_share_link_from_player(
+    *,
+    player: dict[str, Any],
+    env: dict[str, str],
+    output_dir: Path,
+    identity_terms: list[str],
+    min_term_matches: int,
+) -> dict[str, Any]:
+    """Copy one exact player's public share link through its native context menu."""
+
+    if not shutil.which("xclip"):
+        return {"status": "unavailable", "error_code": "clipboard_tool_missing"}
+    evidence = capture_identity_evidence(
+        player,
+        output_dir / "share-link-identity",
+        env,
+        identity_terms,
+        min_term_matches,
+    )
+    if not evidence.get("matched"):
+        return {"status": "failed", "error_code": "player_identity_mismatch"}
+
+    subprocess.run(
+        ["xclip", "-selection", "clipboard"],
+        env=env,
+        input="",
+        text=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    center_x = int(player.get("x") or 0) + int(player.get("width") or 0) // 2
+    center_y = int(player.get("y") or 0) + int(player.get("height") or 0) // 2
+    run(
+        ["xdotool", "windowfocus", str(player["id"]), "mousemove", str(center_x), str(center_y), "click", "3"],
+        env=env,
+        check=False,
+    )
+    time.sleep(0.7)
+    menu_image = output_dir / "share-link-menu.png"
+    run(["import", "-window", "root", str(menu_image)], env=env, check=False)
+    ocr = run(
+        [
+            "tesseract",
+            str(menu_image),
+            "stdout",
+            "-l",
+            "chi_sim+chi_tra+eng",
+            "--psm",
+            "11",
+            "tsv",
+        ],
+        env=env,
+        check=False,
+    )
+    candidates = copy_link_menu_candidates(ocr.stdout if ocr.returncode == 0 else "")
+    if not candidates:
+        run(["xdotool", "key", "Escape"], env=env, check=False)
+        return {
+            "status": "unavailable",
+            "error_code": "native_copy_link_action_missing",
+            "menu_detected": False,
+        }
+
+    candidate = candidates[0]
+    run(
+        [
+            "xdotool",
+            "mousemove",
+            str(int(candidate["center_x"])),
+            str(int(candidate["center_y"])),
+            "click",
+            "1",
+        ],
+        env=env,
+        check=False,
+    )
+    time.sleep(0.5)
+    clipboard = run(
+        ["xclip", "-selection", "clipboard", "-o"],
+        env=env,
+        check=False,
+    ).stdout
+    try:
+        from shipinhao_share_link_resolver import extract_share_urls
+    except ImportError:
+        scripts_dir = str(Path(__file__).resolve().parent)
+        if scripts_dir not in sys.path:
+            sys.path.insert(0, scripts_dir)
+        from shipinhao_share_link_resolver import extract_share_urls
+
+    urls = extract_share_urls(clipboard)
+    if len(urls) != 1:
+        return {
+            "status": "failed",
+            "error_code": "native_copy_link_invalid_clipboard",
+            "menu_detected": True,
+        }
+    share_url = urls[0]
+    return {
+        "status": "verified",
+        "menu_detected": True,
+        "share_url": share_url,
+        "share_url_sha256": hashlib.sha256(share_url.encode("utf-8")).hexdigest(),
+    }
+
+
+def copy_link_menu_candidates(tsv_text: str) -> list[dict[str, Any]]:
+    """Locate explicit Copy Link menu rows; never infer a click from position alone."""
+
+    rows: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+    for item in parse_tesseract_tsv_words(tsv_text):
+        key = (str(item["block_num"]), str(item["par_num"]), str(item["line_num"]))
+        rows.setdefault(key, []).append(item)
+    candidates: list[dict[str, Any]] = []
+    accepted = {"复制链接", "複製連結", "複製鏈接", "copylink"}
+    for words in rows.values():
+        words.sort(key=lambda item: int(item["left"]))
+        label = "".join(str(item["text"]) for item in words)
+        normalized = re.sub(r"[^0-9a-z\u3400-\u9fff]+", "", label.casefold())
+        if not any(value in normalized for value in accepted):
+            continue
+        left = min(int(item["left"]) for item in words)
+        top = min(int(item["top"]) for item in words)
+        right = max(int(item["left"]) + int(item["width"]) for item in words)
+        bottom = max(int(item["top"]) + int(item["height"]) for item in words)
+        candidates.append(
+            {
+                "label": label,
+                "center_x": (left + right) / 2.0,
+                "center_y": (top + bottom) / 2.0,
+            }
+        )
+    return candidates
 
 
 def open_exact_card_from_visible_history(

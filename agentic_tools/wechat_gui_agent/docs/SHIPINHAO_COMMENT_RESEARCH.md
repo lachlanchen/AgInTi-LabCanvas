@@ -45,14 +45,18 @@ Use this order for Shipinhao links/cards:
 1. Parse the WeChat shared card and save metadata from the message row.
 2. Try the exact card media URL or a matching verified native audio capture
    first, then transcribe it with `shipinhao_media_transcribe.py`.
-3. If a logged-in Channels page/runtime is available, use a `wx_channel`-style
+3. If the embedded URL expired, open the exact same-chat card, verify the
+   player title/author, and try its literal native `复制链接` action. A validated
+   copied share link is fed back to the existing resolver automatically; the
+   sender is not asked to paste it.
+4. If a logged-in Channels page/runtime is available, use a `wx_channel`-style
    comment export.
-4. Run `shipinhao_comment_intel.py` on the exported JSON.
-5. Use comments only as auxiliary evidence. Prefer comments containing Yuanbao,
+5. Run `shipinhao_comment_intel.py` on the exported JSON.
+6. Use comments only as auxiliary evidence. Prefer comments containing Yuanbao,
    transcript, summary, quoted lines, timestamps, names, links, or corrections.
-6. Do not post a comment or ask Yuanbao from the account unless the current user
+7. Do not post a comment or ask Yuanbao from the account unless the current user
    explicitly requests it.
-7. If the page, video, comments, and transcript are unavailable, say that
+8. If the page, video, comments, and transcript are unavailable, say that
    plainly and avoid a fake deep analysis.
 
 Audio/video evidence and comment evidence stay separate. A transcript JSON or

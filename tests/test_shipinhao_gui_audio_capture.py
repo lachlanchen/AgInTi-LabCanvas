@@ -76,6 +76,22 @@ class ShipinhaoGuiAudioCaptureTests(unittest.TestCase):
         self.assertEqual(len(candidates), 1)
         self.assertEqual(candidates[0]["matched_terms"], ["寒食帖"])
 
+    def test_copy_link_menu_candidate_requires_explicit_action_label(self) -> None:
+        module = load_module()
+        tsv = (
+            "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext\n"
+            "5\t1\t1\t1\t1\t1\t800\t300\t60\t24\t95\t复制\n"
+            "5\t1\t1\t1\t1\t2\t862\t300\t60\t24\t95\t链接\n"
+            "5\t1\t2\t1\t1\t1\t800\t340\t60\t24\t95\t转发\n"
+        )
+
+        candidates = module.copy_link_menu_candidates(tsv)
+
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0]["label"], "复制链接")
+        self.assertAlmostEqual(candidates[0]["center_x"], 861.0)
+        self.assertAlmostEqual(candidates[0]["center_y"], 312.0)
+
     def test_play_control_is_bound_only_to_nearby_card_identity(self) -> None:
         module = load_module()
         tsv = (

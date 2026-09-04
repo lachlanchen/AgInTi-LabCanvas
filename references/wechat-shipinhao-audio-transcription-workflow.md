@@ -5,8 +5,11 @@
 A sender does not need to create this link for a normal native Finder card.
 The card's own object ID, nonce, title, author, duration, cover, and signed
 Tencent media URL are sufficient for the primary path. The short-link resolver
-is an additional exact-source route when the incoming message itself is an
-`sph` link; it is not a prerequisite LabCanvas should push back to the user.
+is an additional exact-source route. When the embedded Tencent URL has expired,
+LabCanvas first opens the exact same-chat native card and invokes only an
+explicit `复制链接` / `Copy Link` menu row. It validates the copied
+`weixin.qq.com/sph/<token>` value before passing it to the resolver. The sender
+does not need to paste a URL manually.
 
 When the current source is `https://weixin.qq.com/sph/<token>`, use
 `agentic_tools/wechat_gui_agent/scripts/shipinhao_share_link_resolver.py` before
@@ -38,16 +41,17 @@ This workflow lets a LabCanvas worker read a WeChat Channels/Shipinhao share as 
 2. Bind the task to `objectId`, title, author, nonce ID, duration, and media URL hash.
 3. Try the allowlisted Tencent media URL with bounded download and SSRF guards.
 4. If the signed URL expired, OCR the exact card cover, translate short Chinese evidence when useful, and search a bounded set of public mirrors. Require transcript-to-cover agreement plus either duration agreement or a time-localized excerpt from a bounded longer source.
-5. If no public mirror passes, automatically open that exact card in the guarded source chat.
-6. Normalize to the latest message and scan bounded recent history. Detect the
+5. If no public mirror passes, automatically open that exact card in the guarded source chat. After visual title/author verification, right-click the native player and use `复制链接` only when OCR finds that literal menu action. Validate the clipboard and retry the normal exact-share downloader.
+6. If the native client does not expose a copy-link action or the copied link cannot resolve, keep the same source binding and continue to native audio capture; never ask the sender to manufacture the link.
+7. Normalize to the latest message and scan bounded recent history. Detect the
    green-on-white latest-message control visually because its localized text is
    not reliably OCR-readable. Match the exact cached card cover on the received
    side first; otherwise associate a play control only with nearby title/author
    OCR from the same card.
-7. Run an identity-gated local capture. Wait for or start the `WeChatAppEx` PipeWire stream once, then record while visual source identity remains valid.
-8. Stop after consecutive identity loss or the card duration upper bound, trim the source-only audio, and write `verified-capture.json` below the private object-ID cache.
-9. Transcribe with Whisper, write timestamped Markdown, and pass only the source-scoped transcript to the resumed per-chat worker agent.
-10. Send the natural summary through the guarded same-chat sender and verify `sent`, `done-sent`, and `synced` mirror states.
+8. Run an identity-gated local capture. Wait for or start the `WeChatAppEx` PipeWire stream once, then record while visual source identity remains valid.
+9. Stop after consecutive identity loss or the card duration upper bound, trim the source-only audio, and write `verified-capture.json` below the private object-ID cache.
+10. Transcribe with Whisper, write timestamped Markdown, and pass only the source-scoped transcript to the resumed per-chat worker agent.
+11. Send the natural summary through the guarded same-chat sender and verify `sent`, `done-sent`, and `synced` mirror states.
 
 ## Native Capture
 
@@ -60,6 +64,7 @@ python agentic_tools/wechat_gui_agent/scripts/shipinhao_gui_audio_capture.py \
   --author '<EXACT_AUTHOR>' \
   --chat '鏈接' \
   --expected-duration-seconds 42 \
+  --recover-share-link-first \
   --display :97 \
   --json
 ```
@@ -75,6 +80,8 @@ For an exact player already visible, omit `--chat` and supply distinctive `--ide
 - preserves cover/play candidate identity so real media targets receive the full player-open timeout;
 - selects a PipeWire output whose process binary is `WeChatAppEx` on the same display;
 - OCRs player title and footer regions without navigating or posting;
+- tries the literal native Copy Link context-menu action first, validates one
+  canonical `weixin.qq.com/sph/` link, and otherwise continues to capture;
 - records with `pw-record` while source identity remains visible;
 - detects feed auto-advance or uses duration as a bounded stop while identity checks continue;
 - stores hashes plus source identity evidence in a private manifest.

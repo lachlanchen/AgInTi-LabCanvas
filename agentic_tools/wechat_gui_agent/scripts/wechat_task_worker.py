@@ -59,6 +59,7 @@ from wechat_routines import (
 )
 from shipinhao_media_transcribe import (
     DEFAULT_CACHE_ROOT as SHIPINHAO_MEDIA_CACHE_ROOT,
+    extract_sph_share_urls,
     extract_shipinhao_media_profile,
     load_verified_capture_manifest,
 )
@@ -13152,7 +13153,26 @@ def prepare_shipinhao_media_transcript_preflight(task: dict[str, Any], artifact_
     elif native_shipinhao_capture_needed(result, profile):
         capture_result = run_automatic_shipinhao_gui_capture(task, profile)
         capture_manifest = discover_verified_shipinhao_capture(profile)
-        if capture_manifest:
+        recovered_share_urls = extract_sph_share_urls(
+            str(capture_result.get("share_url") or "")
+        )
+        if (
+            capture_result.get("status") == "share_link_recovered"
+            and len(recovered_share_urls) == 1
+        ):
+            with source_path.open("a", encoding="utf-8") as source_handle:
+                source_handle.write(f"\n{recovered_share_urls[0]}\n")
+            source_path.chmod(0o600)
+            result = run_shipinhao_media_transcriber(
+                command,
+                output_dir=output_dir,
+                timeout=timeout,
+                profile=public_profile,
+            )
+            result["native_share_link_recovery"] = safe_shipinhao_capture_result(
+                capture_result
+            )
+        elif capture_manifest:
             retry_command = command[:-1] + ["--capture-manifest", str(capture_manifest), "--json"]
             result = run_shipinhao_media_transcriber(
                 retry_command,
@@ -13250,6 +13270,7 @@ def run_automatic_shipinhao_gui_capture(task: dict[str, Any], profile: dict[str,
         f"{capture_limit:.1f}",
         "--expected-duration-seconds",
         f"{duration:.3f}",
+        "--recover-share-link-first",
         "--json",
     ]
     timeout = int(capture_limit + 360)
@@ -19668,6 +19689,7 @@ def run_deterministic_lazyedit_publish(task: dict[str, Any], autopub: dict[str, 
             metadata_prompt=metadata_prompt,
             publish_options=lazyedit_options,
             target=target,
+            authoritative_subtitle_file=exact_task_authoritative_subtitle_file(task, lazy_context),
         )
         verification = verify_lazyedit_publish_stage(video_id, platforms, target, outcome)
     message = summarize_lazyedit_publish_outcome(video_id, platforms, target, outcome, verification=verification)
@@ -19853,7 +19875,15 @@ def detect_lazyedit_publish_options(task: dict[str, Any]) -> dict[str, Any]:
     """Translate explicit chat layout requests into one-shot LazyEdit flags."""
 
     text = task_focus_text(task).casefold()
-    options: dict[str, Any] = {}
+    # The established LabCanvas publication default is visually top-to-bottom
+    # EN / JA / ZH-Hant / FR. LazyEdit accepts the reverse, bottom-to-top order.
+    # Keep the band bottom-anchored unless the current task explicitly asks for
+    # the equally valid 10% lifted presentation.
+    options: dict[str, Any] = {
+        "languages": ["fr", "zh-Hant", "ja", "en"],
+        "subtitle_band_style": "bottom_anchored",
+        "subtitle_lift_ratio": 0.0,
+    }
     no_fill = any(
         marker in text
         for marker in (
@@ -19902,6 +19932,7 @@ def run_lazyedit_publish_command(
     metadata_prompt: str,
     publish_options: dict[str, Any] | None = None,
     target: Path | None = None,
+    authoritative_subtitle_file: str = "",
 ) -> dict[str, Any]:
     timeout = float(os.environ.get("WECHAT_WORKER_LAZYEDIT_PUBLISH_TIMEOUT", "10800"))
     process_timeout = os.environ.get("WECHAT_WORKER_LAZYEDIT_PROCESS_TIMEOUT", "3600")
@@ -19913,13 +19944,21 @@ def run_lazyedit_publish_command(
         f"--video-id {video_id}",
         "--use-current-settings",
         f"--platforms {','.join(platforms)}",
-        "--correct-subtitles",
-        "--correction-source polished",
         "--no-wait",
         f"--process-timeout {process_timeout}",
         f"--publish-timeout {publish_timeout}",
         "--json",
     ]
+    if authoritative_subtitle_file:
+        command_parts.extend(
+            [
+                f"--subtitle-file {shell_quote(authoritative_subtitle_file)}",
+                "--subtitle-language zh",
+                "--no-correct-subtitles",
+            ]
+        )
+    else:
+        command_parts.extend(["--correct-subtitles", "--correction-source polished"])
     publish_options = publish_options or {}
     languages = [str(item) for item in publish_options.get("languages") or [] if str(item)]
     if languages:
@@ -20110,9 +20149,15 @@ def deterministic_existing_video_publish_poststage_result(task: dict[str, Any]) 
         },
     )
     stage = str(verification.get("stage") or "not_verified")
+    retrying_pre_remote_failure = failed_before_remote_submission(verification)
     if should_reissue_existing_video_publish(task, poststage, verification):
         outcome = run_existing_video_publish_from_poststage(task, poststage, video_id, platforms)
-        task["publish_poststage_reissue_count"] = int(task.get("publish_poststage_reissue_count") or 0) + 1
+        if retrying_pre_remote_failure:
+            task["publish_poststage_pre_remote_reissue_count"] = (
+                int(task.get("publish_poststage_pre_remote_reissue_count") or 0) + 1
+            )
+        else:
+            task["publish_poststage_reissue_count"] = int(task.get("publish_poststage_reissue_count") or 0) + 1
         task["publish_poststage_last_reissue_at"] = datetime.now().isoformat(timespec="seconds")
         task["publish_poststage_last_reissue_outcome"] = compact_publish_outcome(outcome)
         verification = verify_lazyedit_publish_stage(video_id, platforms, target, outcome)
@@ -20160,16 +20205,50 @@ def deterministic_existing_video_publish_poststage_result(task: dict[str, Any]) 
 def should_reissue_existing_video_publish(task: dict[str, Any], poststage: dict[str, Any], verification: dict[str, Any]) -> bool:
     if os.environ.get("WECHAT_WORKER_DISABLE_EXISTING_VIDEO_PUBLISH_REISSUE"):
         return False
-    if str(verification.get("stage") or "") != "no_local_job":
-        return False
     if not int_or_none(poststage.get("video_id")):
         return False
     if not poststage.get("platforms"):
         return False
-    max_reissues = int(os.environ.get("WECHAT_WORKER_EXISTING_VIDEO_PUBLISH_MAX_REISSUES", "3"))
-    if int(task.get("publish_poststage_reissue_count") or 0) >= max_reissues:
+    stage = str(verification.get("stage") or "")
+    if stage == "no_local_job":
+        max_reissues = int(os.environ.get("WECHAT_WORKER_EXISTING_VIDEO_PUBLISH_MAX_REISSUES", "3"))
+        if int(task.get("publish_poststage_reissue_count") or 0) >= max_reissues:
+            return False
+        return should_deterministic_video_publish(task)
+    if stage == "failed" and failed_before_remote_submission(verification):
+        max_reissues = int(
+            os.environ.get(
+                "WECHAT_WORKER_EXISTING_VIDEO_PUBLISH_PRE_REMOTE_MAX_REISSUES",
+                "3",
+            )
+        )
+        if int(task.get("publish_poststage_pre_remote_reissue_count") or 0) >= max_reissues:
+            return False
+        return should_deterministic_video_publish(task)
+    return False
+
+
+def failed_before_remote_submission(verification: dict[str, Any]) -> bool:
+    """Identify retryable local processing failures without risking a duplicate post."""
+
+    if str(verification.get("stage") or "") != "failed":
         return False
-    return should_deterministic_video_publish(task)
+    local_jobs = [
+        item for item in verification.get("local_jobs") or [] if isinstance(item, dict)
+    ]
+    if not local_jobs:
+        return False
+    if any(
+        normalized_status(item.get("status")) not in {"failed", "error"}
+        or bool(item.get("remote_job_id"))
+        or bool(item.get("remote_status"))
+        for item in local_jobs
+    ):
+        return False
+    remote_jobs = [
+        item for item in verification.get("remote_jobs") or [] if isinstance(item, dict)
+    ]
+    return not any(item for item in remote_jobs if item)
 
 
 def run_existing_video_publish_from_poststage(
@@ -20196,7 +20275,31 @@ def run_existing_video_publish_from_poststage(
             else ((task.get("preflight") or {}).get("lazyedit_options") or {})
         ),
         target=target,
+        authoritative_subtitle_file=exact_task_authoritative_subtitle_file(task, lazy_context),
     )
+
+
+def exact_task_authoritative_subtitle_file(
+    task: dict[str, Any],
+    lazy_context: dict[str, Any] | None = None,
+) -> str:
+    """Return a source-scoped reviewed SRT for a failed transcription/polish recovery."""
+
+    artifact_dir = Path(
+        str(task.get("artifact_dir") or worker_artifact_dir(task))
+    ).expanduser().resolve()
+    configured = str((lazy_context or {}).get("authoritative_subtitle_file") or "").strip()
+    candidates = [Path(configured).expanduser()] if configured else []
+    candidates.append(artifact_dir / "authoritative_subtitles.srt")
+    for candidate in candidates:
+        try:
+            resolved = candidate.resolve()
+            resolved.relative_to(artifact_dir)
+            if resolved.suffix.lower() == ".srt" and resolved.is_file() and resolved.stat().st_size > 0:
+                return str(resolved)
+        except (OSError, ValueError):
+            continue
+    return ""
 
 
 def verify_lazyedit_publish_stage(video_id: int, platforms: list[str], target: Path, outcome: dict[str, Any]) -> dict[str, Any]:

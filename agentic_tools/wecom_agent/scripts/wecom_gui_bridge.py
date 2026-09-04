@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from difflib import SequenceMatcher
 import fcntl
 import hashlib
@@ -247,6 +247,9 @@ def initialize_config(
         ),
         "file_send_min_interval_seconds": bounded_float(
             existing.get("file_send_min_interval_seconds"), 30.0, 0.0, 900.0
+        ),
+        "same_text_dedup_seconds": bounded_float(
+            existing.get("same_text_dedup_seconds"), 300.0, 0.0, 3600.0
         ),
         "composer_input_backend": (
             "native"
@@ -856,6 +859,28 @@ class WeComGuiBridge:
         for index, chunk in enumerate(chunks):
             delivery_key = short_hash(f"{chat}:{task_id}:{index}:{chunk}")
             if delivery_done(self.state_db, delivery_key, chat):
+                continue
+            prior_delivery_key = recent_content_delivery_key(
+                self.state_db,
+                chat,
+                chunk,
+                within_seconds=bounded_float(
+                    getattr(self, "config", {}).get("same_text_dedup_seconds"),
+                    300.0,
+                    0.0,
+                    3600.0,
+                ),
+            )
+            if prior_delivery_key:
+                remember_delivery(self.state_db, delivery_key, chat, chunk)
+                sent.append(
+                    {
+                        "bytes": len(chunk.encode("utf-8")),
+                        "verified": True,
+                        "deduplicated": True,
+                        "prior_delivery_key": prior_delivery_key,
+                    }
+                )
                 continue
             self.pace_gui_send("text")
             self.ensure_chat(chat)
@@ -2485,6 +2510,29 @@ def remember_delivery(path: Path, key: str, chat: str, text: str) -> None:
             "INSERT OR REPLACE INTO deliveries(delivery_key, chat_name, content_hash, sent_at) VALUES (?, ?, ?, ?)",
             (key, chat, short_hash(text), now_iso()),
         )
+
+
+def recent_content_delivery_key(
+    path: Path,
+    chat: str,
+    text: str,
+    *,
+    within_seconds: float,
+) -> str:
+    """Return a recent verified same-chat delivery with identical content."""
+    if within_seconds <= 0:
+        return ""
+    cutoff = (datetime.now() - timedelta(seconds=within_seconds)).isoformat(
+        timespec="seconds"
+    )
+    with sqlite3.connect(path) as conn:
+        row = conn.execute(
+            "SELECT delivery_key FROM deliveries "
+            "WHERE chat_name = ? AND content_hash = ? AND sent_at >= ? "
+            "ORDER BY sent_at DESC LIMIT 1",
+            (chat, short_hash(text), cutoff),
+        ).fetchone()
+    return str(row[0]) if row else ""
 
 
 def set_runtime(path: Path, key: str, value: str) -> None:

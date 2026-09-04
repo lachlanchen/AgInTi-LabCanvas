@@ -3828,6 +3828,58 @@ class WeComAgentBridgeTests(unittest.TestCase):
             ["clipboard", "composer:ctrl+a,ctrl+v"],
         )
 
+    def test_gui_text_delivery_deduplicates_same_recent_content_across_tasks(self) -> None:
+        module = load_gui_bridge()
+        with tempfile.TemporaryDirectory() as temporary:
+            state_db = Path(temporary) / "state.sqlite"
+            module.init_state_db(state_db)
+            first_key = module.short_hash("LabAgent:task-1:0:same reply")
+            module.remember_delivery(state_db, first_key, "LabAgent", "same reply")
+            bridge = object.__new__(module.WeComGuiBridge)
+            bridge.state_db = state_db
+            bridge.config = {"same_text_dedup_seconds": 300}
+            bridge.pace_gui_send = mock.Mock()
+            bridge.ensure_chat = mock.Mock()
+
+            result = bridge.send_text_locked(
+                "LabAgent", "same reply", task_id="task-2"
+            )
+            second_key = module.short_hash("LabAgent:task-2:0:same reply")
+
+            self.assertTrue(module.delivery_done(state_db, second_key, "LabAgent"))
+            self.assertTrue(result["sent_messages"][0]["deduplicated"])
+            self.assertEqual(
+                result["sent_messages"][0]["prior_delivery_key"], first_key
+            )
+            bridge.pace_gui_send.assert_not_called()
+            bridge.ensure_chat.assert_not_called()
+
+    def test_gui_text_delivery_allows_same_content_after_dedup_window(self) -> None:
+        module = load_gui_bridge()
+        with tempfile.TemporaryDirectory() as temporary:
+            state_db = Path(temporary) / "state.sqlite"
+            module.init_state_db(state_db)
+            first_key = module.short_hash("LabAgent:task-1:0:same reply")
+            module.remember_delivery(state_db, first_key, "LabAgent", "same reply")
+            sent_at = (datetime.now() - timedelta(minutes=10)).isoformat(
+                timespec="seconds"
+            )
+            with sqlite3.connect(state_db) as conn:
+                conn.execute(
+                    "UPDATE deliveries SET sent_at = ? WHERE delivery_key = ?",
+                    (sent_at, first_key),
+                )
+
+            self.assertEqual(
+                module.recent_content_delivery_key(
+                    state_db,
+                    "LabAgent",
+                    "same reply",
+                    within_seconds=300,
+                ),
+                "",
+            )
+
     def test_gui_file_delivery_uses_verified_native_picker(self) -> None:
         module = load_gui_bridge()
         with tempfile.TemporaryDirectory() as temporary:

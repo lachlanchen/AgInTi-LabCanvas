@@ -62,6 +62,11 @@ curl -fsS http://127.0.0.1:18787/api/ui-settings/logo_settings | jq .
 - Use `--correction-prompt-file` for full transcript/story context and
   `--metadata-prompt-file` for a short public-facing brief. Do not pass a full
   script as metadata context.
+- Unless the current chat explicitly requests another language set, use the
+  established four-line stack: visually top-to-bottom English, Japanese,
+  Traditional Chinese, French. LazyEdit expects bottom-to-top CLI order, so
+  pass `--languages fr,zh-Hant,ja,en`. Default to the bottom-anchored variant
+  with `--subtitle-lift-ratio 0`; an explicit lifted variant may use `0.1`.
 - Generated-video LazyEdit runs must prefer the worker-created
   `lazyedit_correction_context.md` and `lazyedit_metadata_brief.md` from
   `task.preflight.lazyedit_context`; story/prompt files from the browser monitor

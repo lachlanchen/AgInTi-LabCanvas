@@ -3975,6 +3975,71 @@ stderr: noisy internal trace
         capture.assert_called_once()
         self.assertTrue(result["native_capture_fallback"]["visual_identity_verified"])
 
+    def test_shipinhao_media_preflight_retries_native_copied_share_link(self) -> None:
+        worker = load_worker()
+        exact_card = (
+            "<finderFeed><objectId><![CDATA[exact-object-123]]></objectId>"
+            "<nickname><![CDATA[Exact Creator]]></nickname><desc><![CDATA[Exact subject]]></desc>"
+            "<mediaList><media><videoPlayDuration><![CDATA[42]]></videoPlayDuration>"
+            "<url><![CDATA[http://wxapp.tc.qq.com/video?id=expired]]></url></media></mediaList></finderFeed>"
+        )
+        task = {
+            "id": "shipinhao-native-share-link",
+            "chat": "鏈接",
+            "source": {"local_id": 77, "kind": "file/link", "local_type": 219043332145},
+            "routine": {"id": "research_summary"},
+            "request": f"Current coalesced request:\nsummarize this video\n\nRecent history:\n{exact_card}",
+            "context": [{"local_id": 77, "content": exact_card}],
+        }
+        calls: list[list[str]] = []
+        source_texts: list[str] = []
+
+        def fake_transcriber(command, *, output_dir, timeout, profile):
+            calls.append(list(command))
+            source_path = Path(command[command.index("--source-text-file") + 1])
+            source_texts.append(source_path.read_text(encoding="utf-8"))
+            if len(calls) == 1:
+                return {
+                    "status": "failed",
+                    "failure_stage": "download",
+                    "read_only": True,
+                    "profile": profile,
+                }
+            return {
+                "status": "transcribed",
+                "agent_context_path": str(output_dir / "shipinhao-audio-transcript.md"),
+                "read_only": True,
+            }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(
+                worker, "run_shipinhao_media_transcriber", side_effect=fake_transcriber
+            ), mock.patch.object(
+                worker,
+                "run_automatic_shipinhao_gui_capture",
+                return_value={
+                    "status": "share_link_recovered",
+                    "visual_identity_verified": True,
+                    "source_chat": "鏈接",
+                    "share_url": "https://weixin.qq.com/sph/Ae2UMH6gqr",
+                },
+            ) as capture, mock.patch.object(
+                worker,
+                "discover_verified_shipinhao_capture",
+                side_effect=[None, None],
+            ):
+                result = worker.prepare_shipinhao_media_transcript_preflight(task, Path(tmp))
+
+        self.assertEqual(result["status"], "transcribed")
+        self.assertEqual(len(calls), 2)
+        self.assertNotIn("weixin.qq.com/sph", source_texts[0])
+        self.assertIn("https://weixin.qq.com/sph/Ae2UMH6gqr", source_texts[1])
+        capture.assert_called_once()
+        self.assertEqual(
+            result["native_share_link_recovery"]["status"],
+            "share_link_recovered",
+        )
+
     def test_automatic_shipinhao_capture_passes_card_duration(self) -> None:
         worker = load_worker()
         task = {"chat": "鏈接"}
@@ -4003,6 +4068,7 @@ stderr: noisy internal trace
         command = run.call_args.args[0]
         self.assertIn("--expected-duration-seconds", command)
         self.assertEqual(command[command.index("--expected-duration-seconds") + 1], "42.500")
+        self.assertIn("--recover-share-link-first", command)
         self.assertEqual(result["error_code"], "finder_player_unavailable")
         self.assertTrue(result["source_card_found"])
 
@@ -12377,16 +12443,16 @@ stderr: noisy internal trace
         self.assertEqual(options["subtitle_band_style"], "lifted")
         self.assertEqual(options["subtitle_lift_ratio"], 0.1)
 
-    def test_lazyedit_publish_options_leave_silent_layout_on_studio_settings(self) -> None:
+    def test_lazyedit_publish_options_default_to_four_bottom_anchored_languages(self) -> None:
         worker = load_worker()
 
         options = worker.detect_lazyedit_publish_options(
-            {"request": "Publish with English, Japanese, Chinese, and French subtitles"}
+            {"request": "Publish this video with corrected subtitles and metadata"}
         )
 
         self.assertEqual(options["languages"], ["fr", "zh-Hant", "ja", "en"])
-        self.assertNotIn("subtitle_band_style", options)
-        self.assertNotIn("subtitle_lift_ratio", options)
+        self.assertEqual(options["subtitle_band_style"], "bottom_anchored")
+        self.assertEqual(options["subtitle_lift_ratio"], 0.0)
 
     def test_lazyedit_publish_command_applies_one_shot_layout_options(self) -> None:
         worker = load_worker()
@@ -12413,6 +12479,50 @@ stderr: noisy internal trace
         self.assertIn("--languages 'fr,zh-Hant,ja,en'", command)
         self.assertIn("--portrait-blur-fill", command)
         self.assertIn("--subtitle-lift-ratio 0", command)
+
+    def test_lazyedit_publish_command_uses_exact_task_authoritative_subtitles(self) -> None:
+        worker = load_worker()
+        captured: list[list[str]] = []
+
+        def fake_run(command: list[str], **_: object) -> dict[str, object]:
+            captured.append(command)
+            return {"ok": True, "status": "submitted"}
+
+        with mock.patch.object(worker, "run_lazyedit_publish_subprocess", side_effect=fake_run):
+            worker.run_lazyedit_publish_command(
+                video_id=558,
+                platforms=["shipinhao", "youtube", "instagram"],
+                correction_prompt="/tmp/correction.md",
+                metadata_prompt="/tmp/metadata.md",
+                authoritative_subtitle_file="/tmp/authoritative_subtitles.srt",
+            )
+
+        command = captured[0][2]
+        self.assertIn("--subtitle-file '/tmp/authoritative_subtitles.srt'", command)
+        self.assertIn("--subtitle-language zh", command)
+        self.assertIn("--no-correct-subtitles", command)
+        self.assertNotIn("--correct-subtitles", command)
+
+    def test_authoritative_subtitle_recovery_is_limited_to_exact_task_artifacts(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            artifact_dir = Path(temp_dir) / "task"
+            artifact_dir.mkdir()
+            subtitle = artifact_dir / "authoritative_subtitles.srt"
+            subtitle.write_text("1\n00:00:00,000 --> 00:00:01,000\ntext\n", encoding="utf-8")
+            task = {"id": "publish-558", "artifact_dir": str(artifact_dir)}
+
+            self.assertEqual(
+                worker.exact_task_authoritative_subtitle_file(task, {}),
+                str(subtitle.resolve()),
+            )
+            self.assertEqual(
+                worker.exact_task_authoritative_subtitle_file(
+                    task,
+                    {"authoritative_subtitle_file": str(Path(temp_dir) / "outside.srt")},
+                ),
+                str(subtitle.resolve()),
+            )
 
     def test_publish_agent_prompt_is_compact_and_source_scoped(self) -> None:
         worker = load_worker()
@@ -12797,6 +12907,114 @@ stderr: noisy internal trace
         self.assertEqual(payload["publish_stage"]["stage"], "publish_running")
         self.assertIn("publish_poststage_retry", payload)
         self.assertIn("publish_reissue", payload)
+
+    def test_publish_poststage_retries_failed_processing_before_remote_submission(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            artifact_dir = Path(tmp) / "task"
+            artifact_dir.mkdir()
+            subtitle = artifact_dir / "authoritative_subtitles.srt"
+            subtitle.write_text(
+                "1\n00:00:00,000 --> 00:00:01,000\nreviewed\n",
+                encoding="utf-8",
+            )
+            task = {
+                "id": "publish-task",
+                "artifact_dir": str(artifact_dir),
+                "status": worker.CLAIMED_STATUS,
+                "request": "Current coalesced request:\npublish this video to YouTube",
+                "route_decision": {
+                    "route_kind": "publish_video",
+                    "public_publish_allowed": True,
+                },
+                "existing_video_publish_poststage": {
+                    "kind": "existing_video_publish",
+                    "video_id": 558,
+                    "platforms": ["youtube"],
+                    "target": str(Path(tmp) / "exact_COMPLETED.mp4"),
+                },
+                "publish_poststage_reissue_count": 3,
+            }
+            failed = {
+                "verified": False,
+                "stage": "failed",
+                "local_jobs": [
+                    {
+                        "id": 399,
+                        "video_id": 558,
+                        "status": "failed",
+                        "platforms": ["youtube"],
+                        "error": "translation failed",
+                    }
+                ],
+                "remote_jobs": [{}],
+            }
+            running = {
+                "verified": False,
+                "stage": "publish_running",
+                "local_jobs": [
+                    {
+                        "id": 400,
+                        "video_id": 558,
+                        "status": "running",
+                        "platforms": ["youtube"],
+                    }
+                ],
+                "remote_jobs": [{}],
+            }
+
+            with mock.patch.object(
+                worker,
+                "verify_lazyedit_publish_stage",
+                side_effect=[failed, running],
+            ), mock.patch.object(
+                worker,
+                "run_existing_video_publish_from_poststage",
+                return_value={"ok": True, "status": "submitted"},
+            ) as publish:
+                raw = worker.deterministic_existing_video_publish_poststage_result(task)
+
+        payload = json.loads(raw or "{}")
+        publish.assert_called_once()
+        self.assertEqual(task["publish_poststage_reissue_count"], 3)
+        self.assertEqual(task["publish_poststage_pre_remote_reissue_count"], 1)
+        self.assertEqual(payload["publish_stage"]["stage"], "publish_running")
+
+    def test_publish_poststage_does_not_retry_failed_remote_job(self) -> None:
+        worker = load_worker()
+        verification = {
+            "verified": False,
+            "stage": "failed",
+            "local_jobs": [
+                {
+                    "id": 399,
+                    "video_id": 558,
+                    "status": "failed",
+                    "remote_job_id": "job-partial",
+                    "platforms": ["shipinhao", "youtube"],
+                }
+            ],
+            "remote_jobs": [
+                {
+                    "id": "job-partial",
+                    "status": "failed",
+                    "platforms": ["shipinhao", "youtube"],
+                }
+            ],
+        }
+        task = {
+            "request": "publish this video to shipinhao and youtube",
+            "route_decision": {
+                "route_kind": "publish_video",
+                "public_publish_allowed": True,
+            },
+        }
+        poststage = {"video_id": 558, "platforms": ["shipinhao", "youtube"]}
+
+        self.assertFalse(worker.failed_before_remote_submission(verification))
+        self.assertFalse(
+            worker.should_reissue_existing_video_publish(task, poststage, verification)
+        )
 
     def test_lazyedit_publish_command_uses_shell_stage_separators(self) -> None:
         worker = load_worker()

@@ -68,6 +68,11 @@ PYTHONPATH=src python -m agenticapp wecom gui send \
 Use a stable `task_id` for retries. Repeating the same task and exact payload
 returns success without sending a duplicate.
 
+If two separate fast-agent turns produce byte-identical text in the same chat
+within five minutes, the second component is aliased to the first verified
+delivery instead of being shown again. Configure the interval with
+`same_text_dedup_seconds`; zero disables this guard.
+
 `--allow-search-fallback` permits only exact chat-name navigation when a group
 is absent from the visible recent list. The opened title must still match
 exactly before any read or send; this does not search message content or weaken
