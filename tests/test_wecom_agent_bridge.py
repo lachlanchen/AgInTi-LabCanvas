@@ -3691,6 +3691,16 @@ class WeComAgentBridgeTests(unittest.TestCase):
             )
         )
 
+    def test_gui_filename_verifier_accepts_truncated_chinese_report_after_date(self) -> None:
+        bridge = load_gui_bridge()
+
+        self.assertTrue(
+            bridge.filename_matches_ocr(
+                "2026-09-05-类器官动态微环境与状态读出-三篇论文深度简报.pdf",
+                "2026-09-0...i@SOREEIEHE.pdf 250.5KB",
+            )
+        )
+
     def test_gui_sender_display_name_produces_stable_private_member_id(self) -> None:
         module = load_gui_bridge()
         with tempfile.TemporaryDirectory() as temporary:
@@ -3903,7 +3913,7 @@ class WeComAgentBridgeTests(unittest.TestCase):
             bridge.capture_screen = mock.Mock(return_value=root / "screen.png")
             bridge.read_chat_history_text = mock.Mock(return_value="")
             bridge.stage_send_file = mock.Mock(return_value=(staged, staging_dir))
-            bridge.composer_contains_filename = mock.Mock(return_value=True)
+            bridge.composer_contains_filename = mock.Mock(side_effect=[False, True])
             bridge.compose_staged_file_with_picker = mock.Mock(
                 return_value=root / "picker-selected.png"
             )
@@ -4000,6 +4010,46 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertIn("COMPOSE_UNVERIFIED", payload["errors"][0]["error"])
         bridge.click.assert_not_called()
         remember.assert_not_called()
+
+    def test_gui_file_delivery_resumes_verified_pending_composer_attachment(self) -> None:
+        module = load_gui_bridge()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "2026-09-05-类器官研究简报.pdf"
+            source.write_bytes(b"report")
+            staging_dir = root / "staging"
+            staging_dir.mkdir()
+            staged = staging_dir / source.name
+            staged.write_bytes(source.read_bytes())
+            state_db = root / "state.sqlite"
+            module.init_state_db(state_db)
+
+            bridge = object.__new__(module.WeComGuiBridge)
+            bridge.state_db = state_db
+            bridge.pause = 0.0
+            window = module.Window("1", 0, 0, 1000, 800)
+            bridge.ensure_chat = mock.Mock(return_value=window)
+            bridge.find_window = mock.Mock(return_value=window)
+            bridge.validate_send_file = mock.Mock(return_value=source)
+            bridge.capture_screen = mock.Mock(return_value=root / "screen.png")
+            bridge.read_chat_history_text = mock.Mock(return_value="")
+            bridge.composer_contains_filename = mock.Mock(return_value=True)
+            bridge.stage_send_file = mock.Mock(return_value=(staged, staging_dir))
+            bridge.compose_staged_file_with_picker = mock.Mock()
+            bridge.composer_keys = mock.Mock()
+            bridge.wait_for_file_in_history = mock.Mock(return_value=root / "sent.png")
+
+            with mock.patch.object(module, "delivery_done", return_value=False), mock.patch.object(
+                module, "remember_delivery"
+            ) as remember, mock.patch.object(module, "set_runtime"):
+                payload = bridge.send_files_locked("LabAgent", [source], task_id="daily-task")
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["sent_files"], [str(source)])
+        bridge.stage_send_file.assert_called_once_with(source, mock.ANY)
+        bridge.compose_staged_file_with_picker.assert_not_called()
+        bridge.composer_keys.assert_called_once_with(window, "alt+s")
+        remember.assert_called_once()
 
     def test_gui_mixed_delivery_sends_files_before_blocked_text_during_device_warning(self) -> None:
         module = load_gui_bridge()

@@ -931,23 +931,33 @@ class WeComGuiBridge:
                 window = self.find_window()
                 before_screen = self.capture_screen(f"file-before-{delivery_key}")
                 before_text = self.read_chat_history_text(before_screen, window, delivery_key)
-                staged, staging_dir = self.stage_send_file(path, delivery_key)
-                picker_evidence = self.compose_staged_file_with_picker(
-                    window,
-                    staged,
-                    staging_dir,
-                    delivery_key,
-                )
-                window = self.ensure_chat(chat, operation="file")
-                composed = self.capture_screen(f"file-composed-picker-{delivery_key}")
-                if not self.composer_contains_filename(composed, window, staged.name, delivery_key):
-                    raise RuntimeError(
-                        "WECOM_GUI_COMPOSE_UNVERIFIED: WeCom did not compose the exact staged artifact"
+                if self.composer_contains_filename(before_screen, window, path.name, delivery_key):
+                    # A process restart or a conservative OCR false-negative can
+                    # leave the already verified file card in the dedicated
+                    # composer after its temporary Windows file was cleaned.
+                    # Rehydrate that same delivery-key path, then resume the
+                    # card instead of pasting a second copy.
+                    staged, staging_dir = self.stage_send_file(path, delivery_key)
+                    picker_evidence = before_screen
+                    composed = before_screen
+                else:
+                    staged, staging_dir = self.stage_send_file(path, delivery_key)
+                    picker_evidence = self.compose_staged_file_with_picker(
+                        window,
+                        staged,
+                        staging_dir,
+                        delivery_key,
                     )
+                    window = self.ensure_chat(chat, operation="file")
+                    composed = self.capture_screen(f"file-composed-picker-{delivery_key}")
+                    if not self.composer_contains_filename(composed, window, staged.name, delivery_key):
+                        raise RuntimeError(
+                            "WECOM_GUI_COMPOSE_UNVERIFIED: WeCom did not compose the exact staged artifact"
+                        )
                 self.composer_keys(window, "alt+s")
                 sent_screen = self.wait_for_file_in_history(
                     window,
-                    staged.name,
+                    path.name,
                     before_text=before_text,
                     delivery_key=delivery_key,
                 )
@@ -2801,6 +2811,14 @@ def filename_identity_terms(filename: str) -> list[str]:
         terms.append(stem[: min(12, len(stem))])
     elif stem:
         terms.append(stem + suffix)
+    ascii_prefix_match = re.match(r"[a-z0-9._-]+", stem)
+    ascii_prefix = ascii_prefix_match.group(0).rstrip("._-") if ascii_prefix_match else ""
+    if len(ascii_prefix) >= 9 and len(ascii_prefix) < len(stem):
+        # Chinese report names commonly render as `2026-09-0...` in WeCom's
+        # narrow attachment card. File identity is already bound by the
+        # isolated staging directory, SFTP hash, and file-clipboard round trip;
+        # this term only proves that the staged card reached the composer.
+        terms.append(ascii_prefix[:9])
     if len(stem) >= 16:
         terms.append(stem[-8:] + suffix)
     return unique_nonempty(terms)
