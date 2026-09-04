@@ -47,7 +47,7 @@ def main() -> int:
         action="store_true",
         help="Allow GUI screenshot crop fallback for the newest row. Off by default to avoid capturing later chat replies.",
     )
-    parser.add_argument("--model", default=os.environ.get("WECHAT_IMAGE_READ_MODEL", "gpt-5.5"))
+    parser.add_argument("--model", default=os.environ.get("WECHAT_IMAGE_READ_MODEL", "gpt-5.6-sol"))
     parser.add_argument("--reasoning-effort", default=os.environ.get("WECHAT_IMAGE_READ_EFFORT", "low"))
     parser.add_argument("--json", action="store_true", help="Print machine-readable output.")
     args = parser.parse_args()

@@ -8838,6 +8838,172 @@ stderr: noisy internal trace
         self.assertIn("这是论文里的系统图", context)
         self.assertNotIn("<img", context)
 
+    def test_image_reader_uses_codex_without_calling_localllm_when_successful(self) -> None:
+        worker = load_worker()
+        codex_result = {
+            "status": "ok",
+            "provider": "codex",
+            "text_preview": "这是一张清晰的实验装置图。",
+        }
+
+        with mock.patch.object(
+            worker,
+            "codex_read_image_file",
+            return_value=codex_result,
+        ) as codex_read, mock.patch.object(
+            worker,
+            "localllm_read_image_file",
+        ) as local_read:
+            result = worker.read_image_file_with_fallback(
+                Path("source.png"),
+                Path("image_text"),
+                prompt_context="解释实验装置。",
+            )
+
+        self.assertEqual(result, codex_result)
+        codex_read.assert_called_once()
+        local_read.assert_not_called()
+
+    def test_image_reader_falls_back_to_localllm_api_after_codex_failure(self) -> None:
+        worker = load_worker()
+        local_result = {
+            "status": "ok",
+            "provider": "localllm",
+            "model": "localllm-vision",
+            "text_preview": "图中展示了一个光学传感器模块。",
+        }
+
+        with mock.patch.object(
+            worker,
+            "codex_read_image_file",
+            return_value={"status": "timeout", "text_preview": ""},
+        ), mock.patch.object(
+            worker,
+            "localllm_read_image_file",
+            return_value=local_result,
+        ) as local_read:
+            result = worker.read_image_file_with_fallback(
+                Path("source.png"),
+                Path("image_text"),
+            )
+
+        local_read.assert_called_once()
+        self.assertEqual(result["provider"], "localllm")
+        self.assertEqual(result["fallback_from"]["provider"], "codex")
+        self.assertEqual(result["fallback_from"]["status"], "timeout")
+
+    def test_localllm_image_reader_uses_openai_compatible_vision_api(self) -> None:
+        worker = load_worker()
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return json.dumps(
+                    {
+                        "choices": [
+                            {
+                                "message": {
+                                    "content": "这是一张包含中英文标签的光路示意图。"
+                                }
+                            }
+                        ]
+                    },
+                    ensure_ascii=False,
+                ).encode("utf-8")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            image = root / "diagram.png"
+            image.write_bytes(b"\x89PNG\r\n\x1a\nfixture")
+            with mock.patch.dict(
+                worker.os.environ,
+                {
+                    "WECHAT_LOCALLLM_API_BASE": "http://127.0.0.1:8008/v1",
+                    "WECHAT_LOCALLLM_API_KEY": "private-test-key",
+                    "WECHAT_LOCALLLM_VISION_MODEL": "localllm-vision",
+                },
+                clear=False,
+            ), mock.patch.object(
+                worker.urllib.request,
+                "urlopen",
+                return_value=FakeResponse(),
+            ) as urlopen:
+                result = worker.localllm_read_image_file(
+                    image,
+                    root / "image_text",
+                    prompt_context="这是论文里的系统图。",
+                )
+
+            request = urlopen.call_args.args[0]
+            payload = json.loads(request.data.decode("utf-8"))
+            image_url = payload["messages"][0]["content"][1]["image_url"]["url"]
+            saved_text = Path(result["text_path"]).read_text(encoding="utf-8")
+
+        self.assertEqual(request.full_url, "http://127.0.0.1:8008/v1/chat/completions")
+        self.assertEqual(request.get_header("Authorization"), "Bearer private-test-key")
+        self.assertEqual(payload["model"], "localllm-vision")
+        self.assertFalse(payload["stream"])
+        self.assertTrue(image_url.startswith("data:image/png;base64,"))
+        self.assertIn("Nearby same-chat context", payload["messages"][0]["content"][0]["text"])
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["provider"], "localllm")
+        self.assertIn("光路示意图", saved_text)
+
+    def test_localllm_image_reader_rejects_non_loopback_api(self) -> None:
+        worker = load_worker()
+        with mock.patch.dict(
+            worker.os.environ,
+            {"WECHAT_LOCALLLM_API_BASE": "https://example.com/v1"},
+            clear=False,
+        ):
+            with self.assertRaisesRegex(ValueError, "loopback"):
+                worker.localllm_vision_endpoint()
+
+    def test_localllm_image_reader_converts_non_web_image_before_api_call(self) -> None:
+        worker = load_worker()
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return b'{"choices":[{"message":{"content":"converted"}}]}'
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source.tiff"
+            converted = root / "source.png"
+            source.write_bytes(b"tiff-fixture")
+            converted.write_bytes(b"\x89PNG\r\n\x1a\nconverted")
+            with mock.patch.object(
+                worker,
+                "prepare_ocr_input_image",
+                return_value=converted,
+            ) as convert, mock.patch.object(
+                worker.urllib.request,
+                "urlopen",
+                return_value=FakeResponse(),
+            ) as urlopen:
+                result = worker.localllm_read_image_file(
+                    source,
+                    root / "image_text",
+                )
+
+            payload = json.loads(urlopen.call_args.args[0].data.decode("utf-8"))
+            image_url = payload["messages"][0]["content"][1]["image_url"]["url"]
+
+        convert.assert_called_once_with(source, root / "image_text")
+        self.assertTrue(image_url.startswith("data:image/png;base64,"))
+        self.assertEqual(result["status"], "ok")
+
     def test_media_resolution_preflight_prefers_decoded_image_and_exposes_task_copy(self) -> None:
         worker = load_worker()
         import wechat_mirror  # type: ignore

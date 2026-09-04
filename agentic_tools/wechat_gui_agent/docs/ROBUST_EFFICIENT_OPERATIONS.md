@@ -588,9 +588,13 @@ The stable interface and recovery commands are documented in
 - Bare uploads with no explicit instruction are still work: route them to
   `file_intake`, sync/copy the exact source into
   `output/wechat_worker/<task-id>/intake/`, and record metadata plus checksum.
-  Raster images are automatically read with Codex vision
-  (`WECHAT_IMAGE_READ_MODEL=gpt-5.5`, `WECHAT_IMAGE_READ_EFFORT=low`) and OCR.
-  The vision turn must respond like a normal multimodal Codex conversation:
+  Raster images are automatically read with Codex vision first
+  (`WECHAT_IMAGE_READ_MODEL=gpt-5.6-sol`, `WECHAT_IMAGE_READ_EFFORT=low`) and OCR.
+  If Codex times out, fails, or returns no useful text, call the sibling
+  LocalLLM OpenAI-compatible API on loopback with `localllm-vision`. Configure
+  it with `WECHAT_LOCALLLM_API_BASE`, `WECHAT_LOCALLLM_VISION_MODEL`, and a
+  private API key or key file; never expose that credential in task evidence.
+  The vision turn must respond like a normal multimodal agent conversation:
   explain what the image shows or means, using nearby same-chat context when
   useful. Do not send raw OCR blocks, reader/model diagnostics, dimensions,
   checksums, or a fixed caption schema unless the user explicitly asks for

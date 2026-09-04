@@ -532,13 +532,22 @@ output/wechat_worker/<task-id>/image_text/
 ```
 
 The manifest and worker prompt include the OCR transcript path and preview as
-private evidence. The user-facing answer comes from semantic Codex vision and
-should read like a normal explanation of the image, without OCR labels,
-reader/model diagnostics, or a fixed caption template. For an explicit exact
-transcription request, use the transcript as supporting evidence, then inspect
+private evidence. The user-facing answer comes from semantic vision: Codex is
+called first, and a timeout, failure, or empty result falls back to the
+loopback-only OpenAI-compatible API from the sibling LocalLLM project using the
+`localllm-vision` alias. The answer should read like a normal explanation of
+the image, without OCR labels, reader/model diagnostics, or a fixed caption
+template. For an explicit exact transcription request, use the transcript as
+supporting evidence, then inspect
 the copied image itself or visible fallback crop if OCR is empty. If the
 manifest remains empty after sync plus GUI cache probe, stop with a
 source-limited missing-media response instead of choosing a nearby old download.
+
+The LocalLLM fallback reads `WECHAT_LOCALLLM_API_KEY`,
+`LOCALLLM_API_KEY`, an explicitly configured key file, or the sibling
+`../LocalLLM/.env` without putting credentials in argv, logs, manifests, or
+chat. `WECHAT_LOCALLLM_API_BASE` defaults to
+`http://127.0.0.1:8008/v1`; non-loopback endpoints are rejected.
 
 For exact WeChat video tasks:
 

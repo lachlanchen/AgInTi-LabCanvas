@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import copy
 from datetime import datetime, timedelta
 import hashlib
@@ -143,6 +144,11 @@ DEFAULT_SEND_FAILURE_HISTORY_LIMIT = 20
 DEFAULT_CHAT_MESSAGE_PART_CHARS = 1200
 DEFAULT_CHAT_MESSAGE_MAX_PARTS = 3
 DEFAULT_SHIPINHAO_DELIVERY_MAX_BYTES = 25 * 1024 * 1024
+DEFAULT_LOCALLLM_VISION_API_BASE = "http://127.0.0.1:8008/v1"
+DEFAULT_LOCALLLM_VISION_MODEL = "localllm-vision"
+# Base64 expansion must remain below LocalLLM's 25 MiB JSON request cap.
+DEFAULT_LOCALLLM_VISION_MAX_BYTES = 18 * 1024 * 1024
+LOCALLLM_VISION_IMAGE_SUFFIXES = {".gif", ".jpeg", ".jpg", ".png", ".webp"}
 DEFAULT_GENERATED_VIDEO_POLL_BACKOFF_SECONDS = 5 * 60
 DEFAULT_GENERATED_VIDEO_WATCH_POLLS_PER_CYCLE = 1
 DEFAULT_GENERATED_VIDEO_LAZYEDIT_TIMEOUT_SECONDS = 6 * 60 * 60
@@ -15383,7 +15389,7 @@ def enrich_media_resolution_copies_with_image_read(
             item["ocr"] = {"status": "skipped", "reason": metadata.get("status") or "image_unreadable"}
             continue
         if not isinstance(item.get("vision"), dict):
-            item["vision"] = codex_read_image_file(
+            item["vision"] = read_image_file_with_fallback(
                 path,
                 artifact_dir / "image_text",
                 prompt_context=prompt_context,
@@ -15505,21 +15511,7 @@ def ocr_image_file(path: Path, output_dir: Path) -> dict[str, Any]:
     }
 
 
-def codex_read_image_file(
-    path: Path,
-    output_dir: Path,
-    *,
-    prompt_context: str = "",
-) -> dict[str, Any]:
-    if os.environ.get("WECHAT_WORKER_DISABLE_CODEX_IMAGE_READ"):
-        return {"status": "skipped", "reason": "disabled"}
-    if shutil.which("codex") is None:
-        return {"status": "skipped", "reason": "codex_missing"}
-    output_dir.mkdir(parents=True, exist_ok=True)
-    text_path = unique_intake_target(output_dir, f"{path.stem}.vision.txt", index=1)
-    model = os.environ.get("WECHAT_IMAGE_READ_MODEL", "gpt-5.5")
-    effort = os.environ.get("WECHAT_IMAGE_READ_EFFORT", "low")
-    timeout = float(os.environ.get("WECHAT_IMAGE_READ_TIMEOUT", "90"))
+def image_read_prompt(prompt_context: str = "") -> tuple[str, bool]:
     context = collapse_context_text(prompt_context, max_len=1800)
     context_block = f"\n\nNearby same-chat context:\n{context}" if context else ""
     prompt = (
@@ -15537,6 +15529,74 @@ def codex_read_image_file(
         "visible word when a meaningful explanation is more useful, and do not invent unreadable details."
         f"{context_block}"
     )
+    return prompt, bool(context)
+
+
+def image_vision_result_is_usable(result: dict[str, Any]) -> bool:
+    return bool(
+        str(result.get("status") or "") == "ok"
+        and str(result.get("text_preview") or "").strip()
+    )
+
+
+def read_image_file_with_fallback(
+    path: Path,
+    output_dir: Path,
+    *,
+    prompt_context: str = "",
+) -> dict[str, Any]:
+    codex_result = codex_read_image_file(
+        path,
+        output_dir,
+        prompt_context=prompt_context,
+    )
+    if image_vision_result_is_usable(codex_result):
+        return codex_result
+    localllm_result = localllm_read_image_file(
+        path,
+        output_dir,
+        prompt_context=prompt_context,
+    )
+    if image_vision_result_is_usable(localllm_result):
+        localllm_result["fallback_from"] = {
+            "provider": "codex",
+            "status": str(codex_result.get("status") or "unknown"),
+        }
+        return localllm_result
+    return {
+        "status": "failed",
+        "provider": "vision_chain",
+        "text_preview": "",
+        "attempts": [
+            {
+                "provider": "codex",
+                "status": str(codex_result.get("status") or "unknown"),
+            },
+            {
+                "provider": "localllm",
+                "status": str(localllm_result.get("status") or "unknown"),
+                "reason": str(localllm_result.get("reason") or "")[:120],
+            },
+        ],
+    }
+
+
+def codex_read_image_file(
+    path: Path,
+    output_dir: Path,
+    *,
+    prompt_context: str = "",
+) -> dict[str, Any]:
+    if os.environ.get("WECHAT_WORKER_DISABLE_CODEX_IMAGE_READ"):
+        return {"status": "skipped", "reason": "disabled"}
+    if shutil.which("codex") is None:
+        return {"status": "skipped", "reason": "codex_missing"}
+    output_dir.mkdir(parents=True, exist_ok=True)
+    text_path = unique_intake_target(output_dir, f"{path.stem}.vision.txt", index=1)
+    model = os.environ.get("WECHAT_IMAGE_READ_MODEL", "gpt-5.6-sol")
+    effort = os.environ.get("WECHAT_IMAGE_READ_EFFORT", "low")
+    timeout = float(os.environ.get("WECHAT_IMAGE_READ_TIMEOUT", "90"))
+    prompt, context_used = image_read_prompt(prompt_context)
     command = [
         "codex",
         "exec",
@@ -15570,10 +15630,196 @@ def codex_read_image_file(
         "text_preview": collapse_context_text(text, max_len=700),
         "model": model,
         "reasoning_effort": effort,
+        "provider": "codex",
         "response_style": "natural_semantic",
-        "context_used": bool(context),
+        "context_used": context_used,
         "returncode": proc.returncode,
         "stderr": collapse_context_text(proc.stderr, max_len=500) if proc.stderr.strip() else "",
+    }
+
+
+def localllm_api_key() -> str:
+    for env_name in ("WECHAT_LOCALLLM_API_KEY", "LOCALLLM_API_KEY"):
+        value = str(os.environ.get(env_name) or "").strip()
+        if value:
+            return value
+    for env_name in ("WECHAT_LOCALLLM_API_KEY_FILE", "LOCALLLM_API_KEY_FILE"):
+        raw_path = str(os.environ.get(env_name) or "").strip()
+        if not raw_path:
+            continue
+        try:
+            value = Path(raw_path).expanduser().read_text(encoding="utf-8").strip()
+        except OSError:
+            continue
+        if value:
+            return value
+
+    env_path = Path(
+        os.environ.get(
+            "WECHAT_LOCALLLM_ENV_FILE",
+            str(ROOT.parent / "LocalLLM" / ".env"),
+        )
+    ).expanduser()
+    try:
+        lines = env_path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return "local-dev-key"
+    for raw_line in lines:
+        line = raw_line.strip()
+        if line.startswith("export "):
+            line = line[7:].lstrip()
+        if not line.startswith("LOCALLLM_API_KEY="):
+            continue
+        value = line.split("=", 1)[1].strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+            value = value[1:-1]
+        return value or "local-dev-key"
+    return "local-dev-key"
+
+
+def localllm_vision_endpoint() -> str:
+    base = str(
+        os.environ.get("WECHAT_LOCALLLM_API_BASE")
+        or os.environ.get("LOCALLLM_API_BASE")
+        or DEFAULT_LOCALLLM_VISION_API_BASE
+    ).strip().rstrip("/")
+    parsed = urllib.parse.urlparse(base)
+    if parsed.scheme != "http" or parsed.hostname not in {"127.0.0.1", "localhost", "::1"}:
+        raise ValueError("LocalLLM vision API must use a loopback HTTP endpoint")
+    if parsed.path.rstrip("/").endswith("/chat/completions"):
+        return base
+    return base + "/chat/completions"
+
+
+def image_data_url(path: Path) -> str:
+    mime = {
+        ".gif": "image/gif",
+        ".jpeg": "image/jpeg",
+        ".jpg": "image/jpeg",
+        ".png": "image/png",
+        ".webp": "image/webp",
+    }.get(path.suffix.lower())
+    if not mime:
+        raise ValueError("unsupported LocalLLM vision image format")
+    encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+    return f"data:{mime};base64,{encoded}"
+
+
+def localllm_read_image_file(
+    path: Path,
+    output_dir: Path,
+    *,
+    prompt_context: str = "",
+) -> dict[str, Any]:
+    if os.environ.get("WECHAT_WORKER_DISABLE_LOCALLLM_IMAGE_READ"):
+        return {"status": "skipped", "provider": "localllm", "reason": "disabled"}
+    if not path.is_file():
+        return {"status": "failed", "provider": "localllm", "reason": "image_missing"}
+    output_dir.mkdir(parents=True, exist_ok=True)
+    api_image_path = path
+    if path.suffix.lower() not in LOCALLLM_VISION_IMAGE_SUFFIXES:
+        api_image_path = prepare_ocr_input_image(path, output_dir)
+    try:
+        max_bytes = int(
+            os.environ.get(
+                "WECHAT_LOCALLLM_IMAGE_MAX_BYTES",
+                str(DEFAULT_LOCALLLM_VISION_MAX_BYTES),
+            )
+        )
+    except ValueError:
+        max_bytes = DEFAULT_LOCALLLM_VISION_MAX_BYTES
+    if api_image_path.stat().st_size > max_bytes:
+        return {"status": "skipped", "provider": "localllm", "reason": "image_too_large"}
+    try:
+        endpoint = localllm_vision_endpoint()
+        data_url = image_data_url(api_image_path)
+    except (OSError, ValueError) as exc:
+        return {
+            "status": "failed",
+            "provider": "localllm",
+            "reason": type(exc).__name__,
+        }
+
+    text_path = unique_intake_target(
+        output_dir,
+        f"{path.stem}.vision-localllm.txt",
+        index=1,
+    )
+    model = str(
+        os.environ.get("WECHAT_LOCALLLM_VISION_MODEL")
+        or DEFAULT_LOCALLLM_VISION_MODEL
+    ).strip()
+    timeout = float(os.environ.get("WECHAT_LOCALLLM_IMAGE_TIMEOUT", "120"))
+    prompt, context_used = image_read_prompt(prompt_context)
+    payload = json.dumps(
+        {
+            "model": model,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": data_url, "detail": "high"},
+                        },
+                    ],
+                }
+            ],
+            "stream": False,
+            "temperature": 0.2,
+        },
+        ensure_ascii=False,
+    ).encode("utf-8")
+    request = urllib.request.Request(
+        endpoint,
+        data=payload,
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {localllm_api_key()}",
+            "Content-Type": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            response_payload = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        return {
+            "status": "failed",
+            "provider": "localllm",
+            "model": model,
+            "reason": "http_error",
+            "http_status": exc.code,
+        }
+    except (OSError, TimeoutError, urllib.error.URLError, json.JSONDecodeError) as exc:
+        return {
+            "status": "failed",
+            "provider": "localllm",
+            "model": model,
+            "reason": type(exc).__name__,
+        }
+
+    choices = response_payload.get("choices") if isinstance(response_payload, dict) else None
+    first = choices[0] if isinstance(choices, list) and choices else {}
+    message = first.get("message") if isinstance(first, dict) else {}
+    content = message.get("content") if isinstance(message, dict) else ""
+    if isinstance(content, list):
+        content = "\n".join(
+            str(item.get("text") or "")
+            for item in content
+            if isinstance(item, dict) and item.get("text")
+        )
+    text = normalize_ocr_text(str(content or ""))
+    if text:
+        text_path.write_text(text + "\n", encoding="utf-8")
+    return {
+        "status": "ok" if text else "empty",
+        "text_path": str(text_path),
+        "text_preview": collapse_context_text(text, max_len=700),
+        "model": model,
+        "provider": "localllm",
+        "response_style": "natural_semantic",
+        "context_used": context_used,
     }
 
 
