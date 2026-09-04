@@ -132,6 +132,28 @@ class WeChatOpsHealthTests(unittest.TestCase):
         self.assertFalse(payload["operational"])
         self.assertFalse(payload["phone_ingress"]["other_people"]["fresh"])
 
+    def test_compact_health_accepts_desktop_ingress_when_phone_polling_is_off(self) -> None:
+        fixture = self.compact_health_fixture()
+        fixture["transport_health"]["issues"] = []
+        fixture["transport_health"]["wechat_client"] = {
+            "available": True,
+            "status": "unlocked",
+        }
+        stale = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat(
+            timespec="seconds"
+        )
+
+        payload = wechat_ops.compact_health_payload(
+            fixture,
+            notification_status={"ok": False, "routes": 6, "last_poll_at": stale},
+            self_status={"ok": False, "routes": 6, "last_poll_at": stale},
+        )
+
+        self.assertTrue(payload["operational"])
+        self.assertTrue(payload["direct_monitor_heartbeats"]["ok"])
+        self.assertFalse(payload["phone_ingress"]["other_people"]["reaches_agent"])
+        self.assertFalse(payload["phone_ingress"]["self_authored"]["reaches_agent"])
+
     def test_production_selftest_targets_resolve(self) -> None:
         for check in wechat_ops.selftest_checks_for_suite("all"):
             module_name, class_name, method_name = check["test"].rsplit(".", 2)

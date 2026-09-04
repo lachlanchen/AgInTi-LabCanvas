@@ -945,10 +945,18 @@ def compact_health_payload(
     schedules_ok = bool(schedules.get("ok"))
     queues_ok = all(item["ok"] for item in compact_queues.values())
     phone_ok = bool(notification["reaches_agent"] and self_lane["reaches_agent"])
+    client = transport.get("wechat_client")
+    client = client if isinstance(client, dict) else {}
+    desktop_ok = bool(
+        client.get("available")
+        and str(client.get("status") or "").casefold()
+        in {"ok", "ready", "unlocked"}
+        and monitor_heartbeats_ok
+    )
     operational = bool(
         schedules_ok
         and queues_ok
-        and phone_ok
+        and (desktop_ok or phone_ok)
         and int(agent_failures.get("terminal_failures") or 0) == 0
     )
     return {
