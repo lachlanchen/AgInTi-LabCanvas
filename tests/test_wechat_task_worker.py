@@ -3651,6 +3651,124 @@ stderr: noisy internal trace
         )
         self.assertEqual(task["shipinhao_delivery_synthesis"]["status"], "agent_completed")
 
+    def test_verified_shipinhao_delivery_continues_to_research_for_grounded_request(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            media = root / "lecture-clip.mp4"
+            transcript = root / "lecture-clip-transcript.txt"
+            media.write_bytes(b"verified-video")
+            transcript.write_text("时间戳转写\n[00:00] 这项研究发表于 Nature\n", encoding="utf-8")
+            task = {
+                "request": (
+                    "https://weixin.qq.com/sph/ExactLectureClip\n"
+                    "请找到视频提到的原始论文，并比较完整论文和这段视频的说法。"
+                ),
+                "route_decision": {
+                    "route_kind": "research_or_summary",
+                    "external_fact_grounding_required": True,
+                    "public_publish_allowed": False,
+                },
+                "preflight": {
+                    "shipinhao_media_transcript": {
+                        "status": "cached",
+                        "input_kind": "exact_sph_share_link",
+                        "content_identity_verified": True,
+                        "delivery_media_path": str(media),
+                        "delivery_transcript_path": str(transcript),
+                        "download_delivery": {"verified": True},
+                        "profile": {
+                            "object_id": "exact-lecture-clip",
+                            "title": "Nature 论文解读片段",
+                            "author": "研究讲堂",
+                        },
+                    }
+                },
+            }
+
+            with mock.patch.object(worker, "run_codex_session") as run_agent:
+                result = worker.run_verified_shipinhao_delivery_synthesis(
+                    task,
+                    {
+                        "model": "gpt-5.6-sol",
+                        "reasoning_effort": "medium",
+                        "sandbox": "danger-full-access",
+                    },
+                )
+
+        self.assertIsNone(result)
+        run_agent.assert_not_called()
+        self.assertTrue(task["shipinhao_extended_research"]["required"])
+        self.assertTrue(task["execution_contract"]["research_evidence"]["required"])
+        packet = worker.worker_agent_task_view(task)
+        self.assertTrue(packet["shipinhao_extended_research"]["exact_clip_is_direct_evidence"])
+
+    def test_verified_shipinhao_delivery_agent_can_escalate_an_excerpt(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            media = root / "lecture-clip.mp4"
+            transcript = root / "lecture-clip-transcript.txt"
+            media.write_bytes(b"verified-video")
+            transcript.write_text("时间戳转写\n[00:00] 完整讲座中我们还讨论了实验设计\n", encoding="utf-8")
+            task = {
+                "request": "https://weixin.qq.com/sph/ExactExcerpt\n概括这条视频号视频。",
+                "route_decision": {
+                    "route_kind": "file_download_or_save",
+                    "delivery_mode": "chat_attachment",
+                    "public_publish_allowed": False,
+                },
+                "preflight": {
+                    "shipinhao_media_transcript": {
+                        "status": "cached",
+                        "input_kind": "exact_sph_share_link",
+                        "content_identity_verified": True,
+                        "text_preview": "这是完整讲座的一个片段，涉及一篇新论文。",
+                        "delivery_media_path": str(media),
+                        "delivery_transcript_path": str(transcript),
+                        "download_delivery": {"verified": True},
+                        "profile": {
+                            "object_id": "exact-excerpt",
+                            "title": "完整讲座片段",
+                            "author": "研究讲堂",
+                        },
+                    }
+                },
+            }
+
+            agent_output = {
+                "ok": True,
+                "message": json.dumps(
+                    {
+                        "message": "",
+                        "files": [],
+                        "confirmation": "",
+                        "continue_research": True,
+                        "research_focus": "查找该片段所属完整讲座及其提到的原始论文。",
+                    },
+                    ensure_ascii=False,
+                ),
+                "backend": "codex",
+            }
+            with mock.patch.object(worker, "run_codex_session", return_value=agent_output) as run_agent:
+                result = worker.run_verified_shipinhao_delivery_synthesis(
+                    task,
+                    {
+                        "model": "gpt-5.6-sol",
+                        "reasoning_effort": "medium",
+                        "sandbox": "danger-full-access",
+                    },
+                )
+
+        self.assertIsNone(result)
+        prompt = run_agent.call_args.args[0]
+        self.assertIn("whole lecture/paper/source", prompt)
+        self.assertEqual(
+            task["shipinhao_delivery_synthesis"]["status"],
+            "continued_to_research_worker",
+        )
+        self.assertIn("原始论文", task["shipinhao_extended_research"]["focus"])
+
     def test_verified_shipinhao_artifact_recovers_from_generic_worker_no_reply(self) -> None:
         worker = load_worker()
         with tempfile.TemporaryDirectory() as tmp:
@@ -4308,6 +4426,40 @@ stderr: noisy internal trace
         policy = worker.choose_worker_policy({"request": request})
 
         self.assertEqual(policy["reasoning_effort"], "xhigh")
+
+    def test_worker_policy_uses_low_effort_for_evidence_free_ordinary_chat(self) -> None:
+        worker = load_worker()
+        task = {
+            "request": "可以，让马老师每天鼓励他一下",
+            "routine": {"id": "general_worker", "default_effort": "medium"},
+            "route_decision": {
+                "route_kind": "other_worker",
+                "message_role": "ordinary_chat",
+                "require_file_delivery": False,
+                "external_fact_grounding_required": False,
+            },
+        }
+
+        policy = worker.choose_worker_policy(task)
+
+        self.assertEqual(policy["reasoning_effort"], "low")
+
+    def test_worker_policy_keeps_grounded_chat_at_task_effort(self) -> None:
+        worker = load_worker()
+        task = {
+            "request": "这个产品现在是否用于芯片行业？",
+            "routine": {"id": "general_worker", "default_effort": "medium"},
+            "route_decision": {
+                "route_kind": "other_worker",
+                "message_role": "ordinary_chat",
+                "require_file_delivery": False,
+                "external_fact_grounding_required": True,
+            },
+        }
+
+        policy = worker.choose_worker_policy(task)
+
+        self.assertEqual(policy["reasoning_effort"], "medium")
 
     def test_worker_policy_escalates_weak_low_result(self) -> None:
         worker = load_worker()

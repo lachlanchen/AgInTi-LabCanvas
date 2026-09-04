@@ -4,6 +4,63 @@ Date: 2026-08-31
 
 Status: active engineering contract and current verification checkpoint
 
+## 2026-09-05 Conversation And Runtime Audit
+
+The active Codex rollout was inspected read-only through the supported session
+recovery tooling. It is an append-only 4.4 GB thread with 488,809 records and
+1,069 compactions. A private `0600` text-only audit outside every Git repository
+contains 1,932 genuine user messages from 2026-06-02 through 2026-09-04. The
+live rollout was not copied, rewritten, compacted, or interrupted because the
+current Codex process owns it.
+
+The full-history audit confirms that the repeated requirements are stable:
+
+- WeChat and WeCom are transports to persistent exact-chat agents, not command
+  tables or independent hardcoded assistants.
+- Consecutive messages may be coalesced, but every source item remains in the
+  ledger and must receive a disposition; later messages can interrupt an active
+  task without erasing earlier requirements.
+- Ordinary conversation should be fast and natural. Tool, evidence, artifact,
+  or research work remains durable and uses the required effort rather than
+  being weakened for speed.
+- Raw logs, internal paths, model traces, duplicate acknowledgements, and
+  repeated files never belong in recipient chat.
+- A bare uploaded video is exact-source passive intake only. Public publication
+  requires a separate current same-chat instruction and uses LazyEdit with a
+  full correction-context bundle plus a separate concise metadata brief.
+- Shipinhao cards default to exact identity recovery, verified MP4 download,
+  audio transcription, concise natural summary, and one delivery of the video
+  plus timestamped transcript. If the clip is part of a larger lecture, paper,
+  interview, or episode, the agent may continue into canonical-source research
+  while explicitly separating clip evidence from external evidence.
+- Gongzhonghao cards use full-text extraction or responsible canonical-source
+  reconstruction. Images, voice, PDF, Word, ZIP, RAR, and 7z inputs are read
+  from exact same-chat media rather than acknowledged mechanically.
+- Daily schedules are durable, idempotent, independent of conversational quiet
+  hours, and restored after reboot without replaying an old backlog. Periodic
+  inspiration and teaching remain quiet overnight.
+- Source identity, sender attribution, quote attribution, permission gates,
+  delivery idempotency, and schedule semantics are backend-independent. Model
+  quality may affect reasoning quality, but it must not make messages vanish or
+  change authorization.
+
+At this checkpoint, desktop personal WeChat is accepted as operational when it
+is unlocked and all six direct monitors have fresh heartbeats, even when
+intentional Android polling is stale. The WeChat and WeCom queues are empty,
+the career and memo daily jobs report delivered, EchoMind's six-hour scheduler
+is live, and its 06:00 previous-day PDF state is current. LabAgent's inspiration
+loop is live and correctly quiet during overnight conversational quiet hours.
+
+Two current worker changes close observed gaps:
+
+1. Evidence-free ordinary and peer conversation uses low reasoning effort, but
+   named external facts, research, files, schedules, and tool work retain their
+   normal task effort and completion gates.
+2. The exact Shipinhao delivery shortcut no longer swallows an explicit or
+   transcript-detected extended-research task. A verified clip remains direct
+   evidence, canonical follow-up research runs in the normal persistent worker,
+   and the MP4/transcript delivery survives that handoff exactly once.
+
 ## 2026-09-02 Checkpoint
 
 The two-track goal below remains active. The latest completed slice fixes a

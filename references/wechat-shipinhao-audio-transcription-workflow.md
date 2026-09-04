@@ -168,6 +168,16 @@ interruptions, route/routine state, and readable context paths. Raw Finder XML,
 signed URLs, cookies, keys, hashes, and unused media paths stay out of the model
 prompt.
 
+An exact verified MP4 and transcript normally take a bounded low-latency
+summary path. That path may hand the task to the persistent research worker
+when the current request needs evidence beyond the clip or the transcript is
+clearly an excerpt whose named lecture, paper, interview, episode, speaker, or
+current factual claim needs canonical context. The research worker receives the
+same exact-clip evidence and returns the same verified media artifacts; it must
+separate claims heard in the clip from facts learned through external sources,
+label related-but-not-identical papers as related, and never imply that a full
+source was watched or read unless it actually retrieved that source.
+
 ## Failure Rules
 
 - Reject a capture if card or player visual identity does not match.

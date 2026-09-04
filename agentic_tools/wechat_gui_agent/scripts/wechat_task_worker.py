@@ -9592,6 +9592,12 @@ def worker_agent_task_view(task: dict[str, Any]) -> dict[str, Any]:
         view["research_evidence_manifest"] = compact_worker_agent_value(
             task["research_evidence_manifest"], key="research_evidence_manifest"
         )
+    if isinstance(task.get("shipinhao_extended_research"), dict) and task.get(
+        "shipinhao_extended_research"
+    ):
+        view["shipinhao_extended_research"] = compact_worker_agent_value(
+            task["shipinhao_extended_research"], key="shipinhao_extended_research"
+        )
     if task.get("reprocess_requested_at") or task.get("reprocess_reason"):
         view["reprocess"] = {
             "requested_at": str(task.get("reprocess_requested_at") or ""),
@@ -12928,6 +12934,63 @@ def fallback_shipinhao_delivery_message(
     return f"已下载并核验{source_label}。{excerpt_note}{attachment_note}；这次没有公开发布。"
 
 
+def mark_shipinhao_extended_research(
+    task: dict[str, Any],
+    *,
+    reason: str,
+    focus: str = "",
+) -> None:
+    """Hand an exact clip to the normal research worker without losing it."""
+
+    task["shipinhao_extended_research"] = {
+        "required": True,
+        "reason": sanitize_worker_agent_text(reason, max_len=240),
+        "focus": sanitize_worker_agent_text(focus, max_len=600),
+        "exact_clip_is_direct_evidence": True,
+        "distinguish_clip_from_external_sources": True,
+        "do_not_claim_full_source_watched_without_evidence": True,
+    }
+    execution = (
+        dict(task.get("execution_contract"))
+        if isinstance(task.get("execution_contract"), dict)
+        else {}
+    )
+    evidence = (
+        dict(execution.get("research_evidence"))
+        if isinstance(execution.get("research_evidence"), dict)
+        else {}
+    )
+    evidence["required"] = True
+    evidence.setdefault("minimum_traceable_sources", 2)
+    evidence.setdefault("target_primary_or_authoritative_sources", 3)
+    evidence.setdefault("separate_direct_indirect_hypothesis", True)
+    evidence.setdefault("state_uncertainty_and_limitations", True)
+    execution["research_evidence"] = evidence
+    task["execution_contract"] = execution
+
+
+def shipinhao_request_requires_extended_research(task: dict[str, Any]) -> bool:
+    """Honor an existing research contract before taking the short reply path."""
+
+    route = task_route_decision(task)
+    execution = (
+        task.get("execution_contract")
+        if isinstance(task.get("execution_contract"), dict)
+        else {}
+    )
+    evidence = (
+        execution.get("research_evidence")
+        if isinstance(execution.get("research_evidence"), dict)
+        else {}
+    )
+    return bool(
+        route.get("external_fact_grounding_required")
+        or route.get("report_required")
+        or evidence.get("required")
+        or request_has_explicit_research_intent(task_focus_text(task))
+    )
+
+
 def run_verified_shipinhao_delivery_synthesis(
     task: dict[str, Any],
     policy: dict[str, Any],
@@ -12939,6 +13002,13 @@ def run_verified_shipinhao_delivery_synthesis(
         return None
     delivery_files = shipinhao_auto_delivery_files(task)
     if not delivery_files:
+        return None
+    if shipinhao_request_requires_extended_research(task):
+        mark_shipinhao_extended_research(
+            task,
+            reason="current request requires evidence beyond the exact clip",
+            focus=task_focus_text(task),
+        )
         return None
     profile = finder.get("profile") if isinstance(finder.get("profile"), dict) else {}
     packet = {
@@ -12959,14 +13029,16 @@ def run_verified_shipinhao_delivery_synthesis(
     prompt = f"""You are the source-grounded response step for one exact Shipinhao video shared in a LabCanvas chat.
 The deterministic routine has already resolved, downloaded, probed, and transcribed the exact source. Do not use tools, search for another source, publish anything, or ask for login. Read only the bounded packet below.
 
-Write one concise, natural reply in the requester's language. Identify the video, summarize the actual speech in one or two useful sentences, and say that the requested video and timestamped transcript are attached when those delivery flags are true. Do not mention models, private paths, IDs, checksums, internal routing, or diagnostics. Do not claim public publication; this task is read-only download and content understanding.
+Decide whether the exact clip is sufficient for a useful answer. Set `continue_research=true` only when the current request asks for evidence outside the clip, or when the transcript clearly appears to be an excerpt that names or depends on a larger lecture, paper, interview, episode, speaker, or current factual claim whose canonical context would materially improve the answer. Do not escalate a self-contained ordinary clip merely because more information could exist.
+
+When `continue_research=false`, write one concise, natural reply in the requester's language. Identify the video, summarize the actual speech in one or two useful sentences, and say that the requested video and timestamped transcript are attached when those delivery flags are true. When `continue_research=true`, keep `message` empty and put the precise evidence question in `research_focus`; the persistent research worker will continue from the exact transcript and attach the same verified files. In either case, do not mention models, private paths, IDs, checksums, internal routing, or diagnostics. Do not claim that the whole lecture/paper/source was watched or read unless it is present in the packet. Do not claim public publication; this task is read-only download and content understanding.
 
 Bounded exact-source packet:
 ```json
 {json.dumps(packet, ensure_ascii=False, indent=2)}
 ```
 
-Return JSON only: {{"message":"...","files":[],"confirmation":""}}.
+Return JSON only: {{"message":"...","files":[],"confirmation":"","continue_research":false,"research_focus":""}}.
 """
     backend = select_agent_backend(task)
     low_policy = load_worker_model_policy("low")
@@ -13005,7 +13077,24 @@ Return JSON only: {{"message":"...","files":[],"confirmation":""}}.
         )
         if not agent_result.get("ok"):
             continue
-        parsed = parse_worker_result(str(agent_result.get("message") or ""))
+        raw_agent_message = str(agent_result.get("message") or "")
+        payload = extract_worker_json_payload(raw_agent_message) or {}
+        if payload.get("continue_research") is True:
+            mark_shipinhao_extended_research(
+                task,
+                reason="exact-clip synthesis identified material external context",
+                focus=str(payload.get("research_focus") or ""),
+            )
+            task["shipinhao_delivery_synthesis"] = {
+                "status": "continued_to_research_worker",
+                "source_identity_verified": True,
+                "delivery_file_count": len(delivery_files),
+                "public_actions": False,
+                "backend_attempts": backend_attempts,
+                "completed_at": datetime.now().isoformat(timespec="seconds"),
+            }
+            return None
+        parsed = parse_worker_result(raw_agent_message)
         candidate = str(parsed.get("message") or parsed.get("confirmation") or "").strip()
         if candidate and not result_is_no_reply(parsed) and not worker_result_is_explicit_failure(candidate):
             message = candidate
@@ -21183,6 +21272,7 @@ Shipinhao/Finder and short-video shares:
   Then read the OCR Markdown before answering. It is valid evidence for visible title/comments only, not proof that the whole video was watched.
 - Do not post a comment or ask Yuanbao yourself unless the user explicitly requests that action. Reading comments is allowed; writing comments needs confirmation.
 - If local media/comments are unavailable, execute the exact title+author/object-ID reconstruction queries from the source-recovery manifest. Prefer the creator's public page, canonical linked paper/repository, transcript, and independently corroborated quoted material.
+- If `task.shipinhao_extended_research.required=true`, use the exact clip transcript as direct evidence, then identify and open the most likely canonical lecture, paper, interview, episode, speaker page, or primary source needed by its `focus`. Keep exact-clip claims separate from externally researched context, label related-but-not-identical papers as related, and never imply that a complete lecture or paper was watched/read unless that complete source was actually retrieved.
 - If the actual video, comments, transcript, or reliable public source are still unavailable, do not produce a "deep analysis" or imply you watched the video. Return a concise evidence-limited answer. Do not ask the user to verify/open a page and do not open/focus an external browser merely to clear a read gate.
 
 WeChat article / `mp.weixin.qq.com` link cards:
@@ -21462,7 +21552,9 @@ def choose_worker_policy(task: dict[str, Any]) -> dict[str, Any]:
         "高光谱",
         "高光譜",
     ]
-    if routine_id == "video_publish_existing":
+    if task_accepts_concise_conversation_result(task):
+        effort = "low"
+    elif routine_id == "video_publish_existing":
         effort = routine_effort or "medium"
     elif scheduled_daily_research and routine_id == "research_summary":
         effort = routine_effort or "xhigh"
