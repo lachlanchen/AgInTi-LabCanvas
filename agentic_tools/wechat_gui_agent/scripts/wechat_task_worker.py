@@ -5637,7 +5637,7 @@ def research_report_evidence_summary(text: str) -> dict[str, Any]:
         re.search(
             r"(?:next\s+steps?|recommended\s+(?:experiment|action|decision)|"
             r"actionable|下一步|建议实验|建議實驗|行动建议|行動建議|"
-            r"决策建议|決策建議|优先实验|優先實驗|"
+            r"行动清单|行動清單|决策建议|決策建議|优先实验|優先實驗|"
             r"(?:可执行|可執行|可操作|行动|行動|实施|實施|实验|實驗|"
             r"验证|驗證|研究)(?:的)?(?:路线|路線|路线图|路線圖|路径|路徑|"
             r"计划|計劃|方案))",

@@ -17039,6 +17039,14 @@ NVQNIF+NotoSansCJKjp-Regular-Identity-H CID Type 0C       Identity-H       yes y
 
         self.assertFalse(summary["has_actionable_next_steps"])
 
+    def test_research_pdf_accepts_action_checklist_as_next_steps(self) -> None:
+        worker = load_worker()
+        summary = worker.research_report_evidence_summary(
+            "行动清单：7 天内复现实验；14 天内根据预注册阈值作出决策。"
+        )
+
+        self.assertTrue(summary["has_actionable_next_steps"])
+
     def test_research_pdf_rejects_unresolved_and_unverified_citations(self) -> None:
         worker = load_worker()
         with tempfile.TemporaryDirectory() as tmp:
