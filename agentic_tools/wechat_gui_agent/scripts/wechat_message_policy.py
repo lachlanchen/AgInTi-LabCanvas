@@ -453,11 +453,11 @@ def recorded_android_outbound_file_echo(
         with sqlite3.connect(state_db) as conn:
             rows = conn.execute(
                 """
-                SELECT value_hash, details_json, updated_at
+                SELECT value_hash, status, details_json, updated_at
                 FROM components
                 WHERE chat = ?
                   AND kind = 'file'
-                  AND status = 'sent'
+                  AND status IN ('sent', 'sending', 'uncertain')
                 ORDER BY updated_at DESC
                 LIMIT ?
                 """,
@@ -467,7 +467,7 @@ def recorded_android_outbound_file_echo(
         return False
     source_time = float(source_epoch or 0)
     max_delta = max(1, int(window_seconds))
-    for value_hash, details_json, updated_at in rows:
+    for value_hash, status, details_json, updated_at in rows:
         try:
             details = json.loads(str(details_json or "{}"))
         except json.JSONDecodeError:
@@ -486,6 +486,11 @@ def recorded_android_outbound_file_echo(
             sent_time = datetime.fromisoformat(str(updated_at)).timestamp()
         except (TypeError, ValueError):
             continue
-        if abs(source_time - sent_time) <= max_delta:
+        status_window = (
+            max_delta
+            if str(status) == "sent"
+            else min(max_delta, IN_FLIGHT_OUTBOUND_FILE_WINDOW_SECONDS)
+        )
+        if abs(source_time - sent_time) <= status_window:
             return True
     return False

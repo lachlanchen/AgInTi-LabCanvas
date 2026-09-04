@@ -1824,6 +1824,68 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         old["create_time"] = now - 7201
         self.assertFalse(direct_chatops.is_recorded_outbound_file_echo(config, old))
 
+    def test_android_file_ledger_suppresses_exact_echo_during_native_send_race(self) -> None:
+        config = self.base_config()
+        config["allow_human_self_messages"] = True
+        config["self_message_policy"] = "human_commands"
+        config["self_messages_text_only"] = False
+        android_db = Path(self._tmpdir.name) / "wechat_android_send.sqlite"
+        config["android_send_state_db"] = str(android_db)
+        now = int(time.time())
+        checksum = "aecce71aeeb2c2a649d84269a316ab33"
+        with sqlite3.connect(android_db) as conn:
+            conn.execute(
+                "CREATE TABLE components (component_key TEXT PRIMARY KEY, task_id TEXT, "
+                "chat TEXT, kind TEXT, value_hash TEXT, status TEXT, details_json TEXT, "
+                "updated_at TEXT)"
+            )
+            conn.execute(
+                "INSERT INTO components VALUES (?,?,?,?,?,?,?,?)",
+                (
+                    "file-send-race",
+                    "task-video",
+                    "EchoMind",
+                    "file",
+                    "ca8de1b7f2c2725036096772b2853039f27bc43695ca96a05a3512fdf178a180",
+                    "sending",
+                    json.dumps(
+                        {
+                            "file_identity": {
+                                "name": "returned-video.mp4",
+                                "size_bytes": 1009879,
+                                "md5": checksum,
+                            }
+                        }
+                    ),
+                    datetime.now().isoformat(timespec="seconds"),
+                ),
+            )
+        row = self.row(
+            (
+                "[WeChat card type 74]\n"
+                "title: returned-video.mp4\n"
+                "size_bytes: 1009879\n"
+                f"md5: {checksum}"
+            ),
+            sender="self",
+            local_type=317827579953,
+            create_time=now,
+        )
+
+        self.assertEqual(
+            direct_chatops.response_skip_reason(config, {}, row),
+            "self_outbound_file_echo",
+        )
+        with sqlite3.connect(android_db) as conn:
+            conn.execute(
+                "UPDATE components SET status = 'uncertain' WHERE component_key = ?",
+                ("file-send-race",),
+            )
+        self.assertTrue(direct_chatops.is_recorded_outbound_file_echo(config, row))
+        old = dict(row)
+        old["create_time"] = now - 601
+        self.assertFalse(direct_chatops.is_recorded_outbound_file_echo(config, old))
+
     def test_recorded_outbound_file_is_not_reprocessed_as_a_self_attachment(self) -> None:
         config = self.base_config()
         config["allow_human_self_messages"] = True

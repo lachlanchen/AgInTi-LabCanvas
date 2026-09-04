@@ -107,6 +107,7 @@ class EchoMindLanguageSchedulerTests(unittest.TestCase):
         self.assertNotIn("```", document)
         self.assertIn("\\usepackage{tipa}", document)
         self.assertIn("\\usepackage{amsmath}", document)
+        self.assertIn("\\usepackage{amssymb}", document)
         self.assertIn("IPA: /tɛst/", document)
 
     def test_normalize_latex_body_unwraps_machine_response_json(self) -> None:
@@ -453,6 +454,22 @@ Romaji: Nodo ga itai node, ashita no gozen ni isha no yoyaku o shitai desu.
         self.assertEqual(result["status"], "in_progress")
         load_config.assert_not_called()
 
+    def test_daily_pdf_immediate_invocation_clears_running_phase(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            with (
+                mock.patch.object(scheduler, "STATE", tmp_path / "state.json"),
+                mock.patch.object(scheduler, "DAILY_PDF_LOCK", tmp_path / "daily.lock"),
+                mock.patch.object(scheduler.direct, "load_config", return_value={}),
+                mock.patch.object(scheduler, "run_daily_pdf", return_value=None),
+            ):
+                result = scheduler.run_daily_pdf_if_due(force=True)
+                stored = scheduler.load_state()
+
+        self.assertIsNone(result)
+        self.assertEqual(stored["scheduler_phase"], "waiting")
+        self.assertNotIn("daily_pdf_running_target_date", stored)
+
     def test_daily_pdf_contract_rejects_body_level_title_commands(self) -> None:
         body = r"\maketitle \section{Chinese 中文} Pinyin: yùyuē. English. Japanese 日本語. Grammar 语法 Vocabulary 词汇 Common mistakes 易错 Practice 练习 Romaji. \ruby{予約}{よやく}."
         body += " Substantial teaching content." * 300
@@ -773,6 +790,32 @@ Reading detail with corrected pinyin and romaji. Reading detail with corrected p
         self.assertIn("too_long", issues)
         self.assertIn("missing_inline_furigana", issues)
         self.assertIn("missing_tone_marked_pinyin", issues)
+
+    def test_periodic_editor_retries_once_in_a_fresh_session(self) -> None:
+        complete = (
+            "场景：预约。\n中文：我想预约明天。\n拼音：Wǒ xiǎng yùyuē míngtiān.\n"
+            "English: I'd like to book for tomorrow.\n"
+            "日本語：明日（あした）の予約（よやく）をしたいです。\n"
+            "Romaji: Ashita no yoyaku o shitai desu.\n"
+            "对照：三语都先表达意愿。\n易错：不要直译语序。\n"
+            "练习：改成后天。\n答案：我想预约后天。"
+        )
+        oversized = complete + ("补充说明。" * 500)
+        with mock.patch.object(
+            scheduler,
+            "run_agent_session",
+            side_effect=[{"message": oversized}, {"message": complete}],
+        ) as agent:
+            message, _result = scheduler.rewrite_periodic_lesson(
+                oversized,
+                topic="预约",
+                config={"agent_fallbacks": {}},
+                issues=["too_long"],
+            )
+
+        self.assertEqual(message, complete)
+        self.assertEqual(agent.call_count, 2)
+        self.assertFalse(agent.call_args.kwargs["reuse"])
 
     def test_periodic_prompt_requires_complete_aligned_trilingual_readings(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -80,6 +80,7 @@ ECHOMIND_SCHEDULE_SESSION = "labcanvas-echomind-language"
 CAREER_SCHEDULE_SESSION = "labcanvas-career-daily"
 ECHOMIND_INTERVAL_SECONDS = 6 * 60 * 60
 ECHOMIND_HEARTBEAT_STALE_SECONDS = 12 * 60
+ECHOMIND_DAILY_PDF_RUNNING_STALE_SECONDS = 45 * 60
 ECHOMIND_PENDING_DELIVERY_GRACE_SECONDS = 10 * 60
 ECHOMIND_DAILY_PDF_RETRY_SECONDS = 30 * 60
 HONG_KONG_TZ = ZoneInfo("Asia/Hong_Kong")
@@ -574,6 +575,12 @@ def schedule_health(
     heartbeat_at = parse_timestamp(heartbeat.get("checked_at"))
     current = now or utc_now()
     echo_heartbeat = parse_timestamp(echo_state.get("last_loop_at"))
+    echomind_phase = str(echo_state.get("scheduler_phase") or "unknown")
+    echo_stale_seconds = (
+        ECHOMIND_DAILY_PDF_RUNNING_STALE_SECONDS
+        if echomind_phase == "daily_pdf_running"
+        else ECHOMIND_HEARTBEAT_STALE_SECONDS
+    )
     career_heartbeat = parse_timestamp(career_state.get("last_loop_at"))
     echo_heartbeat_age = (
         max(0.0, (current - echo_heartbeat).total_seconds())
@@ -582,7 +589,7 @@ def schedule_health(
     )
     echomind_heartbeat_ok = (
         echo_heartbeat_age is not None
-        and echo_heartbeat_age <= ECHOMIND_HEARTBEAT_STALE_SECONDS
+        and echo_heartbeat_age <= echo_stale_seconds
     )
     pending_lesson = echo_state.get("pending_lesson")
     echomind_pending_lesson = bool(pending_lesson)
@@ -596,7 +603,6 @@ def schedule_health(
         if pending_lesson_generated_at
         else None
     )
-    echomind_phase = str(echo_state.get("scheduler_phase") or "unknown")
     pending_lesson_in_progress = bool(
         echomind_pending_lesson
         and echomind_phase == "lesson_delivery_attempt"
@@ -739,7 +745,7 @@ def schedule_health(
             "interval_seconds": interval,
             "expected_interval_seconds": ECHOMIND_INTERVAL_SECONDS,
             "heartbeat_age_seconds": int(echo_heartbeat_age) if echo_heartbeat_age is not None else None,
-            "stale_after_seconds": ECHOMIND_HEARTBEAT_STALE_SECONDS,
+            "stale_after_seconds": echo_stale_seconds,
             "phase": echomind_phase,
             "pending_delivery": echomind_delivery_pending,
             "pending_lesson": echomind_pending_lesson,

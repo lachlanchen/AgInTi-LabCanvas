@@ -12532,6 +12532,7 @@ def shipinhao_download_delivery_requested(task: dict[str, Any] | None) -> bool:
 
 
 def shipinhao_delivery_filename(profile: dict[str, Any], suffix: str = ".mp4") -> str:
+    suffix = suffix if suffix.startswith(".") else f".{suffix}"
     identity = str(profile.get("object_id") or "")[-20:]
     label = "-".join(
         value for value in (
@@ -12540,11 +12541,30 @@ def shipinhao_delivery_filename(profile: dict[str, Any], suffix: str = ".mp4") -
         )
         if value
     )
-    label = re.sub(r"[^\w.-]+", "-", label, flags=re.UNICODE).strip("-._")[:96]
-    stem = label or "shipinhao-video"
-    if identity and identity not in stem:
-        stem = f"{stem}-{identity}"
-    return f"{stem}{suffix if suffix.startswith('.') else f'.{suffix}'}"
+    label = re.sub(r"[^\w.-]+", "-", label, flags=re.UNICODE).strip("-._")
+    if identity:
+        label = label.replace(identity, "").strip("-._")
+    identity_suffix = f"-{identity}" if identity else ""
+    # Linux filenames are normally limited to 255 bytes, not characters. A
+    # Chinese Finder title can therefore pass a character limit and still fail
+    # with ENAMETOOLONG. Keep space for the stable object identity and suffix.
+    max_filename_bytes = 240
+    label_budget = max_filename_bytes - len(identity_suffix.encode("utf-8")) - len(
+        suffix.encode("utf-8")
+    )
+    stem = truncate_utf8_component(label or "shipinhao-video", label_budget)
+    return f"{stem}{identity_suffix}{suffix}"
+
+
+def truncate_utf8_component(value: str, max_bytes: int) -> str:
+    """Return a non-empty filename component bounded by UTF-8 byte length."""
+
+    budget = max(1, int(max_bytes))
+    encoded = str(value or "").encode("utf-8")
+    if len(encoded) <= budget:
+        return str(value or "")
+    shortened = encoded[:budget].decode("utf-8", errors="ignore").rstrip("-._")
+    return shortened or "media"[:budget]
 
 
 def promote_shipinhao_download_for_delivery(

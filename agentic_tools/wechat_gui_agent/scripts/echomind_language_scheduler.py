@@ -1359,6 +1359,7 @@ def daily_pdf_document(report_date: str, body: str) -> str:
 \usepackage{ruby}
 \usepackage{tipa}
 \usepackage{amsmath}
+\usepackage{amssymb}
 \usepackage[a4paper,margin=19mm]{geometry}
 \usepackage{xcolor}
 \usepackage{hyperref}
@@ -1499,10 +1500,18 @@ Bounded longitudinal learner profile from the complete exact-chat history (use
 only to personalize explanation; do not quote it or replace the previous-day source):
 {longitudinal}
 """
-    draft, result = author_daily_pdf_body(prompt, config=config)
+    draft_path = out_dir / f"{artifact_stem}.draft.texbody"
+    draft = ""
+    result: dict = {}
+    if draft_path.is_file():
+        draft = normalize_latex_body(draft_path.read_text(encoding="utf-8"))
+        if draft:
+            result = {"backend": "recovered_exact_date_draft", "model": ""}
+    if not draft:
+        draft, result = author_daily_pdf_body(prompt, config=config)
     if not draft:
         raise RuntimeError("daily EchoMind PDF agent returned no LaTeX body")
-    (out_dir / f"{artifact_stem}.draft.texbody").write_text(draft, encoding="utf-8")
+    draft_path.write_text(draft, encoding="utf-8")
     body, editor_result = review_daily_pdf_body(
         draft,
         report_date=yesterday,
@@ -1741,19 +1750,26 @@ def run_daily_pdf_if_due(
             }
         config = direct.load_config(CONFIG)
         state = load_state()
+        scheduler_heartbeat(
+            state,
+            "daily_pdf_running",
+            daily_pdf_running_target_date=daily_pdf_target_date(now),
+        )
         try:
             result = run_daily_pdf(config, state, now=now, force=force, deliver=deliver)
         except Exception as exc:
             state["last_daily_pdf_error"] = f"{type(exc).__name__}: {exc}"
             state["last_daily_pdf_error_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
-            save_state(state)
+            state.pop("daily_pdf_running_target_date", None)
+            scheduler_heartbeat(state, "daily_pdf_error")
             raise
         if result:
             if str(result.get("status") or "").startswith("skipped_"):
                 state["last_daily_pdf_outcome"] = result
             else:
                 state["last_daily_pdf_delivery"] = result
-            save_state(state)
+        state.pop("daily_pdf_running_target_date", None)
+        scheduler_heartbeat(state, "waiting")
         return result
 
 
@@ -1931,13 +1947,18 @@ def rewrite_periodic_lesson(
     issues: list[str],
 ) -> tuple[str, dict]:
     """Use a bounded editor turn instead of truncating an incomplete lesson."""
-    prompt = f"""Rewrite the EchoMind lesson below into one complete WeChat message.
+    candidate = draft
+    result: dict = {}
+    remaining = list(issues)
+    for attempt in range(2):
+        target = "500-900" if attempt == 0 else "450-700"
+        prompt = f"""Rewrite the EchoMind lesson below into one complete WeChat message.
 
 Topic: {topic}
-Contract failures: {', '.join(issues)}
+Contract failures: {', '.join(remaining)}
 
 Hard requirements:
-- 500-900 characters, never more than {PERIODIC_MAX_CHARS} characters;
+- {target} characters, never more than {PERIODIC_MAX_CHARS} characters;
 - exactly one semantically aligned example in Chinese, English, and Japanese;
 - full tone-marked pinyin for the Chinese sentence;
 - Japanese kanji with inline furigana such as 予約（よやく）, followed by romaji;
@@ -1946,28 +1967,28 @@ Hard requirements:
 - return only the finished lesson. Do not explain the edit and do not use code fences.
 
 Draft:
-{draft}
+{candidate}
 """
-    result = run_agent_session(
-        prompt,
-        backend=select_agent_backend(config),
-        chat_name="EchoMind",
-        role="scheduled_language_editor",
-        model=PERIODIC_EDITOR_MODEL,
-        reasoning_effort="low",
-        sandbox="read-only",
-        timeout_seconds=900,
-        reuse=True,
-        backend_config={"agent_fallbacks": config.get("agent_fallbacks", {})},
-    )
-    message = normalize_periodic_lesson(str(result.get("message") or ""))
-    remaining = periodic_lesson_contract_issues(message)
-    if remaining:
-        raise RuntimeError(
-            "EchoMind language editor did not satisfy delivery contract: "
-            + ",".join(remaining)
+        result = run_agent_session(
+            prompt,
+            backend=select_agent_backend(config),
+            chat_name="EchoMind",
+            role=f"scheduled_language_editor_{attempt + 1}",
+            model=PERIODIC_EDITOR_MODEL,
+            reasoning_effort="low",
+            sandbox="read-only",
+            timeout_seconds=900,
+            reuse=False,
+            backend_config={"agent_fallbacks": config.get("agent_fallbacks", {})},
         )
-    return message, result
+        candidate = normalize_periodic_lesson(str(result.get("message") or ""))
+        remaining = periodic_lesson_contract_issues(candidate)
+        if not remaining:
+            return candidate, result
+    raise RuntimeError(
+        "EchoMind language editor did not satisfy delivery contract: "
+        + ",".join(remaining)
+    )
 
 
 def deliver_pending_lesson(

@@ -903,6 +903,37 @@ class WeChatTransportStallGuardTests(unittest.TestCase):
         self.assertFalse(result["echomind"]["ok"])
         self.assertFalse(result["ok"])
 
+    def test_schedule_health_does_not_kill_bounded_daily_pdf_generation(self) -> None:
+        now = datetime(2026, 7, 22, 12, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            heartbeat = Path(tmp) / "daily.health.json"
+            heartbeat.write_text(
+                json.dumps({"checked_at": "2026-07-22T11:59:30+00:00", "status": "ok"}),
+                encoding="utf-8",
+            )
+            with (
+                mock.patch.object(guard, "tmux_session_live", return_value=True),
+                mock.patch.object(
+                    guard,
+                    "read_json",
+                    side_effect=schedule_state_reader(
+                        echo_last_loop_at="2026-07-22T11:40:00+00:00",
+                        echomind_phase="daily_pdf_running",
+                    ),
+                ),
+            ):
+                result = guard.schedule_health(
+                    labagent_heartbeat=heartbeat,
+                    now=now,
+                )
+
+        self.assertTrue(result["echomind"]["ok"])
+        self.assertEqual(
+            result["echomind"]["stale_after_seconds"],
+            guard.ECHOMIND_DAILY_PDF_RUNNING_STALE_SECONDS,
+        )
+        self.assertTrue(result["ok"])
+
     def test_schedule_health_detects_pending_echomind_daily_pdf(self) -> None:
         now = datetime(2026, 7, 22, 12, 0, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:

@@ -13483,6 +13483,29 @@ stderr: noisy internal trace
             self.assertEqual(repeated, delivered)
             self.assertEqual(len(task["delivery_artifact_aliases"]), 1)
 
+    def test_shipinhao_delivery_filename_limits_utf8_bytes(self) -> None:
+        worker = load_worker()
+        filename = worker.shipinhao_delivery_filename(
+            {
+                "author": "AI组织前沿观察",
+                "title": "一家公司真正需要的管理层级比大多数人以为的少得多" * 12,
+                "object_id": "sph-AeKt4W0z3c",
+            }
+        )
+
+        self.assertLessEqual(len(filename.encode("utf-8")), 240)
+        self.assertTrue(filename.endswith("-sph-AeKt4W0z3c.mp4"))
+
+        repeated_identity = worker.shipinhao_delivery_filename(
+            {
+                "title": ("sph-AeKt4W0z3c-超长标题" * 20),
+                "object_id": "sph-AeKt4W0z3c",
+            }
+        )
+        self.assertLessEqual(len(repeated_identity.encode("utf-8")), 240)
+        self.assertEqual(repeated_identity.count("sph-AeKt4W0z3c"), 1)
+        self.assertTrue(repeated_identity.endswith("-sph-AeKt4W0z3c.mp4"))
+
     def test_exact_inbound_file_keeps_its_original_filename(self) -> None:
         worker = load_worker()
         with tempfile.TemporaryDirectory() as tmp:
