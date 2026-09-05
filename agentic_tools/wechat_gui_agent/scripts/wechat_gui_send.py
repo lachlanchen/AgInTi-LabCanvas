@@ -17,6 +17,7 @@ import io
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import signal
 import subprocess
@@ -73,6 +74,7 @@ class WindowIdentity:
     wid: str
     title: str
     window_class: str
+    transient_for: str = ""
 
 
 @dataclass(frozen=True)
@@ -144,7 +146,7 @@ def main() -> int:
         return 0
     args.message = message
 
-    required = ["xdotool", "xclip", "import"]
+    required = ["xdotool", "xclip", "import", "xprop"]
     if not args.skip_title_guard:
         required.extend(["convert", "tesseract"])
     require_tools(*required)
@@ -660,13 +662,23 @@ def send_file_to_open_chat(
 def active_window_identity(env: dict[str, str]) -> WindowIdentity | None:
     active = run(["xdotool", "getactivewindow"], env=env, check=False).stdout.strip()
     if not active:
+        active = run(["xdotool", "getwindowfocus"], env=env, check=False).stdout.strip()
+    if not active:
         return None
     wid = active.splitlines()[-1].strip()
+    return read_window_identity(env, wid)
+
+
+def read_window_identity(env: dict[str, str], wid: str) -> WindowIdentity:
     title = run(["xdotool", "getwindowname", wid], env=env, check=False).stdout.strip()
-    window_class = run(
-        ["xdotool", "getwindowclassname", wid], env=env, check=False
-    ).stdout.strip()
-    return WindowIdentity(wid=wid, title=title, window_class=window_class)
+    properties = run(
+        ["xprop", "-id", wid, "WM_CLASS", "WM_TRANSIENT_FOR"], env=env, check=False
+    ).stdout
+    class_match = re.search(r'^WM_CLASS\([^)]*\) = (.*)$', properties, re.MULTILINE)
+    window_class = " ".join(re.findall(r'"([^"\\]*)"', class_match[1])) if class_match else ""
+    parent = re.search(r'^WM_TRANSIENT_FOR.*?window id # (0x[0-9a-fA-F]+)', properties, re.MULTILINE)
+    return WindowIdentity(wid=wid, title=title, window_class=window_class,
+                          transient_for=str(int(parent[1], 16)) if parent else "")
 
 
 def visible_window_identities(env: dict[str, str]) -> list[WindowIdentity]:
@@ -684,25 +696,22 @@ def visible_window_identities(env: dict[str, str]) -> list[WindowIdentity]:
         if not wid or wid in seen:
             continue
         seen.add(wid)
-        title = run(
-            ["xdotool", "getwindowname", wid],
-            env=env,
-            check=False,
-        ).stdout.strip()
-        window_class = run(
-            ["xdotool", "getwindowclassname", wid],
-            env=env,
-            check=False,
-        ).stdout.strip()
-        identities.append(
-            WindowIdentity(wid=wid, title=title, window_class=window_class)
-        )
+        identities.append(read_window_identity(env, wid))
     return identities
 
 
 def is_verified_file_chooser(identity: WindowIdentity | None, wechat_window: Window) -> bool:
     if identity is None or identity.wid == wechat_window.wid:
         return False
+    if identity.title.strip().casefold() in {"open", "打开", "打開"}:
+        # Qt's native chooser is simply "Open". Bind it to the exact WeChat
+        # parent; a generic title in another application is not a safe picker.
+        try:
+            main_wid = str(int(wechat_window.wid, 16 if wechat_window.wid.startswith("0x") else 10))
+        except ValueError:
+            main_wid = wechat_window.wid
+        return ("wechat" in identity.window_class.casefold().split()
+                and identity.transient_for == main_wid)
     folded = f"{identity.title}\n{identity.window_class}".casefold()
     markers = (
         "file chooser",

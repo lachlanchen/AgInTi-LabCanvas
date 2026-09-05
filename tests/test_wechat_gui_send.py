@@ -328,6 +328,44 @@ class WeChatGuiSendTests(unittest.TestCase):
 
         self.assertEqual(result, chooser)
 
+    def test_qt_open_dialog_requires_exact_wechat_parent(self):
+        module = load_wechat_gui_send()
+        main = module.Window("18874384", 0, 0, 1000, 700)
+        for identity, expected in (
+            (module.WindowIdentity("18874419", "Open", "wechat wechat", "18874384"), True),
+            (module.WindowIdentity("18874419", "Open", "wechat wechat", "123"), False),
+            (module.WindowIdentity("18874419", "Open", "chrome", "18874384"), False),
+            (module.WindowIdentity("18874419", "Open", "wechat wechat"), False),
+        ):
+            with self.subTest(identity=identity):
+                self.assertEqual(module.is_verified_file_chooser(identity, main), expected)
+
+    def test_window_identity_uses_xprop_not_unsupported_xdotool_command(self):
+        module = load_wechat_gui_send()
+        calls = []
+
+        def fake_run(command, **kwargs):
+            calls.append(command)
+            output = ('WM_CLASS(STRING) = "wechat", "wechat"\n'
+                      'WM_TRANSIENT_FOR(WINDOW): window id # 0x1200010\n') if command[0] == "xprop" else "Open"
+            return subprocess.CompletedProcess(command, 0, output, "")
+
+        with mock.patch.object(module, "run", side_effect=fake_run):
+            identity = module.read_window_identity({}, "18874419")
+        self.assertEqual(identity, module.WindowIdentity("18874419", "Open", "wechat wechat", "18874384"))
+        self.assertFalse(any("getwindowclassname" in call for call in calls))
+
+    def test_active_window_falls_back_to_input_focus_without_window_manager(self):
+        module = load_wechat_gui_send()
+        chooser = module.WindowIdentity("18874419", "Open", "wechat wechat", "18874384")
+
+        def fake_run(command, **kwargs):
+            return subprocess.CompletedProcess(command, 0, "18874419" if "getwindowfocus" in command else "", "")
+
+        with mock.patch.object(module, "run", side_effect=fake_run), \
+             mock.patch.object(module, "read_window_identity", return_value=chooser):
+            self.assertEqual(module.active_window_identity({}), chooser)
+
     def test_file_picker_return_refocuses_guarded_window_without_window_manager(self):
         module = load_wechat_gui_send()
         main = module.Window("main", 0, 0, 1000, 700)
