@@ -2,6 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd -P)"
+source "$ROOT/scripts/labcanvas_storage_gate.sh"
+labcanvas_storage_ready || exit 75
 TOOL_ROOT="$ROOT/agentic_tools/wecom_agent"
 PRIVATE_ENV="${WECOM_ENV_FILE:-$TOOL_ROOT/.private/wecom.local.env}"
 

@@ -12,6 +12,11 @@ reliability contract for invariants, token policy, state recovery, and change
 checklists. Use [`GENERATED_VIDEO_ROUTINES.md`](GENERATED_VIDEO_ROUTINES.md) for
 the fixed generated-video/LazyEdit/public-publish routine.
 
+Before restarting after disk/I/O errors, follow
+[storage failure recovery](../../../references/labcanvas-storage-failure-recovery-2026-09-06.md).
+The host-side guard must remain readable independently of the project drive.
+Never initialize new private queues to hide unavailable or corrupt state.
+
 ## Control Layers
 
 ```text

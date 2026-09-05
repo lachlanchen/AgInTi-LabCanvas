@@ -2,6 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd -P)"
+source "$ROOT/scripts/labcanvas_storage_gate.sh"
+labcanvas_storage_ready || exit 75
 PRIVATE_ENV="$ROOT/agentic_tools/wechat_gui_agent/.private/wechat_supervisor.local.env"
 if [[ -f "$PRIVATE_ENV" ]]; then
   set -a

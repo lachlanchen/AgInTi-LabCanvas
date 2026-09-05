@@ -4,6 +4,13 @@ This guide is the system contract for keeping LabCanvas WeChat automation
 durable, low-cost, and predictable. Use it when changing monitors, workers,
 media sync, generated-video workflows, LazyEdit publishing, or GUI sending.
 
+Storage readiness precedes agent or transport recovery. A dead backing device,
+I/O error, or aborted filesystem journal must not become empty queue state or
+an automatic replay. Use the independently installed host-side storage gate;
+it retains a recovery-review hold outside the project volume. See
+[storage failure recovery](../../../references/labcanvas-storage-failure-recovery-2026-09-06.md).
+An active guard service waiting for storage is not a healthy chat bridge.
+
 Source freshness is independent of monitor freshness. Check the validated
 decrypt refresh status as well as cursor/heartbeat progress: a caught-up cursor
 over stale data is not healthy intake. See

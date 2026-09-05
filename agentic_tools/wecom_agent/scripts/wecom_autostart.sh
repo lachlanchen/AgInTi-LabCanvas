@@ -2,10 +2,12 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd -P)"
+source "$ROOT/scripts/labcanvas_storage_gate.sh"
+labcanvas_storage_ready || exit 75
 TOOL_ROOT="$ROOT/agentic_tools/wecom_agent"
 TMUX_SUPERVISOR="$TOOL_ROOT/scripts/wecom_tmux.sh"
 PRIVATE_ENV="${WECOM_ENV_FILE:-$TOOL_ROOT/.private/wecom.local.env}"
-STATE_DIR="${WECOM_AUTOSTART_STATE_DIR:-$ROOT/output/wecom/autostart}"
+STATE_DIR="${WECOM_AUTOSTART_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/labcanvas/wecom-autostart}"
 STATUS_HASH="$STATE_DIR/last-status.sha256"
 LOG_FILE="$STATE_DIR/supervisor.log"
 INTERVAL="${WECOM_AUTOSTART_INTERVAL_SECONDS:-60}"
@@ -54,6 +56,7 @@ record_result() {
 
 repair_once() {
   local output rc=0
+  labcanvas_storage_ready || return 75
   wait_for_runtime || return 1
   output="$(timeout --signal=TERM --kill-after=10 "$REPAIR_TIMEOUT" \
     "$TMUX_SUPERVISOR" start 2>&1)" || rc=$?
