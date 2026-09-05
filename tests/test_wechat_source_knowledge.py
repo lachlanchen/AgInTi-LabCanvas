@@ -5,7 +5,9 @@ from pathlib import Path
 import sqlite3
 import sys
 import tempfile
+import time
 import unittest
+from unittest import mock
 
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "agentic_tools/wechat_gui_agent/scripts"
@@ -57,6 +59,24 @@ class SourceKnowledgeTests(unittest.TestCase):
         found = knowledge.knowledge_context(self.task, "请解释之前的光谱分析文章", db=self.db, char_budget=500)
         self.assertEqual(found["retrieved_chunks"], 1)
         self.assertLessEqual(len(found["items"][0]["excerpt"]), 150)
+
+    def test_locked_database_respects_lookup_timeout(self):
+        self.store()
+        with sqlite3.connect(self.db) as writer:
+            writer.execute("BEGIN EXCLUSIVE")
+            started = time.monotonic()
+            with self.assertRaises(sqlite3.OperationalError):
+                knowledge.knowledge_context(self.task, "optical", db=self.db, timeout_seconds=0.05)
+            self.assertLess(time.monotonic() - started, 1.0)
+
+    def test_lookup_closes_its_connection_after_reading(self):
+        self.store()
+        conn = sqlite3.connect(self.db)
+        with mock.patch.object(knowledge.sqlite3, "connect", return_value=conn):
+            found = knowledge.knowledge_context(self.task, "optical", db=self.db)
+        self.assertEqual(found["retrieved_chunks"], 1)
+        with self.assertRaises(sqlite3.ProgrammingError):
+            conn.execute("SELECT 1")
 
     def test_failed_or_unverified_card_does_not_become_knowledge(self):
         finder = self.task["preflight"]["shipinhao_media_transcript"]

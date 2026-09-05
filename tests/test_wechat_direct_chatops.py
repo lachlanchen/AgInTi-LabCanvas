@@ -33,6 +33,47 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self._tmpdir = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmpdir.cleanup)
         self.mirror_db = str(Path(self._tmpdir.name) / "wechat_mirror.sqlite")
+        self.knowledge_db = Path(self._tmpdir.name) / "source_knowledge.sqlite"
+        patcher = mock.patch.object(direct_chatops, "DEFAULT_SOURCE_KNOWLEDGE_DB", self.knowledge_db)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_route_and_fast_reply_receive_same_chat_source_evidence(self) -> None:
+        from wechat_source_knowledge import store_task_knowledge
+
+        root = Path(self._tmpdir.name)
+        source = root / "transcript.json"
+        source.write_text(json.dumps({"text": "Optical sensing measures spectra."}), encoding="utf-8")
+        task = {
+            "id": "earlier-task", "chat": "EchoMind", "artifact_dir": str(root),
+            "source": {"chat": "EchoMind", "local_id": 12},
+            "preflight": {"shipinhao_media_transcript": {
+                "status": "transcribed", "content_identity_verified": True,
+                "transcript_json": str(source),
+            }},
+        }
+        store_task_knowledge(task, db=self.knowledge_db, allowed_roots=[root])
+        row = self.row("Explain optical sensing again")
+        config = self.base_config()
+        prompts = [direct_chatops.build_agent_route_prompt(config, row, [row])]
+        for mode in ("echomind_language", "research"):
+            prompts.append(direct_chatops.build_codex_prompt({**config, "analysis_mode": mode}, row, ""))
+        for prompt in prompts:
+            self.assertIn("Optical sensing measures spectra.", prompt)
+            self.assertIn("not a new request", prompt)
+            self.assertIn("not proof of file delivery", prompt)
+
+        for other in ({**config, "chat_name": "Other"}, {**config, "transport": "wecom"}):
+            self.assertEqual(direct_chatops.retained_source_context(other, row["content"]), "")
+        self.assertEqual(direct_chatops.retained_source_context(
+            {**config, "source_knowledge_char_budget": 0}, "optical"), "")
+
+    def test_source_lookup_failure_does_not_block_fast_response_or_leak_error(self) -> None:
+        with mock.patch.object(direct_chatops, "knowledge_context", side_effect=sqlite3.OperationalError("private-path")):
+            prompt = direct_chatops.build_agent_route_prompt(self.base_config(), self.row("hello"), [])
+        self.assertIn("Current coalesced request:", prompt)
+        self.assertIn("lookup is unavailable", prompt)
+        self.assertNotIn("private-path", prompt)
 
     def base_config(self) -> dict[str, object]:
         return {

@@ -38,9 +38,20 @@ arbitrary model-returned file paths are not imported as source knowledge.
 
 Both Codex and AgInTi worker packets receive `same_chat_source_knowledge` when
 relevant evidence matches the current question. The source paths are private
-context, not instructions to echo files or revive old tasks. This change does
-not yet add derived-source retrieval to every fast-router or scheduler-specific
-context builder; those still have their existing history/memory integrations.
+context, not instructions to echo files or revive old tasks.
+
+The direct-chat route prompt and both normal and EchoMind fast-reply prompts
+also retrieve relevant source evidence. They use the exact configured chat and
+transport, the current question (the coalesced request for routing), and a
+read-only SQLite connection. `source_knowledge_char_budget` defaults to 3000,
+supports zero to disable, and is capped at 8000. The lookup has a 250 ms
+lock/query budget so it cannot hold up fresh chat indefinitely. A failed lookup
+leaves current-message handling available and tells the agent not to invent
+recalled source content; database diagnostics stay private. No extra model
+invocation or automatic chat send is introduced.
+
+This still does not add derived-source retrieval to every scheduler-specific
+context builder; those retain their existing history/memory integrations.
 
 For exact-task recovery without a model call or chat send:
 
@@ -140,3 +151,24 @@ periodic heartbeat sender and does not authorize repetitive progress messages.
   summary; retrieval was verified. The failed card imported zero records.
 - Chat acknowledgements and knowledge retention do not prove GUI sending works.
   Keep the unresolved client/player and delivery failures visible in health.
+- Fast-chat tests use temporary databases and prove source retrieval in routing,
+  ordinary chat, and EchoMind prompts; exact-chat/transport isolation; disabled
+  retrieval; and continued routing on a private database error. A locked SQLite
+  database test checks the lookup deadline.
+
+## Continued Live Audit
+
+An ephemeral Xlib test window on the existing WeChat display received real
+XTEST motion, button press, and release events. Its window was destroyed after
+the test and the original pointer position restored. This narrows the failure:
+the virtual input path works in that isolated test, while WeChat's native
+player/file-picker actions still fail. It does not prove the client is healthy.
+Normal single-instance activation exited without replacing the logged-in
+primary client. No client restart, profile deletion, phone control, or new GUI
+stack was performed.
+
+A later, different source link was picked up by the system, downloaded, and
+transcribed. Its source knowledge was stored automatically, including after
+file delivery failed. Its queue record remains deferred for required artifact
+delivery. Do not substitute that source for the earlier no-link card or report
+queued files as sent. The WeCom Tiny11 transport remained ready during checks.

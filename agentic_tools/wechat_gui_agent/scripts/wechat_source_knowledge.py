@@ -4,12 +4,14 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import closing
 from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
 import re
 import sqlite3
+import time
 from typing import Any
 
 
@@ -184,6 +186,7 @@ def store_task_knowledge(
 
 def knowledge_context(
     task: dict[str, Any], query: str, *, db: Path = DEFAULT_DB, char_budget: int = 5000,
+    timeout_seconds: float = 5.0,
 ) -> dict[str, Any]:
     transport, chat = task_scope(task)
     if not db.is_file() or char_budget <= 0:
@@ -196,8 +199,11 @@ def knowledge_context(
     match = " OR ".join('"' + term.replace('"', '""') + '"' for term in terms)
     if not match:
         return {}
-    with sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=5) as conn:
+    timeout_seconds = max(0.01, float(timeout_seconds))
+    deadline = time.monotonic() + timeout_seconds
+    with closing(sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=timeout_seconds)) as conn:
         conn.row_factory = sqlite3.Row
+        conn.set_progress_handler(lambda: int(time.monotonic() >= deadline), 1000)
         if not conn.execute("SELECT 1 FROM sqlite_master WHERE name='source_knowledge'").fetchone():
             return {}
         count = conn.execute("SELECT COUNT(*) FROM source_knowledge WHERE transport=? AND chat=?",
