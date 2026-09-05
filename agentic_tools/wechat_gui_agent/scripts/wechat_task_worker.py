@@ -4002,7 +4002,7 @@ def personal_wechat_delivery_transport_ready() -> bool:
 
 
 def android_text_fallback_allowed(task: dict[str, Any], result: dict[str, Any], errors: list[str]) -> bool:
-    if os.environ.get("WECHAT_WORKER_ANDROID_TEXT_FALLBACK", "1") != "1":
+    if os.environ.get("WECHAT_WORKER_ANDROID_TEXT_FALLBACK", "0") != "1":
         return False
     # Native sends must always be tied to a durable queue identity. Without
     # one, the Android sender cannot provide reliable idempotency or an audit
@@ -23904,7 +23904,7 @@ def send_message(
     message = sanitize_chat_visible_text(message)
     target = target if target is not None else guarded_send_target(chat, send_targets)
     if target:
-        transport = os.environ.get("WECHAT_WORKER_TEXT_TRANSPORT", "auto").strip().casefold()
+        transport = os.environ.get("WECHAT_WORKER_TEXT_TRANSPORT", "desktop").strip().casefold()
         if transport not in {"auto", "android", "desktop"}:
             raise RuntimeError(
                 "Unsupported WECHAT_WORKER_TEXT_TRANSPORT; expected auto, android, or desktop"
@@ -23996,7 +23996,7 @@ def send_file(
         raise ValueError(f"Refusing outbound file {file_path}: {reason}")
     target = target if target is not None else guarded_send_target(chat, send_targets)
     if target:
-        transport = os.environ.get("WECHAT_WORKER_FILE_TRANSPORT", "android").strip().casefold()
+        transport = os.environ.get("WECHAT_WORKER_FILE_TRANSPORT", "desktop").strip().casefold()
         if transport == "android":
             try:
                 run_android_wechat_sender(

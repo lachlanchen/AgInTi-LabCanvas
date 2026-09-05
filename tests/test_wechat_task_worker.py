@@ -12130,8 +12130,10 @@ stderr: noisy internal trace
         worker = load_worker()
         original_sender = worker.run_android_wechat_sender
         original_delay = worker.os.environ.get("WECHAT_WORKER_SEND_RETRY_DELAY")
+        original_transport = worker.os.environ.get("WECHAT_WORKER_FILE_TRANSPORT")
         try:
             worker.os.environ["WECHAT_WORKER_SEND_RETRY_DELAY"] = "0"
+            worker.os.environ["WECHAT_WORKER_FILE_TRANSPORT"] = "android"
 
             def fail_sender(*_args, **_kwargs):
                 raise RuntimeError("exact-chat file sender failed with exit 1")
@@ -12160,6 +12162,10 @@ stderr: noisy internal trace
                 worker.os.environ.pop("WECHAT_WORKER_SEND_RETRY_DELAY", None)
             else:
                 worker.os.environ["WECHAT_WORKER_SEND_RETRY_DELAY"] = original_delay
+            if original_transport is None:
+                worker.os.environ.pop("WECHAT_WORKER_FILE_TRANSPORT", None)
+            else:
+                worker.os.environ["WECHAT_WORKER_FILE_TRANSPORT"] = original_transport
 
         self.assertTrue(errors)
         self.assertEqual(task["status"], worker.SEND_DEFERRED_ARTIFACT_STATUS)
@@ -12188,12 +12194,16 @@ stderr: noisy internal trace
                     "expected_title": "写作 外语 挣钱",
                     "allow_search": False,
                 }
-                worker.send_file(
-                    report,
-                    "写作 外语 挣钱",
-                    tmp_path / "unused.json",
-                    target=target,
-                )
+                with mock.patch.dict(
+                    os.environ,
+                    {"WECHAT_WORKER_FILE_TRANSPORT": "android"},
+                ):
+                    worker.send_file(
+                        report,
+                        "写作 外语 挣钱",
+                        tmp_path / "unused.json",
+                        target=target,
+                    )
         finally:
             worker.run_android_wechat_sender = original_sender
             worker.run_file_bridge_subprocess = original_bridge
@@ -12232,12 +12242,16 @@ stderr: noisy internal trace
                     "expected_title": "EchoMind",
                     "allow_search": True,
                 }
-                worker.send_file(
-                    report,
-                    "EchoMind",
-                    Path(tmp) / "unused.json",
-                    target=target,
-                )
+                with mock.patch.dict(
+                    os.environ,
+                    {"WECHAT_WORKER_FILE_TRANSPORT": "android"},
+                ):
+                    worker.send_file(
+                        report,
+                        "EchoMind",
+                        Path(tmp) / "unused.json",
+                        target=target,
+                    )
         finally:
             worker.run_android_wechat_sender = original_android
             worker.run_desktop_wechat_file_sender = original_desktop
@@ -12262,13 +12276,17 @@ stderr: noisy internal trace
             with tempfile.TemporaryDirectory() as tmp:
                 report = Path(tmp) / "report.pdf"
                 report.write_bytes(b"%PDF-1.4\n")
-                with self.assertRaisesRegex(RuntimeError, "ANDROID_SEND_TIMEOUT"):
-                    worker.send_file(
-                        report,
-                        "EchoMind",
-                        Path(tmp) / "unused.json",
-                        target={"name": "EchoMind", "expected_title": "EchoMind"},
-                    )
+                with mock.patch.dict(
+                    os.environ,
+                    {"WECHAT_WORKER_FILE_TRANSPORT": "android"},
+                ):
+                    with self.assertRaisesRegex(RuntimeError, "ANDROID_SEND_TIMEOUT"):
+                        worker.send_file(
+                            report,
+                            "EchoMind",
+                            Path(tmp) / "unused.json",
+                            target={"name": "EchoMind", "expected_title": "EchoMind"},
+                        )
         finally:
             desktop = worker.run_desktop_wechat_file_sender
             worker.run_android_wechat_sender = original_android
@@ -15404,6 +15422,20 @@ stderr: noisy internal trace
         self.assertEqual(calls, ["懒人科研"])
         self.assertIn("android_text_fallback_send", task)
 
+    def test_android_text_fallback_is_opt_in(self) -> None:
+        worker = load_worker()
+        task = {"id": "reply-task", "chat": "EchoMind"}
+        result = {"message": "done", "files": []}
+        errors = ["Opened chat title guard failed for EchoMind: OCR=''."]
+
+        with mock.patch.dict(
+            os.environ,
+            {"WECHAT_WORKER_ANDROID_TEXT_FALLBACK": "0"},
+        ):
+            self.assertFalse(
+                worker.android_text_fallback_allowed(task, result, errors)
+            )
+
     def test_android_text_fallback_uses_guarded_native_sender(self) -> None:
         worker = load_worker()
         result = {
@@ -15460,9 +15492,13 @@ stderr: noisy internal trace
             }
             errors = ["WECHAT_LOCKED: desktop pre-send guard"]
 
-            self.assertFalse(worker.android_text_fallback_allowed(task, result, errors))
-            task["sent_file_paths"] = [str(report.resolve())]
-            self.assertTrue(worker.android_text_fallback_allowed(task, result, errors))
+            with mock.patch.dict(
+                os.environ,
+                {"WECHAT_WORKER_ANDROID_TEXT_FALLBACK": "1"},
+            ):
+                self.assertFalse(worker.android_text_fallback_allowed(task, result, errors))
+                task["sent_file_paths"] = [str(report.resolve())]
+                self.assertTrue(worker.android_text_fallback_allowed(task, result, errors))
 
     def test_claim_next_deferred_send_respects_backoff(self) -> None:
         worker = load_worker()
@@ -18157,6 +18193,53 @@ NVQNIF+NotoSansCJKjp-Regular-Identity-H CID Type 0C       Identity-H       yes y
         self.assertEqual(len(android_calls), 1)
         self.assertEqual(android_calls[0]["task_id"], "task-1:message:abc")
         self.assertEqual(android_calls[0]["messages"], ["done"])
+
+    def test_worker_send_message_defaults_to_desktop_only(self) -> None:
+        worker = load_worker()
+        with (
+            mock.patch.object(
+                worker,
+                "run_send_subprocess",
+                side_effect=RuntimeError("WECHAT_ENTRY_REQUIRED: log in first"),
+            ),
+            mock.patch.object(worker, "run_android_wechat_sender") as android_send,
+            mock.patch.dict(os.environ),
+        ):
+            os.environ.pop("WECHAT_WORKER_TEXT_TRANSPORT", None)
+            with self.assertRaisesRegex(RuntimeError, "WECHAT_ENTRY_REQUIRED"):
+                worker.send_message(
+                    "done",
+                    "My devices",
+                    Path("/tmp/no-targets.json"),
+                    target={"name": "My devices", "expected_title": "My devices"},
+                    task={"id": "task-1:message:abc"},
+                )
+
+        android_send.assert_not_called()
+
+    def test_worker_send_file_defaults_to_desktop_only(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            artifact = Path(tmp) / "report.pdf"
+            artifact.write_bytes(b"%PDF-1.4\n")
+            target = {"name": "My devices", "expected_title": "My devices"}
+            with (
+                mock.patch.object(worker, "run_desktop_wechat_file_sender") as desktop_send,
+                mock.patch.object(worker, "run_android_wechat_sender") as android_send,
+                mock.patch.object(worker, "record_event"),
+                mock.patch.dict(os.environ),
+            ):
+                os.environ.pop("WECHAT_WORKER_FILE_TRANSPORT", None)
+                worker.send_file(
+                    artifact,
+                    "My devices",
+                    Path("/tmp/no-targets.json"),
+                    target=target,
+                    task={"id": "task-1"},
+                )
+
+        desktop_send.assert_called_once_with(artifact, target)
+        android_send.assert_not_called()
 
     def test_worker_send_message_does_not_fallback_after_uncertain_timeout(self) -> None:
         worker = load_worker()

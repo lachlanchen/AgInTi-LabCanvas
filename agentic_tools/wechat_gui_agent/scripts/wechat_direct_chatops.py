@@ -1311,10 +1311,10 @@ def prepare_force_latest_user_burst(config: dict[str, Any], state: dict[str, Any
 def prepare_force_local_id(config: dict[str, Any], state: dict[str, Any], local_id: int) -> dict[str, Any]:
     if local_id <= 0:
         raise ValueError("Force replay local_id must be positive.")
-    rows = read_recent_history(config, local_id, limit=1)
-    selected = [row for row in rows if int(row.get("local_id") or 0) == local_id]
+    selected = read_exact_local_id_rows(config, local_id)
     if not selected:
         raise ValueError(f"No message row found for local_id={local_id} in the configured chat.")
+    selected = [selected[-1]]
     enrich_voice_rows(config, selected)
     if not is_force_replay_candidate(config, selected[0]):
         raise ValueError(f"Message local_id={local_id} is not a triggerable user row.")
@@ -1323,6 +1323,54 @@ def prepare_force_local_id(config: dict[str, Any], state: dict[str, Any], local_
         selected,
         note="Force replay of one exact chat-local row; message content intentionally not stored here.",
     )
+
+
+def read_exact_local_id_rows(
+    config: dict[str, Any],
+    local_id: int,
+) -> list[dict[str, Any]]:
+    """Resolve a chat row by local ID without assuming one database shard."""
+
+    table = str(config.get("message_table") or "")
+    if not table or local_id <= 0:
+        return []
+    contact_map = load_contact_map(DECRYPTED / "contact" / "contact.db")
+    rows: list[dict[str, Any]] = []
+    for db_path in available_message_db_paths(config):
+        if not message_db_has_table(db_path, table):
+            continue
+        try:
+            name_map = load_name_map(db_path)
+            with sqlite3.connect(db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                record = conn.execute(
+                    f"""
+                    SELECT local_id, server_id, local_type, real_sender_id, create_time,
+                           status, message_content, compress_content, WCDB_CT_message_content
+                    FROM {table}
+                    WHERE local_id = ?
+                    LIMIT 1
+                    """,
+                    (local_id,),
+                ).fetchone()
+            if record is not None:
+                rows.append(
+                    row_to_message(
+                        record,
+                        name_map,
+                        contact_map,
+                        message_db=db_path.name,
+                    )
+                )
+        except sqlite3.Error:
+            continue
+    rows.sort(
+        key=lambda item: (
+            int(item.get("create_time") or 0),
+            message_db_sort_key(str(item.get("_message_db") or "")),
+        )
+    )
+    return rows
 
 
 def prepare_force_replay_state(

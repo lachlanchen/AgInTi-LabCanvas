@@ -3330,10 +3330,12 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         }
         target["_message_db"] = "message_1.db"
         original_history = direct_chatops.read_recent_history
+        original_exact = direct_chatops.read_exact_local_id_rows
         original_read_new = direct_chatops.read_new_messages
         original_run_codex = direct_chatops.run_codex
         try:
             direct_chatops.read_recent_history = lambda *_args, **_kwargs: [target]  # type: ignore[assignment]
+            direct_chatops.read_exact_local_id_rows = lambda *_args, **_kwargs: [target]  # type: ignore[assignment]
             prepared = direct_chatops.prepare_force_local_id(config, state, 229)
             self.assertEqual(prepared["last_local_id"], 228)
             self.assertEqual(prepared["message_db_cursors"]["message_0.db"], 166)
@@ -3348,6 +3350,7 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
             result = direct_chatops.run_once(config, prepared, send=False, no_decrypt=True)
         finally:
             direct_chatops.read_recent_history = original_history  # type: ignore[assignment]
+            direct_chatops.read_exact_local_id_rows = original_exact  # type: ignore[assignment]
             direct_chatops.read_new_messages = original_read_new  # type: ignore[assignment]
             direct_chatops.run_codex = original_run_codex  # type: ignore[assignment]
 
