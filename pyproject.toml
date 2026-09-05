@@ -14,6 +14,9 @@ dependencies = [
     "python-pptx>=1.0.0",
 ]
 
+[project.optional-dependencies]
+wechat = ["opencc-python-reimplemented>=0.1.7"]
+
 [project.scripts]
 labcanvas = "agenticapp.cli:main"
 app-auto-action = "agenticapp.cli:main"

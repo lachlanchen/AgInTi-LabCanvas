@@ -22,6 +22,13 @@ import wechat_chat_profiles as chat_profiles  # noqa: E402
 
 
 class WeChatDirectChatopsPolicyTests(unittest.TestCase):
+    def test_source_request_allows_agent_ack_without_default_receipt(self) -> None:
+        config = {"immediate_ack_enabled": True}
+        self.assertEqual(direct_chatops.worker_task_ack(config, {}, source_share=True), "")
+        decision = {"ack": "我先从这张卡片获取原视频，再整理转写和摘要。"}
+        self.assertEqual(direct_chatops.worker_task_ack(config, decision, source_share=True), decision["ack"])
+        self.assertEqual(direct_chatops.worker_task_ack({"immediate_ack_enabled": False}, decision, source_share=True), "")
+
     def setUp(self) -> None:
         self._tmpdir = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmpdir.cleanup)

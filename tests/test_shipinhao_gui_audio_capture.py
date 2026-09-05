@@ -23,6 +23,16 @@ def load_module():
 
 
 class ShipinhaoGuiAudioCaptureTests(unittest.TestCase):
+    def test_card_identity_matches_traditional_ocr_to_simplified_metadata(self) -> None:
+        module = load_module()
+        if module.IDENTITY_T2S is None:
+            self.skipTest("OpenCC is an optional OCR normalization dependency")
+        terms = module.derive_identity_terms("文学史上最著名的一场雪", "何凯文讲英语")
+        matches, _ = module.match_identity_terms("文學史上 最著名的一場雪 何凱文講英語", terms)
+        self.assertIn("何凯文讲英语", matches)
+        other, _ = module.match_identity_terms("另一个作者 其他视频", terms)
+        self.assertEqual(other, [])
+
     def test_identity_terms_prefer_book_title_hashtags_and_author(self) -> None:
         module = load_module()
 

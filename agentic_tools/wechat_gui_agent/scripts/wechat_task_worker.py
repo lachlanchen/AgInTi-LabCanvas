@@ -71,6 +71,7 @@ from wechat_source_recovery import (
     task_source_text as source_recovery_task_text,
 )
 from wechat_video_source_policy import require_publishable_video_source
+from wechat_source_knowledge import knowledge_context, store_task_knowledge
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -1656,6 +1657,7 @@ def process_one(queue: Path, chat: str, *, send: bool, send_targets: Path = DEFA
     # expensive worker or losing its exact artifact list.
     task["result"] = result
     task["worker_result_ready_at"] = datetime.now().isoformat(timespec="seconds")
+    retain_source_knowledge(task, result=result)
     persisted = persist_task_progress(task)
     if requeue_if_task_interrupted_during_run(queue, task):
         log_worker_event("stale-result-suppressed-for-late-interruption", task)
@@ -3521,6 +3523,17 @@ def task_memory_model(task: dict[str, Any]) -> str:
     aginti = shared.get("aginti") if isinstance(shared.get("aginti"), dict) else {}
     shared_models = aginti.get("provider_models") if isinstance(aginti.get("provider_models"), dict) else {}
     return str(shared_models.get(provider) or provider or "localllm-fast")
+
+
+def retain_source_knowledge(task: dict[str, Any], *, result: dict[str, Any] | None = None) -> None:
+    try:
+        task["source_knowledge"] = store_task_knowledge(task, result=result)
+    except (OSError, ValueError, sqlite3.Error) as exc:
+        # Delivery remains independent; the persisted task contains the inputs
+        # needed to retry indexing without repeating source retrieval or a send.
+        task["source_knowledge"] = {
+            "status": "retry_pending", "error": type(exc).__name__,
+        }
 
 
 def task_long_term_history_context(task: dict[str, Any]) -> dict[str, Any]:
@@ -9721,6 +9734,12 @@ def worker_agent_task_view(task: dict[str, Any]) -> dict[str, Any]:
         view["lifetime_same_chat_memory"] = long_term["full_memory"]
         view["high_fidelity_same_chat_history"] = long_term["exact_excerpts"]
         view["history_compaction"] = long_term["manifest"]
+    try:
+        source_knowledge = knowledge_context(task, task_focus_text(task))
+    except (OSError, ValueError, sqlite3.Error):
+        source_knowledge = {}
+    if source_knowledge:
+        view["same_chat_source_knowledge"] = source_knowledge
     interruptions = []
     for item in task_interruptions(task)[-8:]:
         if not isinstance(item, dict):
@@ -9889,6 +9908,8 @@ def aginti_worker_task_view(task: dict[str, Any]) -> dict[str, Any]:
             "high_fidelity_same_chat_history"
         ) or ""
         packet["history_compaction"] = full.get("history_compaction") or {}
+    if full.get("same_chat_source_knowledge"):
+        packet["same_chat_source_knowledge"] = full["same_chat_source_knowledge"]
     interruptions: list[dict[str, Any]] = []
     for item in (full.get("interruptions") or [])[-6:]:
         if not isinstance(item, dict):
@@ -10012,6 +10033,7 @@ def bound_aginti_worker_packet(
     ]
     for key in (
         "member_memory_summary",
+        "same_chat_source_knowledge",
         "worker_retry_context",
         "coverage_followup",
     ):
@@ -12135,6 +12157,7 @@ def prepare_worker_preflight(task: dict[str, Any], artifact_dir: Path) -> dict[s
     if should_prepare_shipinhao_comment_intel(task):
         preflight["shipinhao_comment_intel"] = prepare_shipinhao_comment_intel_preflight(task, artifact_dir)
         task["preflight"] = preflight
+    retain_source_knowledge(task)
     if not is_video_publish_task(task):
         return preflight
     if not generate_video_task and should_preflight_autopublish(task):

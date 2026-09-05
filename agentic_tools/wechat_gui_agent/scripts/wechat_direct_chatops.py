@@ -3193,10 +3193,20 @@ def immediate_task_route(
         f"{lalachan_context}"
         f"{career_context}"
     )
-    # The read-later worker is the one substantive responder. A transport ACK
-    # for the same source adds noise and can look like a second analysis.
-    ack = "" if (link_inbox_summary_task or automatic_source_task) else task_ack_text(config, route_decision)
+    ack = worker_task_ack(config, route_decision, source_share=bool(
+        link_inbox_summary_task or automatic_source_task
+    ))
     return {"ack": ack, "task": task, "route_decision": route_decision}
+
+
+def worker_task_ack(config: dict[str, Any], decision: dict[str, Any], *, source_share: bool) -> str:
+    if not source_share:
+        return task_ack_text(config, decision)
+    if not config.get("immediate_ack_enabled", True):
+        return ""
+    # The route agent decides whether a brief acknowledgement helps. Never
+    # substitute a boilerplate receipt or a second title-only analysis.
+    return sanitize_agent_ack(config, decision.get("ack") or decision.get("ack_text") or "")
 
 
 def route_chat_reply(
@@ -3992,7 +4002,7 @@ Important distinction:
 - Return chat_only with worker_needed=false when the user is only chatting or when no backend/tool/file/artifact work is useful.
 - For `chat_only`, put the actual short, natural response in `chat_reply`. This is the user-facing answer, not an acknowledgement and not an execution report. A memo, reading list, idea fragment, reflection, or ordinary question can be answered, connected to recent context, or briefly acknowledged without files or tools. Never demand file, command, browser, visual, artifact, or publish evidence for `chat_only`. Use an empty `chat_reply` only when a silent save or no response is genuinely the most natural choice.
 - Use other_worker only when a backend Codex worker can materially finish the request; do not use it just because the message is ambiguous.
-- When worker_needed=true, write `ack` as one natural, non-mechanical chat acknowledgement only if an immediate acknowledgement is useful. It should reflect the concrete task without promising that the source has already been read. Avoid boilerplate like "收到，我先处理"; for link/read-later messages, a short silent enqueue is often better than a visible ack.
+- When worker_needed=true, write `ack` as one natural, non-mechanical chat acknowledgement when useful. For an explicit source-download, transcription, or research request that will take time, briefly say what you will do so the requester knows work started; do not claim the source was already read. A bare share can stay silent until the substantive result. Keep related consecutive requests in one acknowledgement, not one per message. Avoid boilerplate and internal logs.
 - When worker_needed=false, use an empty `ack`.
 
 Available backend routines:

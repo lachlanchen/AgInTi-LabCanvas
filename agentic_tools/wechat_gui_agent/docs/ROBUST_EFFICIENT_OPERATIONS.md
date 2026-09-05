@@ -11,6 +11,12 @@ over stale data is not healthy intake. See
 for live-account selection, fail-closed refresh, timeout backoff, and exact-task
 research delivery recovery. Never replay successful schedules during recovery.
 
+The current session scope is
+[`LabCanvas message, task, and memory reliability`](../../../references/labcanvas-current-goal.md).
+For retained transcripts/article/PDF text, same-chat source retrieval, useful
+agent acknowledgements, and the card-only identity fix, see
+[`source knowledge and card intake`](../../../references/labcanvas-source-knowledge-and-card-intake-2026-09-05.md).
+
 ## Operating Model
 
 Treat WeChat as a communication bridge, not as the executor. A WeChat message

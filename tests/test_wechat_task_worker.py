@@ -36,6 +36,24 @@ def load_worker():
 
 
 class WeChatTaskWorkerTests(unittest.TestCase):
+    def test_source_knowledge_is_available_to_both_worker_backends(self) -> None:
+        worker = load_worker()
+        task = {"id": "memory-test", "chat": "test-chat", "source": {"chat": "test-chat"},
+                "request": "Explain the optical sensor article again."}
+        evidence = {"items": [{"kind": "article_text", "excerpt": "Optical sensor evidence"}]}
+        with mock.patch.object(worker, "knowledge_context", return_value=evidence), \
+             mock.patch.object(worker, "task_long_term_history_context", return_value={}):
+            self.assertEqual(worker.worker_agent_task_view(task)["same_chat_source_knowledge"], evidence)
+            self.assertEqual(worker.aginti_worker_task_view(task)["same_chat_source_knowledge"], evidence)
+
+    def test_knowledge_database_failure_remains_retryable_without_failing_delivery(self) -> None:
+        worker = load_worker()
+        task = {"id": "task-1", "chat": "test-chat"}
+        with mock.patch.object(worker, "store_task_knowledge", side_effect=sqlite3.OperationalError("locked")):
+            worker.retain_source_knowledge(task, result={"message": "Useful answer"})
+        self.assertEqual(task["source_knowledge"]["status"], "retry_pending")
+        self.assertNotIn("worker_error", task)
+
     def test_idle_queue_gate_scans_changes_and_periodic_maintenance_only(self) -> None:
         worker = load_worker()
         signature = (1, 2, 100, 200)

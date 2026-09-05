@@ -4,6 +4,10 @@ Date: 2026-08-30
 
 Status: governing product contract and active remediation backlog
 
+Current session scope: [LabCanvas message, task, and memory goal](labcanvas-current-goal.md).
+The 2026-09-05 direction narrows this session to LabCanvas; AgInTi development
+belongs to its separate session.
+
 ## Purpose
 
 This document distills the requirements repeatedly established across the
@@ -168,10 +172,11 @@ being repaired.
 
 ### Backend Independence
 
-- AgInTi is the primary LabCanvas backend.
-- Its normal provider chain is DeepSeek followed by same-session LocalLLM
-  handoff when the first provider is unavailable or categorized as unsuitable.
-- Codex and Claude remain explicit compatibility or diagnostic backends.
+- Codex is the primary LabCanvas backend, using the configured available-account
+  and quota policy. Do not silently change that policy during transport repair.
+- AgInTi is the fallback, normally using DeepSeek followed by the configured
+  LocalLLM route. AgInTi development is delegated to its separate session.
+- Claude remains an explicit compatibility backend.
 - Model/provider choice may change latency and answer quality. It must not change
   source-message coverage, task identity, permissions, queue transitions,
   schedule semantics, or delivery guarantees.

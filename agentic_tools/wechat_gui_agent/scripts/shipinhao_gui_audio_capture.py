@@ -19,6 +19,13 @@ import sys
 import time
 from typing import Any, Iterator
 
+try:
+    from opencc import OpenCC
+except ImportError:
+    OpenCC = None
+
+IDENTITY_T2S = OpenCC("t2s") if OpenCC is not None else None
+
 
 ROOT = Path(__file__).resolve().parents[3]
 PRIVATE = ROOT / "agentic_tools" / "wechat_gui_agent" / ".private"
@@ -1461,7 +1468,10 @@ def run(command: list[str], *, env: dict[str, str] | None = None, check: bool = 
 
 
 def normalize_identity(value: Any) -> str:
-    return re.sub(r"[^0-9a-z\u3400-\u9fff]+", "", str(value or "").casefold())
+    text = str(value or "").casefold()
+    if IDENTITY_T2S is not None:
+        text = IDENTITY_T2S.convert(text)
+    return re.sub(r"[^0-9a-z\u3400-\u9fff]+", "", text)
 
 
 def unique_strings(values: list[str]) -> list[str]:
