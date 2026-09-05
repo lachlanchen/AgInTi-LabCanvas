@@ -23,6 +23,19 @@ def load_module():
 
 
 class ShipinhaoGuiAudioCaptureTests(unittest.TestCase):
+    def test_unresponsive_player_cleanup_is_bounded_and_never_force_destroys(self) -> None:
+        module = load_module()
+        gui = mock.Mock()
+        with mock.patch.object(module, "load_wechat_gui_module", return_value=gui), \
+             mock.patch.object(module, "find_channels_window", return_value={"id": "20"}), \
+             mock.patch.object(module, "run") as run, \
+             mock.patch.object(module.time, "sleep"):
+            with self.assertRaises(module.CaptureFailure) as error:
+                module.close_channels_players({"DISPLAY": ":97"}, excluded_window_ids={"16"})
+        self.assertEqual(error.exception.error_code, "finder_player_close_pending")
+        gui.request_close.assert_called_once_with("20", display_name=":97", protected_window_ids={"16"})
+        self.assertNotIn("windowclose", str(run.call_args_list))
+
     def test_card_identity_matches_traditional_ocr_to_simplified_metadata(self) -> None:
         module = load_module()
         if module.IDENTITY_T2S is None:

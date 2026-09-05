@@ -1797,6 +1797,7 @@ class WeChatGuiSendTests(unittest.TestCase):
     def test_close_non_target_wechat_windows_keeps_target_popup(self):
         module = load_wechat_gui_send()
         original_run = module.run
+        original_close = module.request_close
         closed = []
         try:
             def fake_run(command, *, env, check=True):
@@ -1809,12 +1810,11 @@ class WeChatGuiSendTests(unittest.TestCase):
                     return subprocess.CompletedProcess(command, 0, "X=100\nY=100\nWIDTH=600\nHEIGHT=500\n", "")
                 if command[:2] == ["xdotool", "getwindowname"]:
                     return subprocess.CompletedProcess(command, 0, "🍓我的设备\n" if command[-1] == "mine" else "File Transfer\n", "")
-                if command[:2] == ["xdotool", "windowclose"]:
-                    closed.append(command[-1])
-                    return subprocess.CompletedProcess(command, 0, "", "")
+                self.assertNotIn("windowclose", command)
                 return subprocess.CompletedProcess(command, 0, "", "")
 
             module.run = fake_run
+            module.request_close = lambda wid, **kwargs: closed.append(wid)
             module.close_non_target_wechat_windows(
                 {},
                 module.Window("main", 0, 0, 1000, 700),
@@ -1827,6 +1827,7 @@ class WeChatGuiSendTests(unittest.TestCase):
             )
         finally:
             module.run = original_run
+            module.request_close = original_close
 
         self.assertEqual(closed, ["file"])
 

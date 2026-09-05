@@ -28,6 +28,7 @@ import unicodedata
 from file_lock import fcntl_compat as fcntl
 from wechat_message_policy import file_transport_identity, is_no_reply_control
 from wechat_mirror import DEFAULT_DB, record_event
+from wechat_window_control import request_close
 
 try:
     from opencc import OpenCC
@@ -2154,7 +2155,7 @@ def close_secondary_wechat_windows(env: dict[str, str], main: Window) -> None:
                 pass
         area = values.get("WIDTH", 0) * values.get("HEIGHT", 0)
         if 20_000 <= area < min(main_area, int(main_area * 0.25)):
-            run(["xdotool", "windowclose", wid], env=env, check=False)
+            request_close(wid, display_name=env.get("DISPLAY", ":97"), protected_window_ids={main.wid})
     time.sleep(0.5)
 
 
@@ -2186,7 +2187,7 @@ def close_non_target_wechat_windows(env: dict[str, str], main: Window, target: T
         normalized_title = normalize_title(title)
         if normalized_title and any(item in normalized_title for item in expected):
             continue
-        run(["xdotool", "windowclose", wid], env=env, check=False)
+        request_close(wid, display_name=env.get("DISPLAY", ":97"), protected_window_ids={main.wid})
     time.sleep(0.3)
 
 

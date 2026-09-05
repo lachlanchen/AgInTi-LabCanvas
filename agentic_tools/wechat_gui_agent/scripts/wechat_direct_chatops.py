@@ -2734,6 +2734,8 @@ def text_contains_web_source(text: str) -> bool:
 
 def link_inbox_summary_instruction(row: dict[str, Any]) -> str:
     visible = visible_message_text(row)
+    if is_shipinhao_source_reference(visible):
+        return automatic_wechat_source_instruction(row, visible)
     return (
         "Link/read-later inbox source received. Try to read the accessible source and return a grounded summary, highlights, and main points. "
         "Handle normal webpages, GitHub repositories, papers/PDF/DOI/arXiv links, WeChat official-account/mp.weixin articles, "
@@ -3993,7 +3995,7 @@ Important distinction:
 - "upload all images" can mean upload reference images into a generation UI. That is NOT public publishing.
 - Public publishing/posting means Shipinhao/视频号, YouTube, Instagram, LazyEdit/AutoPublish public platform publish, or explicit publish/post wording.
 - Old context can explain a follow-up, but old context cannot authorize a new public publish.
-- In web_clip_inbox/link_inbox/internet_inbox/reading_inbox chats, shared URLs, forwarded webpage cards, mp.weixin/Gongzhonghao articles, Shipinhao/视频号/Finder cards, GitHub links, papers/PDF/DOI/arXiv links, YouTube/Bilibili links, images, videos, and files should normally route to research_or_summary with worker_needed=true so the worker tries to read the actual source and returns one concise useful chat answer. Do not promise or attach a report, PDF, Markdown, TeX, image, screenshot, or deep analysis unless the current message explicitly requests that output. Local evidence notes may still be saved privately.
+- In web_clip_inbox/link_inbox/internet_inbox/reading_inbox chats, shared URLs, forwarded webpage cards, mp.weixin/Gongzhonghao articles, GitHub links, papers/PDF/DOI/arXiv links, YouTube/Bilibili links, images, videos, and files should normally route to research_or_summary with worker_needed=true so the worker tries to read the actual source and returns one concise useful chat answer. Shipinhao/Finder cards and share links retain the file_download_or_save and video/transcript return contract above, including when no URL is provided. Bare video uploads retain passive save-only intake. Do not promise or attach an additional report, PDF, Markdown, TeX, image, screenshot, or deep analysis unless the current message explicitly requests that output. Local evidence notes may still be saved privately.
 - For a bare WeChat file upload with no explicit user instruction, route to file_intake with worker_needed=true. For raster images, the worker should sync/copy the exact source image, inspect it with Codex vision, and reply naturally with what it shows or means. OCR is private supporting evidence, not the user-facing response format: do not expose `Visible text / Image caption / Notes`, model names, checksums, dimensions, or an extra OCR dump unless the user explicitly asks for technical extraction. For ZIP, Word, PDF, and text uploads, run bounded read-only extraction and let the resumed worker provide a concise natural identification/preliminary summary from `agent_context_path`; do not stop at a checksum receipt when readable content exists. RAR and 7z archives use the same safe intake contract. If the current message asks to summarize/analyze/translate/convert/publish/edit the file, preserve that deeper instruction in the selected worker route.
 - For file_download_or_save, set `delivery_mode=local_save` when the user explicitly asks to save/copy/download into this computer's Downloads folder without asking for the file in chat. Set `delivery_mode=chat_attachment` when they ask to send/return/attach it in chat. A local save should end with one short verified completion message, not an immediate acknowledgement and not a duplicate attachment.
 - For mp.weixin links, verification text such as 环境异常 or 完成验证后继续访问 means that one fetch path is blocked, not that the task needs human confirmation. Route to the worker's read-only source-recovery preflight, which tries mobile-WeChat extraction/private cache and then exact-title/account public reconstruction. Do not open/focus an external browser or ask the user to verify for read-only research.
@@ -5503,6 +5505,11 @@ def automatic_wechat_source_instruction(row: dict[str, Any], text: str) -> str:
             "Automatic Shipinhao/Finder source intake. Resolve the exact current card identity, download and verify the MP4, "
             "transcribe any readable audio, and send the verified video back with one concise natural transcript/summary. "
             "Use the existing read-only source recovery, media transcription, and native-card fallback routines. "
+            "A card without a supplied URL is still a Shipinhao source, not a plain uploaded video. "
+            "If its embedded media has expired, open the exact same-chat card, copy its native share link, "
+            "and pass it to the established downloader; do not ask the user for a link before trying that route. "
+            "Use the configured GPU 1 transcription routine without disturbing other GPU jobs. "
+            "Do not substitute a screen/player recording for the original MP4. "
             "Never infer LazyEdit processing or public publication permission from a shared source. "
             f"Structured source text:\n{visible}"
         )

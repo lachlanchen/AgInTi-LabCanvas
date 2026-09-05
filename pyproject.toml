@@ -15,7 +15,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-wechat = ["opencc-python-reimplemented>=0.1.7"]
+wechat = ["opencc-python-reimplemented>=0.1.7", "python-xlib>=0.33"]
 
 [project.scripts]
 labcanvas = "agenticapp.cli:main"

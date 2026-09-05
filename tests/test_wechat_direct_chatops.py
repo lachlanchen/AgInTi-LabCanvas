@@ -4928,9 +4928,38 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertEqual(route["route_decision"]["route_kind"], "file_download_or_save")
         self.assertEqual(route["route_decision"]["delivery_mode"], "chat_attachment")
         self.assertFalse(route["route_decision"]["public_publish_allowed"])
-        self.assertIn("Shipinhao/视频号/Finder", route["task"])
+        self.assertIn("Automatic Shipinhao/Finder source intake", route["task"])
         self.assertIn("download and verify the MP4", route["task"])
         self.assertIn("never infer public publication permission", route["task"])
+
+    def test_card_without_url_is_not_a_passive_video_or_publish_request(self) -> None:
+        config = self.backend_chat_config("Shares", "web_clip_inbox")
+        row = self.row(
+            "<msg><appmsg><type>51</type><title>Channel share</title>"
+            "<finderFeed><objectId>123456</objectId><nickname>Exact Author</nickname>"
+            "<desc>Exact card title</desc></finderFeed></appmsg></msg>",
+            local_type=219043332145,
+            local_id=78,
+            server_id="srv-78",
+        )
+
+        route = direct_chatops.immediate_task_route(config, row, [row], focus_rows=[row])
+
+        self.assertIsNotNone(route)
+        decision = route["route_decision"]
+        self.assertEqual(decision["route_kind"], "file_download_or_save")
+        self.assertEqual(decision["delivery_mode"], "chat_attachment")
+        self.assertFalse(decision["public_publish_allowed"])
+        self.assertFalse(decision.get("passive_video_intake", False))
+        self.assertIn("download and verify the MP4", route["task"])
+        self.assertIn("local_id=78", route["task"])
+        self.assertIn("copy its native share link", route["task"])
+        self.assertIn("GPU 1", route["task"])
+        self.assertNotIn("or other artifacts in `files` unless", route["task"])
+        self.assertEqual(
+            direct_chatops.link_inbox_summary_instruction(row),
+            direct_chatops.automatic_wechat_source_instruction(row, ""),
+        )
 
     def test_personal_organizer_routes_publish_platform_shorthand(self) -> None:
         config = self.base_config()

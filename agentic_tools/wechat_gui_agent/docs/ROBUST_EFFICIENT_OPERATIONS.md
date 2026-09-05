@@ -16,6 +16,11 @@ The current session scope is
 For retained transcripts/article/PDF text, same-chat source retrieval, useful
 agent acknowledgements, and the card-only identity fix, see
 [`source knowledge and card intake`](../../../references/labcanvas-source-knowledge-and-card-intake-2026-09-05.md).
+Shipinhao cards use the same original-video/transcript return instructions in
+Shares as other chats; generic summary-only inbox prompts must not override
+that contract. Use polite, ownership-checked window close requests for native
+preview cleanup, never force-destroy application windows. A heartbeat or an
+unlocked client does not prove the player or sender is operational.
 
 ## Operating Model
 

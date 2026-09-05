@@ -82,6 +82,41 @@ Card-only download is therefore **not yet verified end to end for this client
 state**. Preserve this blocker instead of claiming that an original MP4 was
 downloaded or delivered.
 
+## Native Window Cleanup
+
+`wechat_window_control.request_close` sends the application's advertised
+`WM_DELETE_WINDOW` protocol instead of `xdotool windowclose`. The latter uses
+`XDestroyWindow`, which bypasses normal application close handling. Destroying
+an auxiliary Qt window is not evidence that its modal/application state has
+been cleaned up.
+
+The helper verifies same-user WeChat process ownership, excludes the protected
+main window, and refuses unsupported close protocols. Install `python-xlib`
+through the optional `wechat` extra in the actual sender interpreter. There is
+no process-kill or force-destroy fallback when a close request is rejected.
+Channels cleanup is bounded and reports `finder_player_close_pending` if an
+already-requested window remains, rather than looping indefinitely.
+
+Live checks removed an auxiliary window normally without restarting WeChat or
+altering its login. This did **not** resolve the native player-opening failure.
+X input probes showed raw button events, but the card still did not open; that
+does not identify a definitive application or X-server root cause. Do not
+claim this cleanup fix completed download or delivery. Android control remains
+disabled, and no recording was substituted for the original video.
+
+The no-URL card regression uses WeChat's packed type `219043332145` with a
+`finderFeed` object ID. It must request source download/transcription/return,
+never ordinary-video passive intake or publication.
+
+The Shares inbox prompt previously contradicted that contract: a later generic
+source-summary instruction prohibited artifact return without an explicit file
+request. Shipinhao cards now reuse `automatic_wechat_source_instruction` in
+the inbox too. The route-agent prompt explicitly preserves this exception and
+ordinary-video save-only intake. No-URL cards request native link recovery and
+the existing GPU 1 transcription routine, not a recording substitute. Source
+IDs stay in the structured ledger; the agent uses exact local/server references
+rather than receiving raw signed metadata in its human-facing task text.
+
 ## Responsiveness
 
 The read-later route previously suppressed every source-task acknowledgement,

@@ -1060,17 +1060,28 @@ def wait_for_player_identity(
 
 
 def close_channels_players(env: dict[str, str], *, excluded_window_ids: set[str] | None = None) -> None:
-    while True:
+    gui = load_wechat_gui_module()
+    attempted: set[str] = set()
+    for _ in range(4):
         window = find_channels_window(env, excluded_window_ids=excluded_window_ids)
         if not window:
             return
+        wid = str(window["id"])
+        if wid in attempted:
+            raise CaptureFailure("native Channels window did not close normally",
+                                 error_code="finder_player_close_pending", failure_stage="player_close")
+        attempted.add(wid)
         run(["xdotool", "windowfocus", str(window["id"]), "key", "Escape"], env=env, check=False)
         time.sleep(0.5)
         if find_channels_window(env, excluded_window_ids=excluded_window_ids):
-            run(["xdotool", "windowclose", str(window["id"])], env=env, check=False)
+            gui.request_close(wid, display_name=env.get("DISPLAY", ":97"),
+                              protected_window_ids=excluded_window_ids)
             time.sleep(0.5)
         else:
             return
+    if find_channels_window(env, excluded_window_ids=excluded_window_ids):
+        raise CaptureFailure("native Channels cleanup exceeded its window bound",
+                             error_code="finder_player_close_pending", failure_stage="player_close")
 
 
 def load_wechat_gui_module() -> Any:
