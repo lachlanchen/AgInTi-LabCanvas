@@ -4,6 +4,13 @@ This guide is the system contract for keeping LabCanvas WeChat automation
 durable, low-cost, and predictable. Use it when changing monitors, workers,
 media sync, generated-video workflows, LazyEdit publishing, or GUI sending.
 
+Source freshness is independent of monitor freshness. Check the validated
+decrypt refresh status as well as cursor/heartbeat progress: a caught-up cursor
+over stale data is not healthy intake. See
+[`references/labcanvas-intake-health-recovery-2026-09-05.md`](../../../references/labcanvas-intake-health-recovery-2026-09-05.md)
+for live-account selection, fail-closed refresh, timeout backoff, and exact-task
+research delivery recovery. Never replay successful schedules during recovery.
+
 ## Operating Model
 
 Treat WeChat as a communication bridge, not as the executor. A WeChat message

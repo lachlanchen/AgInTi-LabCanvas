@@ -12,6 +12,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from urllib import parse, request
 
 from wechat_message_shards import list_message_db_paths
@@ -40,6 +41,7 @@ def main() -> int:
     sub.add_parser("init-config", help="Write wechat-decrypt config.json pointing at private paths.")
     sub.add_parser("status", help="Show sanitized external-backend status.")
     sub.add_parser("probe", help="Validate external backend readiness without reading messages.")
+    sub.add_parser("source-dir", help="Print the selected private source directory for the refresh supervisor.")
     sub.add_parser("find-keys", help="Run Linux memory key scan. Requires root or CAP_SYS_PTRACE.")
     decrypt = sub.add_parser("decrypt", help="Decrypt WeChat DBs into the private decrypted cache.")
     decrypt.add_argument("--incremental", action="store_true", help="Skip unchanged source DBs.")
@@ -64,6 +66,10 @@ def main() -> int:
         return 0 if payload["ok"] else 1
 
     db_dir = resolve_db_dir(args.db_dir, required=args.command not in {"status", "mcp-config"})
+
+    if args.command == "source-dir":
+        print(db_dir)
+        return 0
 
     if args.command == "init-config":
         if db_dir is None:
@@ -101,7 +107,7 @@ def main() -> int:
             command.append("--incremental")
         if args.dry_run:
             command.append("--dry-run")
-        return run_external(args.external, command, config_path)
+        return run_decrypt(args.external, command, config_path, dry_run=args.dry_run)
     if args.command == "monitor":
         if db_dir is None:
             raise SystemExit("No local WeChat db_storage found; pass --db-dir explicitly.")
@@ -159,7 +165,79 @@ def discover_xwechat_db() -> Path:
     candidates = [path for path in root.glob("*/db_storage") if path.is_dir()]
     if not candidates:
         raise SystemExit(f"No local WeChat db_storage found under {root}; pass --db-dir explicitly.")
+    active = active_wechat_db_dirs(candidates)
+    if len(active) == 1:
+        return active[0]
+    if len(active) > 1:
+        raise SystemExit("Multiple live WeChat account stores; specify --db-dir instead of guessing.")
     return max(candidates, key=lambda path: path.stat().st_mtime)
+
+
+def active_wechat_db_dirs(candidates: list[Path], proc_root: Path = Path("/proc")) -> list[Path]:
+    """Identify the open account store without controlling or stopping WeChat."""
+    known = {path.resolve() for path in candidates}
+    active: set[Path] = set()
+    for process in proc_root.glob("[0-9]*"):
+        try:
+            if process.stat().st_uid != os.getuid():
+                continue
+            if (process / "comm").read_text().strip().casefold() not in {"wechat", "weixin"}:
+                continue
+            for fd in (process / "fd").iterdir():
+                try:
+                    target = fd.resolve(strict=True)
+                except OSError:
+                    continue
+                active.update(parent for parent in target.parents if parent in known)
+        except OSError:
+            continue
+    return sorted(active)
+
+
+def decrypt_summary(output: str) -> dict:
+    """The external CLI has no JSON result and exits zero even on HMAC failure."""
+    match = re.search(r"结果:\s*(\d+)\s*成功,\s*(\d+)\s*失败,\s*(\d+)\s*跳过", output)
+    if not match:
+        return {"ok": False, "status": "decrypt_summary_missing"}
+    success, failed, skipped = map(int, match.groups())
+    missing_paths = re.findall(r"(?m)^SKIP:\s*(.+?)\s*\(无密钥", output)
+    required_missing = [
+        path for path in missing_paths
+        if re.fullmatch(r"message/(?:message_\d+|media_\d+)\.db|contact/contact\.db|session/session\.db", path)
+    ]
+    # Optional payment/search/tip databases are not part of the chat intake.
+    ok = failed == 0 and not required_missing and len(missing_paths) == skipped
+    return {
+        "ok": ok,
+        "status": ("ready_partial_optional" if skipped else "ready") if ok else "decrypt_failed",
+        "success_count": success, "failed_count": failed, "missing_key_count": skipped,
+        "required_missing_count": len(required_missing),
+    }
+
+
+def run_decrypt(external: Path, command: list[str], config_path: Path, *, dry_run: bool = False) -> int:
+    env = os.environ.copy()
+    env["WECHAT_DECRYPT_APP_DIR"] = str(external)
+    with tempfile.TemporaryFile() as output:
+        proc = subprocess.run(command, cwd=external, env=env, stdout=output, stderr=output, check=False)
+        output.seek(0, os.SEEK_END)
+        output.seek(max(0, output.tell() - 65536))
+        tail = output.read().decode("utf-8", errors="replace")
+    if dry_run:
+        print(tail)
+        return proc.returncode
+    summary = decrypt_summary(tail)
+    summary["ok"] = summary["ok"] and proc.returncode == 0
+    summary["returncode"] = proc.returncode
+    summary["checked_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
+    state_path = PRIVATE / "wechat_decrypt.refresh.status.json"
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = state_path.with_suffix(".json.tmp")
+    temporary.write_text(json.dumps(summary, sort_keys=True) + "\n", encoding="utf-8")
+    temporary.chmod(0o600)
+    temporary.replace(state_path)
+    print(json.dumps(summary, sort_keys=True))
+    return 0 if summary["ok"] else (proc.returncode or 1)
 
 
 def install_external(external: Path, repo: str, *, update: bool, install_deps: bool) -> dict:

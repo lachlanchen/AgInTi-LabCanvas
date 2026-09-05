@@ -108,6 +108,24 @@ def schedule_state_reader(
 
 
 class WeChatTransportStallGuardTests(unittest.TestCase):
+    def test_source_refresh_failure_and_staleness_are_not_healthy(self) -> None:
+        now = datetime(2026, 9, 5, 7, 30, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "refresh.json"
+            self.assertFalse(guard.decrypt_refresh_health(path, now=now)["ok"])
+            for ok, seconds, expected in ((True, 10, True), (False, 10, False), (True, 200, False), (True, -200, False), ("false", 10, False)):
+                path.write_text(json.dumps({
+                    "ok": ok, "checked_at": (now - timedelta(seconds=seconds)).isoformat(),
+                    "status": "ready" if ok else "decrypt_failed", "failed_count": 0 if ok else 15,
+                }))
+                result = guard.decrypt_refresh_health(path, now=now)
+                self.assertEqual(result["ok"], expected)
+                self.assertEqual(result["age_seconds"], seconds)
+
+            for state in ([], None, {"checked_at": now.isoformat(), "failed_count": "bad"}):
+                path.write_text(json.dumps(state))
+                self.assertFalse(guard.decrypt_refresh_health(path, now=now)["ok"])
+
     def test_agent_backend_runtime_status_exposes_emergency_override(self) -> None:
         with mock.patch.dict(
             "os.environ",
@@ -303,6 +321,26 @@ class WeChatTransportStallGuardTests(unittest.TestCase):
 
         self.assertFalse(result["ok"])
         self.assertEqual(result["recent_failed_ids"], ["failed-recent"])
+        self.assertEqual(guard.queue_health_issue("wechat", result)["code"], "wechat_queue_failed")
+
+    def test_deferred_file_delivery_is_not_healthy_or_abandoned(self) -> None:
+        now = datetime(2026, 9, 5, 8, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            queue.write_text(json.dumps({
+                "id": "unsent-file", "status": "send_deferred_artifact",
+                "last_send_attempt_at": "2026-09-05T07:55:00+00:00",
+            }) + "\n")
+            result = guard.queue_health(queue, now=now)
+            self.assertFalse(result["ok"])
+            self.assertEqual(result["deferred_delivery_ids"], ["unsent-file"])
+            self.assertEqual(guard.queue_health_issue("wechat", result)["code"], "wechat_queue_delivery_pending")
+            self.assertEqual(json.loads(queue.read_text())["status"], "send_deferred_artifact")
+
+    def test_queue_health_aggregation_never_hides_a_failure(self) -> None:
+        self.assertIsNone(guard.queue_health_issue("wecom", {"ok": True}))
+        for state in ({"ok": False, "error": "unreadable"}, {"ok": False, "invalid_lines": 1}):
+            self.assertEqual(guard.queue_health_issue("wecom", state)["code"], "wecom_queue_invalid")
 
     def test_queue_health_ignores_delivered_proactive_inspiration_failure(self) -> None:
         now = datetime(2026, 8, 11, 9, 0, tzinfo=timezone.utc)

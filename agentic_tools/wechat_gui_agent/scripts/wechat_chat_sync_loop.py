@@ -156,7 +156,11 @@ def sync_once(args: argparse.Namespace, failure_backoff_until: dict[str, float] 
                 maybe_emit_target_event(args, results[-1])
                 continue
             opened_or_attempted += 1
-            result = open_chat_dry_run(args, chat_name, target)
+            try:
+                result = open_chat_dry_run(args, chat_name, target)
+            except subprocess.TimeoutExpired:
+                result = {"chat": chat_name, "ok": False, "returncode": 124,
+                          "error": "Chat materialization exceeded its host timeout."}
             apply_chat_sync_backoff(args, chat_name, result, failure_backoff_until)
             results.append(result)
             maybe_emit_target_event(args, results[-1])

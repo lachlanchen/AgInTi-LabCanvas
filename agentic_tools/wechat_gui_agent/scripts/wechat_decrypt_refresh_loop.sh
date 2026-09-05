@@ -22,12 +22,7 @@ fi
 mkdir -p "$PRIVATE"
 
 discover_db_root() {
-  local base="$HOME/Documents/xwechat_files"
-  [[ -d "$base" ]] || return 1
-  find "$base" -mindepth 2 -maxdepth 2 -type d -name db_storage -printf '%T@ %p\n' 2>/dev/null \
-    | sort -nr \
-    | head -n 1 \
-    | cut -d' ' -f2-
+  "$PY" "$BACKEND" source-dir
 }
 
 latest_source_stamp() {
@@ -66,12 +61,13 @@ while true; do
   fi
 
   echo "[$start] refreshing decrypted WeChat cache via backend ($MODE)"
-  command=("$PY" "$BACKEND" "decrypt")
-  if [[ "$MODE" == "incremental" ]]; then
-    command+=("--incremental")
-  fi
+  command=("$PY" "$BACKEND")
   if [[ -n "$DB_ROOT" ]]; then
     command+=("--db-dir" "$DB_ROOT")
+  fi
+  command+=("decrypt")
+  if [[ "$MODE" == "incremental" ]]; then
+    command+=("--incremental")
   fi
   tmp="$(mktemp)"
   set +e
@@ -83,7 +79,7 @@ while true; do
     if [[ -n "$source_stamp" ]]; then
       printf '%s\n' "$source_stamp" > "$STAMP"
     fi
-    grep -E '结果:|解密文件在:|SKIP:|skipped|Skipping|跳过' "$tmp" | tail -n 4 || true
+    tail -n 1 "$tmp"
   else
     tail -n 80 "$tmp" || true
   fi

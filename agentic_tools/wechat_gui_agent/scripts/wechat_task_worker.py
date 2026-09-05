@@ -4976,6 +4976,21 @@ def normalize_research_url(value: Any) -> str:
         return ""
     netloc = host if port in (None, 80, 443) else f"{host}:{port}"
     path = re.sub(r"/{2,}", "/", parsed.path or "/").rstrip("/") or "/"
+    if not parsed.username and not parsed.password and port in (None, 80, 443):
+        # Publisher landing pages and DOI resolver links identify the same paper.
+        # Normalization only supplies a candidate; resolution is still required.
+        publisher_doi = re.fullmatch(
+            r"/doi/(?:(?:abs|full|pdf|epdf)/)?(10\.\d{4,9}/[-._;()/:a-z0-9]+)",
+            path,
+            flags=re.I,
+        )
+        if publisher_doi:
+            return normalize_research_doi(publisher_doi.group(1))
+        if host in {"nature.com", "www.nature.com"}:
+            nature_article = re.fullmatch(r"/articles/([a-z0-9][a-z0-9._-]+)(?:\.pdf)?", path, flags=re.I)
+            if nature_article:
+                article_id = nature_article.group(1).removesuffix(".pdf")
+                return normalize_research_doi(f"10.1038/{article_id}")
     if host in {"arxiv.org", "www.arxiv.org", "export.arxiv.org"}:
         modern_arxiv = re.fullmatch(
             r"/(?:abs|pdf)/(\d{4}\.\d{4,5})(?:v\d+)?(?:\.pdf)?",
@@ -5144,15 +5159,17 @@ def capture_codex_reference_evidence(
         if isinstance(task.get("codex_reference_verification"), dict)
         else {}
     )
-    if prior.get("message_fingerprint") == message_fingerprint:
-        return None
-
     candidates = sorted(
         identifier
         for identifier in research_reference_identifiers(text)
         if identifier.startswith("doi:")
         or re.fullmatch(r"id:arxiv\d{4}\.\d{4,5}", identifier)
     )[:3]
+    if (
+        prior.get("message_fingerprint") == message_fingerprint
+        and prior.get("candidate_identifiers") == candidates
+    ):
+        return None
     verified = [
         evidence
         for identifier in candidates
@@ -5160,6 +5177,7 @@ def capture_codex_reference_evidence(
     ]
     task["codex_reference_verification"] = {
         "message_fingerprint": message_fingerprint,
+        "candidate_identifiers": candidates,
         "candidate_count": len(candidates),
         "verified_count": len(verified),
         "checked_at": datetime.now().isoformat(timespec="seconds"),
@@ -5448,6 +5466,8 @@ MESSAGE_ONLY_HYPOTHESIS_RE = re.compile(
 )
 MESSAGE_ONLY_UNCERTAINTY_RE = re.compile(
     r"(?:局限|限制|不确定|不確定|反例|失效条件|失效條件|失败条件|失敗條件|"
+    r"可证伪|可證偽|falsifiab|"
+    r"(?:证据|證據).{0,16}(?:主要|仅|僅|只).{0,12}(?:来自|來自|基于|基於)|"
     r"证据.{0,12}(?:有限|不足)|證據.{0,12}(?:有限|不足)|"
     r"(?:不能|不可|不应|不應).{0,24}(?:外推|证明|證明|视为|視為)|"
     r"仅.{0,30}(?:样本|樣本|证据|證據)|(?:尚需|仍需|需要).{0,16}(?:验证|驗證|复现|復現)|"

@@ -8,6 +8,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -37,6 +38,29 @@ def tearDownModule():
 
 
 class WeChatChatSyncLoopTests(unittest.TestCase):
+    def test_subprocess_timeout_enters_same_backoff_as_sender_timeout(self):
+        module = load_wechat_chat_sync_loop()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = root / "target.json"
+            config.write_text(json.dumps({"chat_name": "first", "send_target": {"name": "first"}}))
+            args = argparse.Namespace(
+                configs=str(config), display=":97", interval=45, pause=0.8, timeout=18,
+                priority="", loop=False, once=True, only=[], output_dir=root,
+                queue=root / "queue.jsonl", yield_to_queue=False, failure_backoff=300,
+                max_targets_per_cycle=0,
+            )
+            backoff = {}
+            with mock.patch.object(module, "gui_send_lock_busy", return_value=False), mock.patch.object(
+                module, "open_chat_dry_run", side_effect=subprocess.TimeoutExpired(["gui-send"], 23)
+            ) as opener:
+                result = module.sync_once(args, failure_backoff_until=backoff)
+                again = module.sync_once(args, failure_backoff_until=backoff)
+            self.assertEqual(result[0]["returncode"], 124)
+            self.assertEqual(result[0]["failure_backoff_seconds"], 300)
+            self.assertEqual(again[0]["skipped"], "failure_backoff")
+            opener.assert_called_once()
+
     def write_queue(self, rows):
         temp_dir = tempfile.TemporaryDirectory()
         path = Path(temp_dir.name) / "wechat_task_queue.jsonl"

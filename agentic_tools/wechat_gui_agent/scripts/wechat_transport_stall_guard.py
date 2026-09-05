@@ -941,6 +941,7 @@ def queue_health(
     historical_coverage_unresolved_ids: list[str] = []
     historical_coverage_categories: dict[str, int] = {}
     recent_failed_ids: list[str] = []
+    deferred_delivery_ids: list[str] = []
     superseded_failed_ids: list[str] = []
     delivered_inspiration_at: dict[str, datetime] = {}
     for task_id, task in latest.items():
@@ -976,6 +977,10 @@ def queue_health(
         )
         if superseded_proactive:
             superseded_failed_ids.append(task_id)
+        if status in {"send_deferred_artifact", "send_deferred_locked", "send_failed"}:
+            attempted = parse_timestamp(task.get("last_send_attempt_at")) or failed_at
+            if attempted is None or (now - attempted).total_seconds() < failure_alert_seconds:
+                deferred_delivery_ids.append(task_id)
         if status in {"worker_failed", "failed", "error"} and not delivered_proactive:
             failed_age = (
                 max(0.0, (now - failed_at).total_seconds())
@@ -1027,7 +1032,7 @@ def queue_health(
         if started and age >= threshold:
             stale_ids.append(task_id)
     return {
-        "ok": not stale_ids and not coverage_unresolved_ids and not recent_failed_ids and invalid_lines == 0,
+        "ok": not stale_ids and not coverage_unresolved_ids and not recent_failed_ids and not deferred_delivery_ids and invalid_lines == 0,
         "exists": True,
         "task_count": len(latest),
         "active": len(active),
@@ -1037,6 +1042,7 @@ def queue_health(
         "stale_ids": stale_ids[:20],
         "coverage_unresolved_ids": coverage_unresolved_ids[:20],
         "recent_failed_ids": recent_failed_ids[:20],
+        "deferred_delivery_ids": deferred_delivery_ids[:20],
         "superseded_failed_ids": superseded_failed_ids[:20],
         "historical_coverage_unresolved_count": len(
             historical_coverage_unresolved_ids
@@ -1313,6 +1319,45 @@ def agent_backend_runtime_status() -> dict[str, Any]:
     }
 
 
+def decrypt_refresh_health(path: Path | None = None, *, now: datetime | None = None) -> dict[str, Any]:
+    """A caught-up cursor is not healthy when its upstream cache cannot refresh."""
+    path = path or (WECHAT_PRIVATE / "wechat_decrypt.refresh.status.json")
+    try:
+        state = json.loads(path.read_text(encoding="utf-8"))
+        checked = datetime.fromisoformat(str(state["checked_at"]))
+        if checked.tzinfo is None:
+            checked = checked.replace(tzinfo=HONG_KONG_TZ)
+        age = ((now or datetime.now(timezone.utc)) - checked).total_seconds()
+        counts = {
+            key: int(state.get(key) or 0)
+            for key in ("failed_count", "missing_key_count", "required_missing_count")
+        }
+    except (OSError, ValueError, KeyError, TypeError):
+        return {"ok": False, "status": "refresh_state_missing_or_invalid"}
+    return {
+        "ok": state.get("ok") is True and 0 <= age <= 120,
+        "status": str(state.get("status") or "unknown") if 0 <= age <= 120 else "refresh_stale",
+        "age_seconds": int(age),
+        **counts,
+    }
+
+
+def queue_health_issue(name: str, status: dict[str, Any]) -> dict[str, str] | None:
+    for key, suffix, severity, detail in (
+        ("stale_ids", "stale", "critical", "stale active task(s)"),
+        ("coverage_unresolved_ids", "message_unresolved", "degraded", "unresolved message(s)"),
+        ("recent_failed_ids", "failed", "degraded", "recent failed task(s)"),
+        ("deferred_delivery_ids", "delivery_pending", "degraded", "unverified delivery task(s)"),
+    ):
+        if status.get(key):
+            return {"code": f"{name}_queue_{suffix}", "severity": severity,
+                    "detail": f"{len(status[key])} {detail}"}
+    if status.get("invalid_lines") or status.get("ok") is False:
+        return {"code": f"{name}_queue_invalid", "severity": "degraded",
+                "detail": "Queue is unreadable or contains invalid records"}
+    return None
+
+
 def build_snapshot(*, max_sender_seconds: float = 180.0) -> dict[str, Any]:
     wechat = tmux_snapshot(os.environ.get("WECHAT_SUPERVISOR_SESSION", "labcanvas-wechat"))
     wecom = tmux_snapshot(os.environ.get("WECOM_TMUX_SESSION", "labcanvas-wecom"))
@@ -1335,6 +1380,7 @@ def build_snapshot(*, max_sender_seconds: float = 180.0) -> dict[str, Any]:
         "ok": bool(gui_timeout_health.get("ok")) and bool(client.get("available")),
     }
     direct_monitors = direct_monitor_health(client=client)
+    source_refresh = decrypt_refresh_health() if direct_monitors.get("configured") else {"ok": True, "enabled": False}
     schedules = schedule_health()
     cli_transport = cli_transport_health()
     agent_failures = recent_terminal_agent_failures()
@@ -1365,6 +1411,8 @@ def build_snapshot(*, max_sender_seconds: float = 180.0) -> dict[str, Any]:
             "critical",
             f"{len(direct_monitors.get('stale_configs') or [])} direct monitor heartbeat(s) stale",
         )
+    if not source_refresh.get("ok"):
+        issue("wechat_source_refresh_failed", "critical", str(source_refresh.get("status")))
     if not wecom["running"]:
         issue("wecom_session_missing", "critical", "WeCom tmux session is absent")
     elif wecom_missing:
@@ -1447,16 +1495,9 @@ def build_snapshot(*, max_sender_seconds: float = 180.0) -> dict[str, Any]:
             f"{agent_failures['quota_failure_count']} recent task(s) exhausted all backend fallbacks",
         )
     for name, status in queues.items():
-        if status.get("stale_ids"):
-            issue(f"{name}_queue_stale", "critical", f"{len(status['stale_ids'])} stale active task(s)")
-        elif status.get("coverage_unresolved_ids"):
-            issue(
-                f"{name}_queue_message_unresolved",
-                "degraded",
-                f"{len(status['coverage_unresolved_ids'])} numbered message(s) remain unresolved after retry",
-            )
-        elif status.get("invalid_lines"):
-            issue(f"{name}_queue_invalid", "degraded", f"{status['invalid_lines']} invalid JSONL line(s)")
+        finding = queue_health_issue(name, status)
+        if finding:
+            issues.append(finding)
     severity = "ok"
     if any(item["severity"] == "critical" for item in issues):
         severity = "critical"
@@ -1482,6 +1523,7 @@ def build_snapshot(*, max_sender_seconds: float = 180.0) -> dict[str, Any]:
         "android": android,
         "cli_transport": cli_transport,
         "direct_monitors": direct_monitors,
+        "source_refresh": source_refresh,
         "schedules": schedules,
         "agent_failures": agent_failures,
         "agent_backend": agent_backend,

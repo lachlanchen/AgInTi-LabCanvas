@@ -5795,6 +5795,78 @@ stderr: noisy internal trace
                 guarded["data"]["message_only_research_quality"]["issues"],
             )
 
+    def test_scholarly_publisher_links_normalize_without_trusting_url(self) -> None:
+        worker = load_worker()
+        for url in (
+            "https://www.nature.com/articles/s41586-026-10258-4",
+            "https://nature.com/articles/s41586-026-10258-4.pdf?download=1#section",
+            "https://publisher.example/doi/full/10.1038/s41586-026-10258-4",
+        ):
+            with self.subTest(url=url):
+                self.assertEqual(
+                    worker.research_reference_identifiers(f"论文（{url}）。"),
+                    {"doi:10.1038/s41586-026-10258-4"},
+                )
+        for url in (
+            "https://www.nature.com.evil.example/articles/s41586-026-10258-4",
+            "https://www.nature.com:8443/articles/s41586-026-10258-4",
+            "https://user@www.nature.com/articles/s41586-026-10258-4",
+            "https://www.nature.com/news/not-a-research-article",
+        ):
+            with self.subTest(url=url):
+                self.assertTrue(worker.normalize_research_url(url).startswith("url:"))
+
+    def test_codex_nature_link_rechecks_previously_unrecognized_candidate(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            message = (
+                "研究提出一个可检验方向（https://www.nature.com/articles/s41586-026-10258-4）。"
+                "当前局限是证据有限，仍需跨供体验证。"
+            )
+            task = {
+                "id": "publisher-link-recovery", "artifact_dir": tmp,
+                "agent_session": {"backend": "codex", "ok": True},
+                "route_decision": {"message_only": True, "artifact_delivery": "forbidden"},
+                "execution_contract": {
+                    "artifact_delivery": "forbidden",
+                    "research_evidence": {"required": True, "message_only": True},
+                },
+                "codex_reference_verification": {
+                    "message_fingerprint": worker.hashlib.sha256(message.encode()).hexdigest()[:16],
+                    "candidate_count": 0, "verified_count": 0,
+                },
+            }
+            evidence = {
+                "identifier": "doi:10.1038/s41586-026-10258-4",
+                "kind": "doi", "evidence_level": "identifier_resolved",
+            }
+            result = {"message": message, "files": []}
+            with mock.patch.object(worker, "verify_scholarly_reference", return_value=evidence) as verifier:
+                guarded = worker.enforce_message_only_research_evidence(task, result)
+            self.assertEqual(guarded, result)
+            verifier.assert_called_once_with(evidence["identifier"])
+            self.assertEqual(task["codex_reference_verification"]["candidate_identifiers"], [evidence["identifier"]])
+
+    def test_codex_publisher_link_still_rejects_unresolved_identifier(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            task = {
+                "id": "publisher-link-unresolved", "artifact_dir": tmp,
+                "agent_session": {"backend": "codex", "ok": True},
+                "route_decision": {"message_only": True, "artifact_delivery": "forbidden"},
+                "execution_contract": {
+                    "artifact_delivery": "forbidden",
+                    "research_evidence": {"required": True, "message_only": True},
+                },
+            }
+            with mock.patch.object(worker, "verify_scholarly_reference", return_value=None):
+                guarded = worker.enforce_message_only_research_evidence(task, {
+                    "message": "假设待验证：https://nature.com/articles/not-registered",
+                    "files": [],
+                })
+            self.assertTrue(guarded["no_reply"])
+            self.assertNotIn("research_evidence_manifest", task)
+
     def test_codex_resolved_identifier_accepts_explicit_failure_condition(self) -> None:
         worker = load_worker()
         with tempfile.TemporaryDirectory() as tmp:
@@ -5838,6 +5910,12 @@ stderr: noisy internal trace
             self.assertEqual(
                 task["message_only_research_quality"]["status"], "accepted"
             )
+
+    def test_research_boundary_accepts_natural_evidence_scope_and_falsifiability(self) -> None:
+        worker = load_worker()
+        self.assertTrue(worker.MESSAGE_ONLY_UNCERTAINTY_RE.search("当前强因果证据主要来自小鼠。"))
+        self.assertTrue(worker.MESSAGE_ONLY_UNCERTAINTY_RE.search("这是一个可证伪预测。"))
+        self.assertFalse(worker.MESSAGE_ONLY_UNCERTAINTY_RE.search("该研究证明一定能成功。"))
 
     def test_codex_message_only_research_rejects_unresolved_doi(self) -> None:
         worker = load_worker()
