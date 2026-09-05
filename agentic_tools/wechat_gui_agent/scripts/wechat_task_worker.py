@@ -1607,9 +1607,13 @@ def process_one(queue: Path, chat: str, *, send: bool, send_targets: Path = DEFA
         return True
     task = claim_next_pending(queue)
     if not task:
-        if send and os.environ.get("WECHAT_WORKER_AUTO_FLUSH_DEFERRED", "1") == "1":
-            return flush_one_deferred_send(queue, chat, send_targets=send_targets, log_idle=log_idle)
-        if log_idle:
+        auto_flush = send and os.environ.get("WECHAT_WORKER_AUTO_FLUSH_DEFERRED", "1") == "1"
+        if auto_flush:
+            if flush_one_deferred_send(queue, chat, send_targets=send_targets, log_idle=log_idle):
+                return True
+        if retry_one_source_knowledge(queue):
+            return True
+        if log_idle and not auto_flush:
             print(json.dumps({"status": "no-pending-task"}, ensure_ascii=False))
         return False
     log_worker_event("claimed", task)
@@ -3525,15 +3529,77 @@ def task_memory_model(task: dict[str, Any]) -> str:
     return str(shared_models.get(provider) or provider or "localllm-fast")
 
 
-def retain_source_knowledge(task: dict[str, Any], *, result: dict[str, Any] | None = None) -> None:
+def retain_source_knowledge(
+    task: dict[str, Any], *, result: dict[str, Any] | None = None,
+    timeout_seconds: float = 10.0,
+) -> None:
     try:
-        task["source_knowledge"] = store_task_knowledge(task, result=result)
+        task["source_knowledge"] = store_task_knowledge(
+            task, result=result, timeout_seconds=timeout_seconds,
+        )
     except (OSError, ValueError, sqlite3.Error) as exc:
         # Delivery remains independent; the persisted task contains the inputs
         # needed to retry indexing without repeating source retrieval or a send.
+        previous = task.get("source_knowledge") or {}
+        attempts = int(previous.get("retry_attempts") or 0) + 1
+        retry_after = datetime.now() + timedelta(seconds=min(1800, 30 * 2 ** min(attempts - 1, 6)))
         task["source_knowledge"] = {
             "status": "retry_pending", "error": type(exc).__name__,
+            "retry_attempts": attempts,
+            "retry_after": retry_after.isoformat(timespec="seconds"),
         }
+
+
+def retry_one_source_knowledge(queue: Path) -> bool:
+    """Repair one retained-source index without claiming work or sending again."""
+    if not queue.is_file():
+        return False
+    # Separate from the queue lock: a busy SQLite database must not hold up
+    # incoming messages, task claims, or another worker's delivery updates.
+    retry_lock = queue.with_suffix(queue.suffix + ".source-knowledge.lock")
+    queue_lock = queue.with_suffix(queue.suffix + ".lock")
+    with retry_lock.open("a", encoding="utf-8") as guard:
+        try:
+            fcntl.flock(guard, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return False
+        with queue_lock.open("a", encoding="utf-8") as lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return False
+            candidate = None
+            now_text = datetime.now().isoformat(timespec="seconds")
+            for task in read_tasks(queue):
+                state = task.get("source_knowledge") or {}
+                if task.get("status") in {"pending", CLAIMED_STATUS}:
+                    continue
+                if state.get("status") != "retry_pending":
+                    continue
+                if str(state.get("retry_after") or "") > now_text:
+                    continue
+                candidate = task
+                break
+        if candidate is None:
+            return False
+        previous = copy.deepcopy(candidate["source_knowledge"])
+        retain_source_knowledge(candidate, result=candidate.get("result"), timeout_seconds=0.25)
+        with queue_lock.open("a", encoding="utf-8") as lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return False
+            tasks = read_tasks(queue)
+            for current in tasks:
+                if current.get("id") != candidate.get("id"):
+                    continue
+                if (task_execution_generation(current) != task_execution_generation(candidate)
+                        or current.get("source_knowledge") != previous):
+                    return False
+                current["source_knowledge"] = candidate["source_knowledge"]
+                write_tasks(queue, tasks)
+                return True
+    return False
 
 
 def task_long_term_history_context(task: dict[str, Any]) -> dict[str, Any]:

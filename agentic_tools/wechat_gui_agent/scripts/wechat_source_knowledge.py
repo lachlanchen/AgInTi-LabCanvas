@@ -21,12 +21,12 @@ DEFAULT_DB = PRIVATE / "source_knowledge.sqlite"
 MAX_TEXT_BYTES = 8 * 1024 * 1024
 
 
-def init_db(path: Path) -> None:
+def init_db(path: Path, *, timeout_seconds: float = 10.0) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     if not path.exists():
         path.touch(mode=0o600)
     path.chmod(0o600)
-    with sqlite3.connect(path, timeout=10) as conn:
+    with closing(sqlite3.connect(path, timeout=timeout_seconds)) as conn, conn:
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS source_knowledge (
                 id INTEGER PRIMARY KEY,
@@ -114,6 +114,7 @@ def evidence_records(task: dict[str, Any]):
 def store_task_knowledge(
     task: dict[str, Any], *, db: Path = DEFAULT_DB,
     result: dict[str, Any] | None = None, allowed_roots: list[Path] | None = None,
+    timeout_seconds: float = 10.0,
 ) -> dict[str, Any]:
     transport, chat = task_scope(task)
     task_id = str(task.get("id") or "").strip()
@@ -165,9 +166,10 @@ def store_task_knowledge(
                 }))
     if not records:
         return {"status": "no_verified_source_text", "inserted": 0, "errors": errors}
-    init_db(db)
+    timeout_seconds = max(0.01, float(timeout_seconds))
+    init_db(db, timeout_seconds=timeout_seconds)
     inserted = 0
-    with sqlite3.connect(db, timeout=10) as conn:
+    with closing(sqlite3.connect(db, timeout=timeout_seconds)) as conn, conn:
         for kind, title, status, body, digest, provenance in records:
             cur = conn.execute("""INSERT OR IGNORE INTO source_knowledge
                 (transport,chat,task_id,source_json,kind,title,evidence_status,body,

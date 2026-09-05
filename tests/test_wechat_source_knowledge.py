@@ -78,6 +78,31 @@ class SourceKnowledgeTests(unittest.TestCase):
         with self.assertRaises(sqlite3.ProgrammingError):
             conn.execute("SELECT 1")
 
+    def test_store_closes_schema_and_write_connections(self):
+        connections = []
+        connect = sqlite3.connect
+
+        def tracked_connect(*args, **kwargs):
+            conn = connect(*args, **kwargs)
+            connections.append(conn)
+            return conn
+
+        with mock.patch.object(knowledge.sqlite3, "connect", side_effect=tracked_connect):
+            self.assertEqual(self.store()["inserted"], 1)
+        self.assertEqual(len(connections), 2)
+        for conn in connections:
+            with self.assertRaises(sqlite3.ProgrammingError):
+                conn.execute("SELECT 1")
+
+    def test_store_respects_short_database_lock_timeout(self):
+        self.store()
+        with sqlite3.connect(self.db) as writer:
+            writer.execute("BEGIN EXCLUSIVE")
+            started = time.monotonic()
+            with self.assertRaises(sqlite3.OperationalError):
+                self.store(timeout_seconds=0.05)
+            self.assertLess(time.monotonic() - started, 1.0)
+
     def test_failed_or_unverified_card_does_not_become_knowledge(self):
         finder = self.task["preflight"]["shipinhao_media_transcript"]
         finder["status"] = "failed"

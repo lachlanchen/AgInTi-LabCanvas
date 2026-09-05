@@ -52,7 +52,119 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         with mock.patch.object(worker, "store_task_knowledge", side_effect=sqlite3.OperationalError("locked")):
             worker.retain_source_knowledge(task, result={"message": "Useful answer"})
         self.assertEqual(task["source_knowledge"]["status"], "retry_pending")
+        self.assertEqual(task["source_knowledge"]["retry_attempts"], 1)
+        self.assertGreater(datetime.fromisoformat(task["source_knowledge"]["retry_after"]), datetime.now())
         self.assertNotIn("worker_error", task)
+
+    def test_source_knowledge_retry_preserves_delivery_and_concurrent_queue_updates(self) -> None:
+        worker = load_worker()
+        task = {"id": "source-retry", "chat": "shares", "status": "send_deferred_artifact",
+                "result": {"message": "Source summary", "files": ["original.mp4"]},
+                "source_knowledge": {"status": "retry_pending"}}
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            worker.write_tasks(queue, [task])
+
+            def store(snapshot, *, result, timeout_seconds):
+                self.assertEqual(result, task["result"])
+                self.assertEqual(timeout_seconds, 0.25)
+                with queue.with_suffix(".jsonl.lock").open("a") as lock:
+                    worker.fcntl.flock(lock, worker.fcntl.LOCK_EX | worker.fcntl.LOCK_NB)
+                current = worker.read_tasks(queue)
+                current[0]["status"] = "done"
+                current[0]["delivered_at"] = "newer transport evidence"
+                current.append({"id": "new-inbound", "status": "pending"})
+                worker.write_tasks(queue, current)
+                return {"status": "stored", "inserted": 2}
+
+            with mock.patch.object(worker, "store_task_knowledge", side_effect=store) as writer, \
+                 mock.patch.object(worker, "run_worker_codex") as agent, \
+                 mock.patch.object(worker, "send_result_with_retries") as sender:
+                self.assertTrue(worker.retry_one_source_knowledge(queue))
+                self.assertFalse(worker.retry_one_source_knowledge(queue))
+                writer.assert_called_once()
+                agent.assert_not_called()
+                sender.assert_not_called()
+            saved = worker.read_tasks(queue)
+            self.assertEqual(len(saved), 2)
+            self.assertEqual(saved[0]["status"], "done")
+            self.assertEqual(saved[0]["result"], task["result"])
+            self.assertEqual(saved[0]["source_knowledge"]["status"], "stored")
+            self.assertEqual(saved[0]["delivered_at"], "newer transport evidence")
+
+    def test_source_knowledge_retry_backs_off_after_database_failure(self) -> None:
+        worker = load_worker()
+        task = {"id": "source-retry", "chat": "shares", "status": "done",
+                "source_knowledge": {"status": "retry_pending", "retry_attempts": 3}}
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            worker.write_tasks(queue, [task])
+            with mock.patch.object(worker, "store_task_knowledge", side_effect=sqlite3.OperationalError("locked")) as writer:
+                self.assertTrue(worker.retry_one_source_knowledge(queue))
+                self.assertFalse(worker.retry_one_source_knowledge(queue))
+                writer.assert_called_once()
+            saved = worker.read_tasks(queue)[0]
+            self.assertEqual(saved["source_knowledge"]["retry_attempts"], 4)
+            self.assertEqual(saved["status"], "done")
+
+    def test_source_knowledge_retry_skips_active_or_not_due_and_retries_one_at_a_time(self) -> None:
+        worker = load_worker()
+        base = {"chat": "shares", "status": "done", "source_knowledge": {"status": "retry_pending"}}
+        tasks = [{**base, "id": "pending", "status": "pending"},
+                 {**base, "id": "claimed", "status": worker.CLAIMED_STATUS},
+                 {**base, "id": "later", "source_knowledge": {"status": "retry_pending", "retry_after": "2999-01-01T00:00:00"}},
+                 {**base, "id": "first"}, {**base, "id": "second"}]
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            worker.write_tasks(queue, tasks)
+            with mock.patch.object(worker, "store_task_knowledge", return_value={"status": "stored"}) as writer:
+                self.assertTrue(worker.retry_one_source_knowledge(queue))
+                self.assertEqual(writer.call_args.args[0]["id"], "first")
+                writer.assert_called_once()
+            saved = worker.read_tasks(queue)
+            self.assertEqual(saved[-1]["source_knowledge"]["status"], "retry_pending")
+
+    def test_source_knowledge_retry_does_not_overwrite_newer_knowledge_state(self) -> None:
+        worker = load_worker()
+        task = {"id": "source-retry", "chat": "shares", "status": "done",
+                "source_knowledge": {"status": "retry_pending"}}
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            worker.write_tasks(queue, [task])
+
+            def store(*args, **kwargs):
+                updated = {**task, "source_knowledge": {"status": "stored", "records": 4}}
+                worker.write_tasks(queue, [updated])
+                return {"status": "stored", "records": 1}
+
+            with mock.patch.object(worker, "store_task_knowledge", side_effect=store):
+                self.assertFalse(worker.retry_one_source_knowledge(queue))
+            self.assertEqual(worker.read_tasks(queue)[0]["source_knowledge"]["records"], 4)
+
+    def test_source_knowledge_retry_does_not_wait_for_other_maintenance(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            worker.write_tasks(queue, [{"id": "task", "source_knowledge": {"status": "retry_pending"}}])
+            with mock.patch.object(worker.fcntl, "flock", side_effect=BlockingIOError), \
+                 mock.patch.object(worker, "store_task_knowledge") as writer:
+                self.assertFalse(worker.retry_one_source_knowledge(queue))
+                writer.assert_not_called()
+
+    def test_idle_worker_retries_knowledge_without_agent_or_chat_send(self) -> None:
+        worker = load_worker()
+        with mock.patch.object(worker, "reconcile_passive_video_publish_followups", return_value=0), \
+             mock.patch.object(worker, "reconcile_numbered_message_coverage", return_value=0), \
+             mock.patch.object(worker, "merge_existing_pending_interruptions", return_value=0), \
+             mock.patch.object(worker, "adopt_active_generated_video_tasks", return_value=None), \
+             mock.patch.object(worker, "claim_next_pending", return_value=None), \
+             mock.patch.object(worker, "retry_one_source_knowledge", return_value=True) as retry, \
+             mock.patch.object(worker, "run_worker_codex") as agent, \
+             mock.patch.object(worker, "send_result_with_retries") as sender:
+            self.assertTrue(worker.process_one(Path("queue.jsonl"), "shares", send=False, log_idle=False))
+            retry.assert_called_once_with(Path("queue.jsonl"))
+            agent.assert_not_called()
+            sender.assert_not_called()
 
     def test_idle_queue_gate_scans_changes_and_periodic_maintenance_only(self) -> None:
         worker = load_worker()

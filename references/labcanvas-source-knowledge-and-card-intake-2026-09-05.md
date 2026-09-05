@@ -62,7 +62,18 @@ python agentic_tools/wechat_gui_agent/scripts/wechat_source_knowledge.py \
 ```
 
 Database failures are recorded in the durable task's `source_knowledge` as
-`retry_pending`; the same command retries indexing without rerunning the task.
+`retry_pending`. Idle worker maintenance now retries one due index after
+pending work and due deliveries have had priority. It uses a 250 ms SQLite
+lock wait, a nonblocking maintenance lock, and exponential backoff from 30
+seconds up to 30 minutes. Legacy retry markers without a deadline are due
+immediately. The source-knowledge field is reconciled against the current task
+generation and state; newer transport results and newly arrived queue rows
+are preserved. No queue lock is held while indexing. SQLite schema, write,
+and read connections are explicitly closed.
+
+This maintenance performs no source retrieval, model invocation, task rerun,
+or chat send. It does not reset delivery status or revive an expired response.
+The same exact-task command above remains available for operator indexing.
 Partial read/import failures are reported separately. Never claim an import
 completed based only on a generated summary or artifact filename.
 
@@ -155,6 +166,12 @@ periodic heartbeat sender and does not authorize repetitive progress messages.
   ordinary chat, and EchoMind prompts; exact-chat/transport isolation; disabled
   retrieval; and continued routing on a private database error. A locked SQLite
   database test checks the lookup deadline.
+- Idle-maintenance regressions cover database retry/backoff, queue contention,
+  concurrent delivery updates, newer knowledge state, active-task exclusion,
+  and one-task-per-pass behavior. Schema/write connection closure is tested.
+  Validation on September 5: 594 worker tests, 183 direct-chat tests, 12 source
+  knowledge tests, and the full WeChat self-test suite passed. A live internal
+  maintenance invocation found no pending knowledge retry and sent nothing.
 
 ## Continued Live Audit
 
