@@ -43,7 +43,7 @@ ADB_KEY_FILE="${ANDROID_DEVICE_ADB_KEY_FILE:-$HOME/.android/adbkey}"
 usage() {
   cat <<'EOF'
 Usage:
-  android_device_desktop.sh [on|off|start|stop|restart|transport-restart|dual-heal|status|key-status|dual|single|wechat|wecom] [--serial SERIAL] [--open-wechat]
+  android_device_desktop.sh [on|off|start|stop|restart|transport-restart|dual-heal|status|key-status|dual|single|wechat|wecom|fit] [--serial SERIAL] [--open-wechat]
 
 Starts a dedicated tmux-held noVNC desktop running scrcpy for an Android device.
 
@@ -60,6 +60,8 @@ Actions:
   dual              Keep WeChat physical and WeCom virtual side by side.
   single, wecom      Return to the automation-safe physical WeCom mirror.
   wechat             Show WeChat on the physical mirror with media muted.
+  fit               Fit the existing single mirror to its X desktop; no phone
+                    commands, login changes, or service restarts.
 
 Environment defaults:
   ANDROID_DEVICE_TMUX_SESSION=labcanvas-android-mix2s
@@ -75,7 +77,7 @@ EOF
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    on|off|start|stop|restart|transport-restart|dual-heal|status|key-status|dual|single|wechat|wecom) ACTION="$1"; shift ;;
+    on|off|start|stop|restart|transport-restart|dual-heal|status|key-status|dual|single|wechat|wecom|fit) ACTION="$1"; shift ;;
     --serial) SERIAL="$2"; shift 2 ;;
     --open-wechat) OPEN_WECHAT="1"; shift ;;
     --no-wake) WAKE_DEVICE="0"; shift ;;
@@ -305,6 +307,37 @@ window_id_by_title() {
     tail -n 1 || true
 }
 
+fit_single_window() {
+  local serial="$SERIAL" window width height geometry
+  need xdotool
+  # Host-only repair: do not discover devices through ADB or launch an app.
+  if [[ -z "$serial" && -s "$SERIAL_FILE" ]]; then
+    serial="$(cat "$SERIAL_FILE")"
+  fi
+  if [[ -z "$serial" ]]; then
+    echo "No saved mirror identity; specify --serial." >&2
+    return 1
+  fi
+  if [[ -n "$(window_id_by_title "LabCanvas WeCom Virtual ($serial)")" ]]; then
+    echo "Dual mirror is visible; leave its side-by-side layout unchanged." >&2
+    return 1
+  fi
+  window="$(window_id_by_title "LabCanvas Android MIX 2S ($serial)")"
+  if [[ -z "$window" ]]; then
+    echo "Existing mirror window not found; no services started." >&2
+    return 1
+  fi
+  geometry="$(DISPLAY="$DISPLAY_ID" xdotool getdisplaygeometry)" || return 1
+  read -r width height <<<"$geometry"
+  if [[ ! "$width" =~ ^[1-9][0-9]*$ || ! "$height" =~ ^[1-9][0-9]*$ ]]; then
+    echo "Unable to read the live X desktop size." >&2
+    return 1
+  fi
+  DISPLAY="$DISPLAY_ID" xdotool windowmove "$window" 0 0 \
+    windowsize "$window" "$width" "$height" windowraise "$window" || return 1
+  echo "Mirror fitted to ${width}x${height}; phone state unchanged."
+}
+
 tile_dual_windows() {
   local attempt left_title right_title left_window="" right_window=""
   left_title="LabCanvas Android MIX 2S ($1)"
@@ -492,7 +525,7 @@ ensure_dual_guard() {
 
 ensure_single_layout() {
   local app_package="${1:-com.tencent.wework}"
-  local serial window=""
+  local serial
   need xdotool
   serial="$(known_serial 2>/dev/null || true)"
   if tmux has-session -t "$SESSION" 2>/dev/null && tmux_window_exists "$DUAL_WINDOW_NAME"; then
@@ -506,12 +539,8 @@ ensure_single_layout() {
       mute_media "$serial"
     fi
     launch_physical_app "$serial" "$app_package"
-    window="$(window_id_by_title "LabCanvas Android MIX 2S ($serial)")"
   fi
-  if [[ -n "$window" ]]; then
-    DISPLAY="$DISPLAY_ID" xdotool windowsize "$window" 540 1080
-    DISPLAY="$DISPLAY_ID" xdotool windowmove "$window" 450 660
-  fi
+  fit_single_window
   echo "dual displays: off"
 }
 
@@ -640,6 +669,7 @@ stop_session() {
 
 start_session() {
   local attempt authorized="0" command escaped_serial log_dir primary_loop_command scrcpy_bin serial
+  local screen_width screen_height geometry
   need adb
   need tmux
   scrcpy_bin="$(resolve_scrcpy_bin)"
@@ -672,6 +702,12 @@ start_session() {
   fi
   log_dir="$ROOT/output/android_device_agent/$(date +%F)"
   mkdir -p "$log_dir"
+  geometry="${SCREEN%x*}"
+  screen_width="${geometry%x*}"
+  screen_height="${geometry#*x}"
+  if geometry="$(DISPLAY="$DISPLAY_ID" xdotool getdisplaygeometry 2>/dev/null)"; then
+    read -r screen_width screen_height <<<"$geometry"
+  fi
   command=$(printf '%q ' \
     "$VIRTUAL_LAUNCHER" \
     --name "$NAME" \
@@ -687,8 +723,9 @@ start_session() {
     --stay-awake \
     --disable-screensaver \
     --window-title "LabCanvas Android MIX 2S ($serial)" \
-    --window-width 540 \
-    --window-height 1080)
+    --window-x 0 --window-y 0 \
+    --window-width "$screen_width" \
+    --window-height "$screen_height")
   primary_loop_command="while true; do if adb -s $(printf '%q' "$serial") wait-for-device >/dev/null 2>&1; then $command || true; fi; sleep '$RETRY_SECONDS'; done"
   if tmux has-session -t "$SESSION" 2>/dev/null; then
     echo "$SESSION already running"
@@ -710,6 +747,9 @@ start_session() {
         sleep 0.5
       done
     fi
+    if [[ "$(stored_layout)" != "dual" ]]; then
+      fit_single_window || true
+    fi
     status
     return
   fi
@@ -727,6 +767,9 @@ start_session() {
   fi
   if [[ "$authorized" == "1" && "$OPEN_WECHAT" == "1" ]]; then
     adb -s "$serial" shell monkey -p com.tencent.mm -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1 || true
+  fi
+  if [[ "$(stored_layout)" != "dual" ]]; then
+    fit_single_window || true
   fi
   status
 }
@@ -747,6 +790,7 @@ case "$ACTION" in
     fi
     ;;
   transport-restart) restart_novnc_transport ;;
+  fit) fit_single_window ;;
   dual-heal) heal_dual_layout_once ;;
   status) status ;;
   key-status) adb_key_status ;;
