@@ -111,6 +111,33 @@ def pending_receipt_path(target: dict, message: str, private: Path = PRIVATE) ->
     return private / "native_text_delivery" / (hashlib.sha256(identity.encode()).hexdigest() + ".json")
 
 
+def pending_outbound_echo(config: dict, row: dict, private: Path = PRIVATE) -> bool:
+    """Recognize our native row before the sender finishes waiting for its echo."""
+    sender = str(config.get("self_wxid") or "")
+    if not sender or row.get("sender") != sender or row.get("local_type") != 1:
+        return False
+    message = str(row.get("content") or "")
+    if message.startswith(sender + ":\n"):
+        message = message[len(sender) + 2:]
+    target = dict(config.get("send_target") or {})
+    target.setdefault("name", config.get("chat_name"))
+    target.setdefault("query", config.get("chat_name"))
+    path = pending_receipt_path(target, message, private)
+    try:
+        receipt = json.loads(path.read_text(encoding="utf-8"))
+        db = str(row.get("_message_db") or row.get("message_db") or "")
+        after = receipt.get("after") or {}
+        return bool(
+            receipt.get("table") == config.get("message_table")
+            and receipt.get("sender") == sender
+            and db in after
+            and int(row.get("local_id") or 0) > int(after[db])
+            and 0 <= float(row.get("create_time") or 0) - float(receipt["started_at"]) <= 120
+        )
+    except (OSError, ValueError, TypeError, KeyError, AttributeError):
+        return False
+
+
 def retain_pending_receipt(path: Path, receipt: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     # Persist before Enter. Even a process kill must not authorize a blind retry.

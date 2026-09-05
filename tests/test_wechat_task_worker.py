@@ -4281,6 +4281,10 @@ stderr: noisy internal trace
         self.assertEqual(result["status"], "transcribed")
         self.assertEqual(len(calls), 2)
         self.assertNotIn("weixin.qq.com/sph", source_texts[0])
+        self.assertIn("--no-public-mirror-recovery", calls[0])
+        self.assertNotIn("--no-public-mirror-recovery", calls[1])
+        self.assertIn("--recovered-share-url", calls[1])
+        self.assertFalse(worker.should_prepare_media_resolution(task))
         self.assertIn("https://weixin.qq.com/sph/Ae2UMH6gqr", source_texts[1])
         capture.assert_called_once()
         self.assertEqual(
@@ -4317,6 +4321,7 @@ stderr: noisy internal trace
         self.assertIn("--expected-duration-seconds", command)
         self.assertEqual(command[command.index("--expected-duration-seconds") + 1], "42.500")
         self.assertIn("--recover-share-link-first", command)
+        self.assertIn("--share-link-only", command)
         self.assertEqual(result["error_code"], "finder_player_unavailable")
         self.assertTrue(result["source_card_found"])
 
@@ -14476,6 +14481,52 @@ stderr: noisy internal trace
                 repeated = worker.ensure_meaningful_delivery_path(source, task)
             self.assertEqual(repeated, delivered)
             self.assertEqual(len(task["delivery_artifact_aliases"]), 1)
+
+    def test_required_artifact_delivery_accepts_verified_alias_once(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "output.mp4"
+            source.write_bytes(b"exact original video")
+            task = {
+                "id": "alias-delivery",
+                "chat": "test-chat",
+                "request": "Send the lecture video",
+                "artifact_dir": tmp,
+            }
+            alias = worker.ensure_meaningful_delivery_path(source, task)
+            result = {"message": "Attached.", "files": [str(source), str(alias)],
+                      "data": {"require_file_delivery": True}}
+            with mock.patch.object(worker, "send_file") as send_file, \
+                 mock.patch.object(worker, "send_result_text_parts"), \
+                 mock.patch.object(worker, "reconcile_personal_wechat_delivery_from_mirror"):
+                worker.send_result_once(result, "test-chat", root / "targets.json",
+                                        task=task, target={"name": "test-chat"})
+                worker.send_result_once(result, "test-chat", root / "targets.json",
+                                        task=task, target={"name": "test-chat"})
+            self.assertEqual(send_file.call_count, 1)
+            self.assertEqual(worker.required_delivery_file_paths(result, task), [alias])
+            self.assertTrue(worker.required_file_delivery_complete(task, result))
+            repaired = worker.stored_result_repair_delivery(task, result, fingerprint="receipt-fix")
+            self.assertEqual(repaired["files"], result["files"])
+            self.assertFalse(list(root.rglob("*quality-repaired*")))
+            alias.unlink()
+            alias.write_bytes(b"wrong copied video")
+            self.assertFalse(worker.required_file_delivery_complete(task, result))
+            alias.unlink()
+            self.assertFalse(worker.required_file_delivery_complete(task, result))
+
+    def test_card_delivery_alias_uses_source_title_not_prompt_wrapper(self) -> None:
+        worker = load_worker()
+        task = {
+            "request": "Treat this as a message forwarded from WeChat into an agent",
+            "preflight": {"shipinhao_media_transcript": {"profile": {
+                "title": "A literature lecture", "object_id": "1234567890123456789"
+            }}},
+        }
+        name = worker.meaningful_delivery_basename(Path("output.mp4"), task)
+        self.assertIn("literature-lecture", name)
+        self.assertNotIn("forwarded", name)
 
     def test_shipinhao_delivery_filename_limits_utf8_bytes(self) -> None:
         worker = load_worker()

@@ -1833,6 +1833,16 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
 
         self.assertEqual(direct_chatops.response_skip_reason(config, {}, row), "self_outbound_echo")
 
+    def test_native_pending_receipt_blocks_echo_before_sender_confirmation(self) -> None:
+        config = self.base_config()
+        config["allow_human_self_messages"] = True
+        row = self.row("A natural answer without bot markers", sender="self", local_id=152)
+        with mock.patch.object(direct_chatops, "pending_outbound_echo", return_value=True) as pending:
+            self.assertEqual(direct_chatops.response_skip_reason(config, {}, row), "self_outbound_echo")
+            pending.assert_called_once_with(config, row)
+        with mock.patch.object(direct_chatops, "pending_outbound_echo", return_value=False):
+            self.assertTrue(direct_chatops.should_respond(config, {}, self.row("Please explain this", sender="self")))
+
     def test_verified_android_send_ledger_closes_mirror_crash_window(self) -> None:
         config = self.base_config()
         config["allow_human_self_messages"] = True

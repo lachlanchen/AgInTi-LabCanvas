@@ -92,6 +92,26 @@ class NativeTextDeliveryTests(unittest.TestCase):
         self.insert(receipt)
         self.assertIsNotNone(delivery.wait_native_receipt(receipt, "reply", timeout=0, private=self.private))
 
+    def test_pending_send_is_an_echo_before_delivery_is_recorded(self):
+        receipt = delivery.prepare_receipt(self.target, self.private)
+        config = json.loads((self.private / "shares-direct-chatops.local.json").read_text())
+        path = delivery.pending_receipt_path(self.target, "reply", self.private)
+        delivery.retain_pending_receipt(path, receipt)
+        row = {"sender": "self_sender", "local_type": 1, "content": "reply",
+               "_message_db": "message_1.db", "local_id": 1,
+               "create_time": receipt["started_at"]}
+        self.assertTrue(delivery.pending_outbound_echo(config, row, self.private))
+        self.assertTrue(delivery.pending_outbound_echo(config, {**row, "content": "self_sender:\nreply"}, self.private))
+        for change in ({"sender": "peer_sender"}, {"content": "human instruction"},
+                       {"_message_db": "message_2.db"}, {"local_id": 0}, {"local_type": 43},
+                       {"create_time": receipt["started_at"] - 1},
+                       {"create_time": receipt["started_at"] + 121}):
+            with self.subTest(change=change):
+                self.assertFalse(delivery.pending_outbound_echo(config, {**row, **change}, self.private))
+        self.assertFalse(delivery.pending_outbound_echo({**config, "message_table": "Msg_dcba"}, row, self.private))
+        path.unlink()
+        self.assertFalse(delivery.pending_outbound_echo(config, row, self.private))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -22,9 +22,21 @@ that contract. Use polite, ownership-checked window close requests for native
 preview cleanup, never force-destroy application windows. A heartbeat or an
 unlocked client does not prove the player or sender is operational.
 
+Finder cards bypass generic thumbnail/media scans. After an expired embedded
+URL, use the identity-checked native share menu with `--share-link-only`, then
+hand the copied URL explicitly to the existing original-video transcriber via
+`--recovered-share-url`. Release the GUI lock before download/ASR. Do not silently
+fall back to recording. The source-knowledge reference above records the live
+card-only verification and the client-specific menu/OCR details.
+
 For text delivery, fresh clipboard readback and an exact native outgoing row
 are required; a stale clipboard or screenshot difference is not confirmation.
 Persist the pre-Enter receipt and resolve uncertain sends before any retry.
+The intake monitor must recognize that pending receipt before the successful
+send event exists, without blanket-filtering the owner's own-account messages.
+Renamed delivery files satisfy their source only after content verification;
+normal receipt repairs must not invent fresh filenames and resend unchanged
+attachments. Explicit rebuilt-artifact delivery remains separate.
 Queue expiry must not erase a current client's file-picker failure from health.
 See [native delivery verification](../../../references/labcanvas-native-delivery-verification-2026-09-05.md)
 for the implementation, private receipt format, tests, and remaining GUI blocker.

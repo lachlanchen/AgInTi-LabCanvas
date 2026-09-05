@@ -23,6 +23,95 @@ def load_module():
 
 
 class ShipinhaoGuiAudioCaptureTests(unittest.TestCase):
+    def test_native_share_menu_copies_only_exact_link_action(self) -> None:
+        module = load_module()
+        clipboard_reads = 0
+        tsv = ("level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext\n"
+               "5\t1\t1\t1\t1\t1\t90\t240\t180\t60\t95\t转发给朋友\n"
+               "5\t1\t1\t1\t2\t1\t90\t450\t180\t60\t95\t复制链接\n")
+        with tempfile.TemporaryDirectory() as tmp, \
+             mock.patch.object(module.shutil, "which", return_value="/usr/bin/xclip"), \
+             mock.patch.object(module, "capture_identity_evidence", return_value={"matched": True}), \
+             mock.patch.object(module.subprocess, "run") as write, \
+             mock.patch.object(module.time, "sleep"), \
+             mock.patch.object(module, "run") as run:
+            def execute(command, **kwargs):
+                nonlocal clipboard_reads
+                output = ""
+                if command[0] == "xclip":
+                    clipboard_reads += 1
+                    output = write.call_args.kwargs["input"] if clipboard_reads == 1 else "https://weixin.qq.com/sph/test1234"
+                elif command[0] == "tesseract":
+                    output = tsv
+                return mock.Mock(stdout=output, returncode=0)
+            run.side_effect = execute
+            result = module.recover_share_link_from_player(
+                player={"id": "20", "x": 100, "y": 100, "width": 920, "height": 890},
+                env={"DISPLAY": ":97"}, output_dir=Path(tmp), identity_terms=["Exact title"], min_term_matches=1)
+            self.assertEqual(result["status"], "verified")
+            clicks = [call.args[0] for call in run.call_args_list if "click" in call.args[0]]
+            self.assertEqual(len(clicks), 2)
+            self.assertEqual(clicks[-1], ["xdotool", "mousemove", "700", "850", "click", "1"])
+            self.assertNotIn("3", clicks[0])
+
+    def test_copy_link_label_is_not_a_substring_of_another_action(self) -> None:
+        module = load_module()
+        tsv = ("level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext\n"
+               "5\t1\t1\t1\t1\t1\t800\t820\t100\t20\t95\t复制链接后分享\n")
+        self.assertEqual(module.copy_link_menu_candidates(tsv), [])
+
+    def test_failed_menu_image_never_uses_stale_ocr(self) -> None:
+        module = load_module()
+        for failed_tool in ("import", "convert"):
+            with self.subTest(failed_tool=failed_tool), tempfile.TemporaryDirectory() as tmp, \
+                 mock.patch.object(module.shutil, "which", return_value="/usr/bin/xclip"), \
+                 mock.patch.object(module, "capture_identity_evidence", return_value={"matched": True}), \
+                 mock.patch.object(module.subprocess, "run") as write, \
+                 mock.patch.object(module.time, "sleep"), \
+                 mock.patch.object(module, "run") as run:
+                def execute(command, **kwargs):
+                    self.assertNotEqual(command[0], "tesseract")
+                    output = write.call_args.kwargs["input"] if command[0] == "xclip" else ""
+                    return mock.Mock(stdout=output, returncode=int(command[0] == failed_tool))
+                run.side_effect = execute
+                result = module.recover_share_link_from_player(
+                    player={"id": "20", "x": 100, "y": 100, "width": 920, "height": 890},
+                    env={"DISPLAY": ":97"}, output_dir=Path(tmp),
+                    identity_terms=["Exact title"], min_term_matches=1)
+                self.assertEqual(result["status"], "unavailable")
+
+    def test_share_link_only_never_records_and_releases_player(self) -> None:
+        module = load_module()
+        gui = mock.Mock()
+        gui.find_wechat_window.return_value = mock.Mock(wid="16")
+        gui.open_target.return_value = {"ok": True}
+        from contextlib import nullcontext
+        with tempfile.TemporaryDirectory() as tmp, \
+             mock.patch.object(module, "require_tools"), \
+             mock.patch.object(module, "load_wechat_gui_module", return_value=gui), \
+             mock.patch.object(module, "exclusive_gui_lock", side_effect=lambda *a, **k: nullcontext()), \
+             mock.patch.object(module, "close_channels_players") as close, \
+             mock.patch.object(module, "open_exact_card_from_visible_history", return_value=({"id": "20"}, {"status": "identity_verified"})), \
+             mock.patch.object(module, "recover_share_link_from_player") as recover, \
+             mock.patch.object(module, "capture_exact_player") as capture:
+            gui.load_targets.return_value = ([mock.Mock()], {})
+            args = dict(chat="Shares", targets_file=Path(tmp)/"targets.json", max_scrolls=8,
+                        scroll_clicks=4, player_open_timeout=4, lock_timeout=3, object_id="exact-id",
+                        title="Exact title", author="Author", identity_terms=["Author"], min_term_matches=1,
+                        display=":97", output_dir=Path(tmp), interval=1, loss_polls=3, max_seconds=5,
+                        audio_stream_timeout=2, expected_duration_seconds=0, share_link_only=True)
+            recover.return_value = {"status": "unavailable", "error_code": "native_copy_link_action_missing"}
+            with self.assertRaises(module.CaptureFailure) as error:
+                module.capture_exact_card_from_chat(**args)
+            self.assertEqual(error.exception.failure_stage, "share_link")
+            self.assertEqual(close.call_count, 2)
+            capture.assert_not_called()
+            recover.return_value = {"status": "verified", "share_url": "https://weixin.qq.com/sph/test1234", "share_url_sha256": "hash"}
+            result = module.capture_exact_card_from_chat(**args)
+            self.assertEqual(result["status"], "share_link_recovered")
+            self.assertEqual(close.call_count, 4)
+            capture.assert_not_called()
+
     def test_unresponsive_player_cleanup_is_bounded_and_never_force_destroys(self) -> None:
         module = load_module()
         gui = mock.Mock()

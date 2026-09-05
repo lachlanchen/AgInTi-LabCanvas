@@ -44,6 +44,7 @@ from wechat_message_policy import (
 )
 from wechat_chat_profiles import profile_aliases, profile_for_chat
 from wechat_mirror import DEFAULT_DB, record_event
+from wechat_native_text_delivery import pending_outbound_echo
 from wechat_message_shards import (
     list_message_db_paths,
     message_db_has_table,
@@ -2061,6 +2062,8 @@ def allow_human_self_messages(config: dict[str, Any]) -> bool:
 
 
 def is_recorded_outbound_echo(config: dict[str, Any], row: dict[str, Any]) -> bool:
+    if pending_outbound_echo(config, row):
+        return True
     window_seconds = int(config.get("self_outbound_echo_window_seconds") or 1800)
     lookup_limit = int(config.get("self_outbound_echo_lookup_limit") or 240)
     if recorded_outbound_echo(

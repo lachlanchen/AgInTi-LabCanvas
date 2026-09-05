@@ -4,10 +4,11 @@ Updated: 2026-09-05. This scope supersedes this session's earlier combined
 LabCanvas/AgInTi development campaign. It records the owner's latest direction;
 it does not claim that the Codex native goal text has been changed.
 
-Immediate priority: leave the currently failed Shipinhao card task alone and
-audit ordinary group-message intake, consecutive-message coverage, processing,
-and response delivery. A later link is an independent source/task; do not let
-the abandoned card block it or automatically replay the card during recovery.
+Immediate priority: the owner requested a new live card-only test. Verify that
+LabCanvas itself opens the exact card, copies its native link, downloads and
+transcribes the original, retains the source knowledge, and returns the result.
+Audit ordinary intake and delivery alongside it. Do not replay unrelated failed
+cards, completed schedules, or system-authored replies during recovery.
 
 Make LabCanvas a reliable conversation bridge to a resumable agent:
 

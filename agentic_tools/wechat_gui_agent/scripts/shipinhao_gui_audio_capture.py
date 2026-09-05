@@ -77,6 +77,10 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Try the exact native player's read-only Copy Link action before audio capture.",
     )
+    parser.add_argument(
+        "--share-link-only", action="store_true",
+        help="Recover the original-video link without recording audio or holding the GUI during playback.",
+    )
     parser.add_argument("--lock-timeout", type=float, default=0.0)
     parser.add_argument("--interval", type=float, default=1.5)
     parser.add_argument("--loss-polls", type=int, default=3)
@@ -104,6 +108,7 @@ def main() -> int:
             "audio_stream_timeout": max(2.0, args.audio_stream_timeout),
             "expected_duration_seconds": max(0.0, args.expected_duration_seconds),
             "recover_share_link_first": bool(args.recover_share_link_first),
+            "share_link_only": bool(args.share_link_only),
         }
         if args.chat.strip():
             cover_image = args.cover_image
@@ -121,6 +126,10 @@ def main() -> int:
                 **capture_args,
             )
         else:
+            capture_args.pop("share_link_only")
+            capture_args.pop("recover_share_link_first")
+            if args.share_link_only:
+                raise ValueError("--share-link-only requires an exact --chat")
             result = capture_exact_player(lock_timeout=max(0.0, args.lock_timeout), **capture_args)
     except Exception as exc:
         result = {
@@ -163,6 +172,7 @@ def capture_exact_card_from_chat(
     audio_stream_timeout: float,
     expected_duration_seconds: float,
     recover_share_link_first: bool = False,
+    share_link_only: bool = False,
     cover_image: Path | None = None,
 ) -> dict[str, Any]:
     """Open one source-bound card from its chat, then capture its exact player."""
@@ -229,7 +239,7 @@ def capture_exact_card_from_chat(
             )
         try:
             share_link_result: dict[str, Any] = {}
-            if recover_share_link_first:
+            if recover_share_link_first or share_link_only:
                 share_link_result = recover_share_link_from_player(
                     player=player,
                     env=env,
@@ -251,6 +261,13 @@ def capture_exact_card_from_chat(
                         "share_url_sha256": share_link_result["share_url_sha256"],
                         "card_open": open_evidence,
                     }
+                if share_link_only:
+                    raise CaptureFailure(
+                        "the exact player opened, but its original-video share link was unavailable",
+                        error_code=str(share_link_result.get("error_code") or "native_share_link_unavailable"),
+                        failure_stage="share_link",
+                        evidence={"source_card_found": True, **open_evidence},
+                    )
             result = capture_exact_player(
                 object_id=object_id,
                 title=title,
@@ -299,7 +316,7 @@ def recover_share_link_from_player(
     identity_terms: list[str],
     min_term_matches: int,
 ) -> dict[str, Any]:
-    """Copy one exact player's public share link through its native context menu."""
+    """Copy one exact player's link through its share menu, never a share/send action."""
 
     if not shutil.which("xclip"):
         return {"status": "unavailable", "error_code": "clipboard_tool_missing"}
@@ -313,40 +330,53 @@ def recover_share_link_from_player(
     if not evidence.get("matched"):
         return {"status": "failed", "error_code": "player_identity_mismatch"}
 
+    marker = hashlib.sha256(os.urandom(16)).hexdigest()
     subprocess.run(
         ["xclip", "-selection", "clipboard"],
         env=env,
-        input="",
+        input=marker,
         text=True,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         check=False,
     )
-    center_x = int(player.get("x") or 0) + int(player.get("width") or 0) // 2
-    center_y = int(player.get("y") or 0) + int(player.get("height") or 0) // 2
-    run(
-        ["xdotool", "windowfocus", str(player["id"]), "mousemove", str(center_x), str(center_y), "click", "3"],
-        env=env,
-        check=False,
-    )
-    time.sleep(0.7)
-    menu_image = output_dir / "share-link-menu.png"
-    run(["import", "-window", "root", str(menu_image)], env=env, check=False)
-    ocr = run(
-        [
-            "tesseract",
-            str(menu_image),
-            "stdout",
-            "-l",
-            "chi_sim+chi_tra+eng",
-            "--psm",
-            "11",
-            "tsv",
-        ],
-        env=env,
-        check=False,
-    )
-    candidates = copy_link_menu_candidates(ocr.stdout if ocr.returncode == 0 else "")
+    if run(["xclip", "-selection", "clipboard", "-o"], env=env, check=False).stdout != marker:
+        return {"status": "failed", "error_code": "native_copy_link_clipboard_unavailable"}
+    x, y = int(player["x"]), int(player["y"])
+    width, height = int(player["width"]), int(player["height"])
+    # Linux Channels anchors its share arrow in the lower-right action bar.
+    # Opening a menu is harmless; selecting anything requires an exact Copy Link label.
+    anchors = [("share", x + width - 162, y + height - 64, "1"),
+               ("context", x + width // 2, y + height // 2, "3")]
+    candidates: list[dict[str, Any]] = []
+    for menu_kind, menu_x, menu_y, button in anchors:
+        run(["xdotool", "windowfocus", str(player["id"]), "mousemove", str(menu_x),
+             str(menu_y), "click", button], env=env, check=False)
+        time.sleep(0.7)
+        menu_image = output_dir / f"share-link-{menu_kind}-menu.png"
+        captured = run(["import", "-window", "root", str(menu_image)], env=env, check=False)
+        if captured.returncode:
+            run(["xdotool", "key", "Escape"], env=env, check=False)
+            continue
+        crop_x = x + width - 380 if menu_kind == "share" else menu_x - 20
+        crop_y = y + height - 300 if menu_kind == "share" else menu_y - 20
+        ocr_image = output_dir / f"share-link-{menu_kind}-menu-ocr.png"
+        cropped = run(["convert", str(menu_image), "-crop", f"380x300+{crop_x}+{crop_y}",
+                       "+repage", "-resize", "300%", str(ocr_image)], env=env, check=False)
+        if cropped.returncode:
+            run(["xdotool", "key", "Escape"], env=env, check=False)
+            continue
+        ocr = run(["tesseract", str(ocr_image), "stdout", "-l", "chi_sim+chi_tra+eng",
+                   "--psm", "11", "tsv"], env=env, check=False)
+        candidates = [{**item, "center_x": crop_x + item["center_x"] / 3,
+                       "center_y": crop_y + item["center_y"] / 3}
+                      for item in copy_link_menu_candidates(ocr.stdout if ocr.returncode == 0 else "")]
+        candidates = [item for item in candidates
+                      if x <= item["center_x"] < x + width and y <= item["center_y"] < y + height]
+        if len(candidates) == 1:
+            break
+        run(["xdotool", "key", "Escape"], env=env, check=False)
+        candidates = []
     if not candidates:
         run(["xdotool", "key", "Escape"], env=env, check=False)
         return {
@@ -411,7 +441,7 @@ def copy_link_menu_candidates(tsv_text: str) -> list[dict[str, Any]]:
         words.sort(key=lambda item: int(item["left"]))
         label = "".join(str(item["text"]) for item in words)
         normalized = re.sub(r"[^0-9a-z\u3400-\u9fff]+", "", label.casefold())
-        if not any(value in normalized for value in accepted):
+        if normalized not in accepted:
             continue
         left = min(int(item["left"]) for item in words)
         top = min(int(item["top"]) for item in words)

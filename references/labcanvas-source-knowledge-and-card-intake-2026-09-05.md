@@ -2,6 +2,10 @@
 
 ## Scope And Boundaries
 
+This is a chronological investigation. The later **Card-Only Live Verification**
+section supersedes the earlier unresolved player/download status; it preserves
+those earlier observations without treating them as current blockers.
+
 See `labcanvas-current-goal.md`. This session maintains LabCanvas transports,
 task execution, history, and agent context. AgInTi development stays separate.
 No authenticated client was restarted for these changes. Android polling and
@@ -189,3 +193,83 @@ transcribed. Its source knowledge was stored automatically, including after
 file delivery failed. Its queue record remains deferred for required artifact
 delivery. Do not substitute that source for the earlier no-link card or report
 queued files as sent. The WeCom Tiny11 transport remained ready during checks.
+
+## Card-Only Live Verification
+
+The owner authorized a fresh test of the original card. With the existing
+logged-in Linux client able to open its native player, LabCanvas recovered the
+share link itself, downloaded the original 374.863-second H.264/AAC video
+(15,633,847 bytes), transcribed 116 timestamped segments using GPU 1, and stored
+the transcript and synthesis in the exact chat's source knowledge. The MP4,
+transcript TXT, and agent-written summary were delivered to the source chat.
+This verifies this client/card, not every possible Channels share or account.
+
+The fixes are reusable worker behavior, not a separate operator downloader:
+
+1. `should_prepare_media_resolution` leaves Finder sources to their existing
+   exact-card resolver. Generic attachment scans had spent several minutes on
+   irrelevant thumbnails and vision before reaching the native card.
+2. Try the exact embedded media first, then the native share link, before costly
+   public-mirror research. Keep content-verified mirror recovery as a fallback.
+3. `shipinhao_gui_audio_capture.py --share-link-only` opens the exact same-chat
+   card under the shared GUI lock and verifies title/author. In this Linux
+   player the copy-link item is in the bottom share-arrow menu, not the browser
+   three-dot menu or ordinary context menu. The menu crop is enlarged 3x for
+   OCR. Coordinates only open the menu; clicking requires an exact copy-link
+   label. Forward-to-contact items are never selected. A fresh clipboard marker
+   prevents accidentally accepting a previous card's URL.
+4. Pass the copied URL explicitly as `--recovered-share-url` to
+   `shipinhao_media_transcribe.py`. Appending it after Finder XML was insufficient:
+   the parser correctly prioritized the card and ignored the appended URL.
+   The explicit handoff still checks the resolved title/author and share token,
+   and preserves the original object ID for the private cache and provenance.
+5. Release the GUI lock and close only the owned auxiliary player before the
+   network download and ASR. Automatic source recovery never records the screen
+   or audio as a substitute original. The legacy capture tool is retained only
+   for explicitly requested diagnostics, not this default path.
+
+Delivery verification exposed two additional bugs. The sender renamed the files
+but the completion gate still required their old paths. Required paths now map
+to an existing alias only after same-file or byte-count/SHA-256 verification.
+Missing or changed aliases cannot satisfy delivery. The receipt-repair helper
+also used to create a new supplemental filename for every already-sent file;
+that produced a duplicate attachment pair during this test. It now preserves
+unchanged files for normal receipt/response repairs. Explicit rebuilt-artifact
+recovery retains its supplemental delivery behavior. Do not resend this test
+again to demonstrate the fix; test duplicate suppression with mocked senders.
+Future source aliases use the card title from preflight, not the generic
+forwarded-message instruction wrapper. Private evidence retains the original
+names and identity; already-delivered files are not renamed and sent again.
+
+The direct monitor now recognizes a pending native text-send receipt before
+the sender has finished recording success. It requires the exact configured
+self account, chat table, message text, database shard, post-send local ID, and
+send-time window. This closes the race where the system could answer its own
+message while still permitting genuine messages from the owner using the same
+account. The live summary was recorded as `self_outbound_echo`, with zero new
+route candidates. Do not implement this as a blanket self-account exclusion.
+
+### Use And Recovery
+
+Normal use: share a Channels card in a monitored chat. No pasted URL or second
+command is required. The agent receives the verified transcript and current
+same-chat request, and supplies one concise source-grounded summary alongside
+the video and transcript. Plain inbound videos remain passive save-only unless
+a current instruction requests more; no public publication is authorized here.
+
+For an operator's exact-task delivery-only repair, use:
+
+```bash
+PYTHONPATH=src python -m agenticapp wechat worker repair-result TASK_ID --send
+```
+
+Inspect native send receipts and the queue first. This command must reuse the
+stored result and delivered-file ledger, not rerun the source download, model,
+ASR, or publication. Source-unavailable, copy-link failure, download failure,
+and ASR failure are distinct from genuinely silent media.
+
+Regression coverage includes exact copy-link menu selection, no-capture mode,
+explicit URL handoff and conflicting identities, thumbnail-scan avoidance,
+pre-receipt self-echo suppression without losing owner commands, alias content
+validation, and unchanged-file repair deduplication. Private live evidence stays
+under the ignored task directory; never commit card URLs, raw chats, or media.

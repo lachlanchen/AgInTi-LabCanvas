@@ -579,6 +579,11 @@ def stored_result_repair_delivery(
         if confirmation and confirmation in sent_messages:
             delivery["confirmation"] = ""
 
+    # A response/receipt repair is not evidence that the file bytes changed.
+    # Only an explicit rebuilt-artifact recovery needs a supplemental filename.
+    if not stored_recovery:
+        return delivery
+
     sent_paths = {
         str(Path(str(path)).expanduser().resolve())
         for path in task.get("sent_file_paths") or []
@@ -2294,7 +2299,8 @@ def required_delivery_file_paths(
         if path.suffix.lower() in suffixes:
             candidates.append(path.expanduser().resolve())
     selected = research_summary_delivery_files(task, list(dict.fromkeys(candidates)))
-    return wecom_research_delivery_files(task, selected)
+    selected = wecom_research_delivery_files(task, selected)
+    return list(dict.fromkeys(verified_delivery_alias(path, task) for path in selected))
 
 
 def required_file_delivery_complete(task: dict[str, Any] | None, result: dict[str, Any]) -> bool:
@@ -13392,7 +13398,12 @@ def prepare_shipinhao_media_transcript_preflight(task: dict[str, Any], artifact_
     command.append("--json")
     timeout = max(60, int_or_none(os.environ.get("WECHAT_SHIPINHAO_PIPELINE_TIMEOUT_SECONDS")) or 2100)
     if profile.get("media_urls") or profile.get("cover_urls") or profile.get("share_url") or capture_manifest:
-        result = run_shipinhao_media_transcriber(command, output_dir=output_dir, timeout=timeout, profile=public_profile)
+        # Try exact media and the native share link before expensive mirror search.
+        initial_command = command
+        if (not capture_manifest and not profile.get("share_url")
+                and native_shipinhao_capture_needed({"status": "no_media_url"}, profile)):
+            initial_command = command[:-1] + ["--no-public-mirror-recovery", "--json"]
+        result = run_shipinhao_media_transcriber(initial_command, output_dir=output_dir, timeout=timeout, profile=public_profile)
     else:
         result = write_shipinhao_media_transcript_manifest(
             output_dir,
@@ -13421,7 +13432,7 @@ def prepare_shipinhao_media_transcript_preflight(task: dict[str, Any], artifact_
                 source_handle.write(f"\n{recovered_share_urls[0]}\n")
             source_path.chmod(0o600)
             result = run_shipinhao_media_transcriber(
-                command,
+                command[:-1] + ["--recovered-share-url", recovered_share_urls[0], "--json"],
                 output_dir=output_dir,
                 timeout=timeout,
                 profile=public_profile,
@@ -13441,8 +13452,14 @@ def prepare_shipinhao_media_transcript_preflight(task: dict[str, Any], artifact_
             result["native_capture_fallback"] = safe_shipinhao_capture_result(capture_result)
         else:
             safe_capture = safe_shipinhao_capture_result(capture_result)
+            if result.get("status") not in {"transcribed", "cached", "no_audio"}:
+                result = run_shipinhao_media_transcriber(
+                    command, output_dir=output_dir, timeout=timeout, profile=public_profile,
+                )
             result["native_capture_fallback"] = safe_capture
-            if safe_capture.get("error_code") == "finder_player_unavailable":
+            if result.get("status") in {"transcribed", "cached", "no_audio"}:
+                result.pop("agent_next_action", None)
+            elif safe_capture.get("error_code") == "finder_player_unavailable":
                 result["agent_next_action"] = (
                     "The exact same-chat Finder card was identified, but this Linux WeChat client did not open "
                     "its native player. Use comments or exact public reconstruction as weaker evidence and say "
@@ -13528,6 +13545,7 @@ def run_automatic_shipinhao_gui_capture(task: dict[str, Any], profile: dict[str,
         "--expected-duration-seconds",
         f"{duration:.3f}",
         "--recover-share-link-first",
+        "--share-link-only",
         "--json",
     ]
     timeout = int(capture_limit + 360)
@@ -14873,6 +14891,10 @@ def strip_recent_synced_files_section(request: str) -> str:
 def should_prepare_media_resolution(task: dict[str, Any]) -> bool:
     route = task_route_decision(task)
     route_kind = str(route.get("route_kind") or "")
+    if should_prepare_shipinhao_media_transcript(task):
+        # Finder cards have their own exact-object resolver. Treating one as a
+        # generic download scans unrelated thumbnails before opening the card.
+        return False
     if route_kind in {"process_existing_video", "publish_video"}:
         # Exact video local-id/message-shard and task-ledger resolution is
         # handled by the dedicated AutoPublish preflight. The generic media
@@ -23624,6 +23646,29 @@ DELIVERY_ROLE_BY_SUFFIX = {
 }
 
 
+def verified_delivery_alias(path: Path, task: dict[str, Any] | None) -> Path:
+    """A verified renamed copy satisfies the same artifact, not a second send."""
+    resolved = path.expanduser().resolve()
+    for item in (task or {}).get("delivery_artifact_aliases") or []:
+        if not isinstance(item, dict) or item.get("source") != str(resolved):
+            continue
+        if not item.get("delivery"):
+            continue
+        candidate = Path(str(item["delivery"])).expanduser().resolve()
+        try:
+            if candidate.is_file() and resolved.is_file() and (
+                candidate.samefile(resolved)
+                or (
+                    candidate.stat().st_size == resolved.stat().st_size
+                    and sha256_file(candidate) == sha256_file(resolved)
+                )
+            ):
+                return candidate
+        except OSError:
+            continue
+    return resolved
+
+
 def ensure_meaningful_delivery_path(
     path: Path, task: dict[str, Any] | None
 ) -> Path:
@@ -23790,9 +23835,14 @@ def task_artifact_subject(task: dict[str, Any]) -> str:
     route = task.get("route_decision") if isinstance(task.get("route_decision"), dict) else {}
     daily = task.get("daily_research") if isinstance(task.get("daily_research"), dict) else {}
     daily_topics = daily.get("topics") if isinstance(daily.get("topics"), list) else []
+    preflight = task.get("preflight") if isinstance(task.get("preflight"), dict) else {}
+    transcript = preflight.get("shipinhao_media_transcript") or {}
+    source_profile = transcript.get("profile") if isinstance(transcript, dict) else {}
+    source_profile = source_profile if isinstance(source_profile, dict) else {}
     candidates = [
         task.get("artifact_subject"),
         route.get("artifact_subject"),
+        source_profile.get("title"),
         daily.get("topic"),
         daily_topics[0] if daily_topics else "",
         task.get("request"),

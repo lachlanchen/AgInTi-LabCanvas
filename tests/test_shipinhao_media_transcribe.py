@@ -128,6 +128,33 @@ class ShipinhaoMediaTranscribeTests(unittest.TestCase):
         self.assertEqual(result["profile"]["author"], "Hui世界")
         self.assertTrue(result["content_identity_verified"])
 
+    def test_recovered_share_link_is_used_after_card_xml_without_losing_identity(self) -> None:
+        module = load_module()
+        source = card_xml()
+        original = module.extract_shipinhao_media_profile(source)
+        url = "https://weixin.qq.com/sph/test1234"
+        resolved = {**original, "object_id": "sph-test1234", "identity_key": "sph-test1234",
+                    "share_token": "test1234", "share_url": url, "source_kind": "sph_share_link",
+                    "content_identity_verified": True,
+                    "media_urls": ["https://finder.video.qq.com/fresh.mp4"]}
+        def download(url, target, **kwargs):
+            target.write_bytes(b"video")
+            return {"bytes": 5, "sha256": "a" * 64}
+        with tempfile.TemporaryDirectory() as tmp, \
+             mock.patch.object(module, "resolve_sph_share_profile", return_value=resolved) as resolve, \
+             mock.patch.object(module, "download_media", side_effect=download) as fetched, \
+             mock.patch.object(module, "probe_media", return_value={"duration_seconds": 10, "audio_stream_count": 0, "video_stream_count": 1}), \
+             mock.patch.object(module, "resolve_whisper_model", return_value="medium"):
+            result = module.run_pipeline(source + "\n" + url, Path(tmp)/"out", cache_root=Path(tmp)/"cache",
+                                         recovered_share_url=url, public_mirror_recovery=False)
+            resolve.assert_called_once_with(url)
+            self.assertEqual(fetched.call_args.args[0], "https://finder.video.qq.com/fresh.mp4")
+            self.assertEqual(result["profile"]["object_id"], original["object_id"])
+            self.assertEqual(result["input_kind"], "exact_sph_share_link")
+            with self.assertRaisesRegex(ValueError, "does not match"):
+                module.merge_resolved_share_profile({**original, "share_token": "test1234"},
+                                                   {**resolved, "title": "different video"})
+
     def test_profile_extracts_exact_media_identity_and_url(self) -> None:
         module = load_module()
 

@@ -1445,16 +1445,26 @@ def run_pipeline(
     command_timeout: int = 1800,
     public_mirror_recovery: bool = PUBLIC_MIRROR_RECOVERY_DEFAULT,
     search_hints: list[str] | None = None,
+    recovered_share_url: str = "",
 ) -> dict[str, Any]:
     output_dir = output_dir.expanduser().resolve()
     cache_root = cache_root.expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     profile = extract_shipinhao_media_profile(source_text)
+    native_object_id = ""
+    if recovered_share_url:
+        recovered = extract_sph_share_urls(recovered_share_url)
+        if len(recovered) != 1 or not profile.get("object_id") or not profile.get("title"):
+            raise ValueError("a recovered native link requires one exact card identity and one share URL")
+        native_object_id = str(profile["object_id"])
+        profile.update(share_url=recovered[0], share_token=recovered[0].rsplit("/", 1)[-1])
     share_resolution_warning = ""
     share_url = str(profile.get("share_url") or "").strip()
     if share_url:
         try:
             profile = merge_resolved_share_profile(profile, resolve_sph_share_profile(share_url))
+            if native_object_id:
+                profile.update(object_id=native_object_id, identity_key=native_object_id)
         except Exception as exc:
             share_resolution_warning = f"exact share-link resolution was unavailable: {type(exc).__name__}: {str(exc)[:300]}"
     public_profile = {key: value for key, value in profile.items() if key not in {"media_urls", "cover_urls"}}
@@ -1958,6 +1968,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source-text-file", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--recovered-share-url", default="",
+                        help="Link copied from this exact card's identity-verified native player.")
     parser.add_argument("--cache-root", type=Path, default=DEFAULT_CACHE_ROOT)
     capture_group = parser.add_mutually_exclusive_group()
     capture_group.add_argument(
@@ -2011,6 +2023,7 @@ def main() -> int:
             command_timeout=max(30, args.command_timeout),
             public_mirror_recovery=not args.no_public_mirror_recovery,
             search_hints=args.search_hint,
+            recovered_share_url=args.recovered_share_url,
         )
     except Exception as exc:
         result = {"status": "failed", "read_only": True, "error": f"{type(exc).__name__}: {str(exc)[:700]}"}
