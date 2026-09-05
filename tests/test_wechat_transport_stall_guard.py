@@ -638,6 +638,68 @@ class WeChatTransportStallGuardTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertEqual(result["task_ids"], ["current-timeout"])
 
+    def test_file_picker_failure_remains_visible_after_queue_expiry(self) -> None:
+        now = datetime(2026, 9, 5, 11, 0, tzinfo=timezone.utc)
+        failed = {
+            "id": "downloaded-not-sent", "status": "send_expired",
+            "last_send_attempt_at": "2026-09-05T09:00:00+00:00",
+            "file_send_errors": [{"error": "WECHAT_FILE_CHOOSER_NOT_OPEN: no picker"}],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            queue.write_text(json.dumps(failed) + "\n", encoding="utf-8")
+            result = guard.recent_wechat_gui_timeout_health(
+                queue, now=now, client_started_at=now - timedelta(hours=5),
+            )
+        self.assertTrue(result["ok"])
+        self.assertFalse(result["artifact_delivery_ok"])
+        self.assertEqual(result["task_ids"], [])
+        self.assertEqual(result["artifact_failure_task_ids"], ["downloaded-not-sent"])
+        snapshot = {"issues": [{"code": "wechat_artifact_delivery_failed", "severity": "degraded"}]}
+        with mock.patch.object(guard, "run_repair") as restart:
+            self.assertEqual(guard.perform_repairs(snapshot, {}, consecutive_failures=1, cooldown_seconds=0,
+                                                  max_sender_seconds=180), [])
+        restart.assert_not_called()
+
+    def test_later_verified_file_send_or_client_restart_resolves_picker_health(self) -> None:
+        now = datetime(2026, 9, 5, 11, 0, tzinfo=timezone.utc)
+        failed = {
+            "id": "failed", "status": "send_expired",
+            "last_send_attempt_at": "2026-09-05T09:00:00+00:00",
+            "file_send_errors": [{"error": "WECHAT_FILE_CHOOSER_NOT_OPEN"}],
+        }
+        success = {
+            "id": "later", "status": "done", "completed_at": "2026-09-05T10:00:00+00:00",
+            "sent_file_paths": ["verified-report.pdf"],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            queue.write_text(json.dumps(failed) + "\n" + json.dumps(success) + "\n", encoding="utf-8")
+            result = guard.recent_wechat_gui_timeout_health(
+                queue, now=now, client_started_at=now - timedelta(hours=5),
+            )
+            self.assertTrue(result["artifact_delivery_ok"])
+            queue.write_text(json.dumps(failed) + "\n", encoding="utf-8")
+            result = guard.recent_wechat_gui_timeout_health(
+                queue, now=now, client_started_at=now - timedelta(minutes=10),
+            )
+            self.assertTrue(result["artifact_delivery_ok"])
+
+    def test_text_reply_does_not_prove_file_picker_recovered(self) -> None:
+        now = datetime(2026, 9, 5, 11, 0, tzinfo=timezone.utc)
+        rows = [{"id": "failed", "status": "send_expired",
+                 "last_send_attempt_at": "2026-09-05T09:00:00+00:00",
+                 "send_errors": ["WECHAT_FILE_PICKER_DID_NOT_RETURN"]},
+                {"id": "reply", "status": "done", "completed_at": "2026-09-05T10:00:00+00:00",
+                 "result": {"message": "A text reply", "files": ["not-verified.pdf"]}}]
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            queue.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
+            result = guard.recent_wechat_gui_timeout_health(
+                queue, now=now, client_started_at=now - timedelta(hours=5),
+            )
+        self.assertFalse(result["artifact_delivery_ok"])
+
     def test_gui_timeout_health_includes_daily_scheduler_delivery(self) -> None:
         now = datetime(2026, 7, 29, 3, 0, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:

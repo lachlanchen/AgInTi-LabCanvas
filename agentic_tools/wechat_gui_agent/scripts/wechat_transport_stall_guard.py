@@ -1185,16 +1185,21 @@ def recent_wechat_gui_timeout_health(
 
     stalled: list[str] = []
     newest_timeout: datetime | None = None
+    file_failures: list[tuple[str, datetime]] = []
+    newest_file_success: datetime | None = None
     for task_id, task in latest.items():
         attempted = parse_timestamp(
             task.get("last_send_attempt_at")
             or task.get("send_retry_claimed_at")
             or task.get("completed_at")
         )
-        if attempted is None or (current - attempted).total_seconds() > window_seconds:
+        if attempted is None:
             continue
         if started is not None and attempted <= started:
             continue
+        if task.get("status") == "done" and task.get("sent_file_paths"):
+            sent_at = parse_timestamp(task.get("completed_at")) or attempted
+            newest_file_success = max(newest_file_success, sent_at) if newest_file_success else sent_at
         fragments = [
             str(task.get("send_deferred_reason") or ""),
             *(str(item) for item in task.get("send_errors") or []),
@@ -1205,6 +1210,16 @@ def recent_wechat_gui_timeout_health(
             else:
                 fragments.append(str(item))
         text = " ".join(fragments).lower()
+        if task.get("status") != "done" and any(marker in text for marker in (
+            "wechat_file_chooser_not_open", "wechat_file_picker_did_not_return",
+            "wechat_file_attachment_not_staged", "wechat_file_send_verify_failed",
+        )):
+            # Queue expiry is not recovery of the current client's file sender.
+            # Do not convert this evidence into permission to restart a login.
+            if started is not None or (current - attempted).total_seconds() <= window_seconds:
+                file_failures.append((task_id, attempted))
+        if (current - attempted).total_seconds() > window_seconds:
+            continue
         if not wechat_gui_input_failure_text(text):
             continue
         stalled.append(task_id)
@@ -1235,12 +1250,16 @@ def recent_wechat_gui_timeout_health(
             continue
         stalled.append(f"scheduler:{state_path.stem}")
         newest_timeout = max(newest_timeout, attempted) if newest_timeout else attempted
+    unresolved_files = [task_id for task_id, attempted in file_failures
+                        if newest_file_success is None or attempted > newest_file_success]
     return {
         "ok": not stalled,
         "exists": queue_exists,
         "client_started_at": started.isoformat(timespec="seconds") if started else "",
         "newest_timeout_at": newest_timeout.isoformat(timespec="seconds") if newest_timeout else "",
         "task_ids": stalled[:20],
+        "artifact_delivery_ok": not unresolved_files,
+        "artifact_failure_task_ids": unresolved_files[:20],
     }
 
 
@@ -1377,7 +1396,8 @@ def build_snapshot(*, max_sender_seconds: float = 180.0) -> dict[str, Any]:
         "timeout_ok": bool(gui_timeout_health.get("ok")),
         "client_available": bool(client.get("available")),
         "client_status": str(client.get("status") or "unknown"),
-        "ok": bool(gui_timeout_health.get("ok")) and bool(client.get("available")),
+        "ok": bool(gui_timeout_health.get("ok")) and bool(client.get("available"))
+        and gui_timeout_health.get("artifact_delivery_ok", True),
     }
     direct_monitors = direct_monitor_health(client=client)
     source_refresh = decrypt_refresh_health() if direct_monitors.get("configured") else {"ok": True, "enabled": False}
@@ -1436,6 +1456,12 @@ def build_snapshot(*, max_sender_seconds: float = 180.0) -> dict[str, Any]:
             "wechat_gui_delivery_stalled",
             "degraded",
             f"{len(gui_delivery.get('task_ids') or [])} current-client GUI input failure(s)",
+        )
+    if not gui_timeout_health.get("artifact_delivery_ok", True):
+        issue(
+            "wechat_artifact_delivery_failed",
+            "degraded",
+            f"{len(gui_delivery.get('artifact_failure_task_ids') or [])} unresolved native file delivery failure(s)",
         )
     if not schedules["echomind"]["running"]:
         issue("schedule_echomind_missing", "degraded", "EchoMind language scheduler is absent")

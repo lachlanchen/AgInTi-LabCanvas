@@ -1720,30 +1720,114 @@ class WeChatGuiSendTests(unittest.TestCase):
     def test_verify_composer_text_reads_exact_message_back(self):
         module = load_wechat_gui_send()
         expected = "第一行\n研究室（けんきゅうしつ）"
-        calls = []
 
-        def fake_run(command, *, env, check=True):
-            calls.append(command)
-            stdout = "第一行\r\n研究室（けんきゅうしつ）" if command[0] == "xclip" else ""
-            return subprocess.CompletedProcess(command, 0, stdout, "")
-
-        with mock.patch.object(module, "run", side_effect=fake_run), mock.patch.object(module.time, "sleep"):
+        with mock.patch.object(module, "read_composer_text", return_value="第一行\r\n研究室（けんきゅうしつ）"):
             module.verify_composer_text({}, expected)
-
-        self.assertIn(["xdotool", "key", "--clearmodifiers", "ctrl+a"], calls)
-        self.assertIn(["xdotool", "key", "--clearmodifiers", "ctrl+c"], calls)
-        self.assertIn(["xclip", "-selection", "clipboard", "-o"], calls)
-        self.assertIn(["xdotool", "key", "--clearmodifiers", "ctrl+End"], calls)
 
     def test_verify_composer_text_rejects_empty_composer(self):
         module = load_wechat_gui_send()
 
-        def fake_run(command, *, env, check=True):
-            return subprocess.CompletedProcess(command, 0, "", "")
-
-        with mock.patch.object(module, "run", side_effect=fake_run), mock.patch.object(module.time, "sleep"):
+        with mock.patch.object(module, "read_composer_text", return_value=""):
             with self.assertRaisesRegex(RuntimeError, "WECHAT_COMPOSE_VERIFY_FAILED"):
                 module.verify_composer_text({}, "expected message")
+
+    def test_read_composer_requires_new_copy_not_old_paste_clipboard(self):
+        module = load_wechat_gui_send()
+        marker = "labcanvas-clipboard-probe-fixed"
+        for copied, error in ((marker, "did not copy"), ("actual reply", None)):
+            with self.subTest(copied=copied):
+                reads = iter([marker, copied])
+                process = mock.Mock()
+                process.poll.return_value = None
+                calls = []
+
+                def fake_run(command, **kwargs):
+                    calls.append(command)
+                    return subprocess.CompletedProcess(command, 0, next(reads) if command[0] == "xclip" else "", "")
+
+                with mock.patch.object(module.subprocess, "Popen", return_value=process), \
+                     mock.patch.object(module.uuid, "uuid4", return_value=mock.Mock(hex="fixed")), \
+                     mock.patch.object(module, "run", side_effect=fake_run), \
+                     mock.patch.object(module.time, "sleep"):
+                    if error:
+                        with self.assertRaisesRegex(RuntimeError, error):
+                            module.read_composer_text({})
+                    else:
+                        self.assertEqual(module.read_composer_text({}), "actual reply")
+                process.stdin.write.assert_called_once_with(marker)
+                process.terminate.assert_called_once()
+                self.assertIn(["xdotool", "key", "--clearmodifiers", "ctrl+c"], calls)
+
+    def test_read_composer_rejects_clipboard_owner_race(self):
+        module = load_wechat_gui_send()
+        process = mock.Mock()
+        with mock.patch.object(module.subprocess, "Popen", return_value=process), \
+             mock.patch.object(module, "run", return_value=subprocess.CompletedProcess([], 0, "old pasted message", "")), \
+             mock.patch.object(module.time, "sleep"):
+            with self.assertRaisesRegex(RuntimeError, "probe unavailable"):
+                module.read_composer_text({})
+
+    def test_pending_uncertain_send_is_not_resubmitted(self):
+        module = load_wechat_gui_send()
+        with tempfile.TemporaryDirectory() as tmp:
+            pending = Path(tmp) / "pending.json"
+            pending.write_text('{}')
+            with mock.patch.object(module, "pending_receipt_path", return_value=pending), \
+                 mock.patch.object(module, "wait_native_receipt", return_value=None), \
+                 mock.patch.object(module, "reset_wechat_send_surface") as reset:
+                with self.assertRaisesRegex(RuntimeError, "WECHAT_GUI_SEND_UNCERTAIN"):
+                    module.send_one({}, module.Window("1", 0, 0, 1000, 700),
+                                    module.TargetSpec("Shares", "Shares", "Shares"),
+                                    "reply", True, False, 0, False, True, False,
+                                    Path(tmp), Path(tmp) / "mirror.db", 1)
+            reset.assert_not_called()
+            self.assertTrue(pending.exists())
+
+    def test_screen_redraw_after_enter_is_not_delivery_evidence(self):
+        module = load_wechat_gui_send()
+        with tempfile.TemporaryDirectory() as tmp:
+            pending = Path(tmp) / "pending.json"
+            with mock.patch.object(module, "pending_receipt_path", return_value=pending), \
+                 mock.patch.object(module, "reset_wechat_send_surface"), \
+                 mock.patch.object(module, "screenshot"), \
+                 mock.patch.object(module, "open_target", return_value={"ok": True}), \
+                 mock.patch.object(module, "focus"), \
+                 mock.patch.object(module, "clear_composer"), \
+                 mock.patch.object(module, "paste_text"), \
+                 mock.patch.object(module, "verify_composer_text"), \
+                 mock.patch.object(module, "same_screenshot", return_value=False), \
+                 mock.patch.object(module, "prepare_receipt", return_value={"after": {}}), \
+                 mock.patch.object(module, "key") as key, \
+                 mock.patch.object(module.time, "sleep"), \
+                 mock.patch.object(module, "wait_native_receipt", return_value=None), \
+                 mock.patch.object(module, "record_event") as record:
+                with self.assertRaisesRegex(RuntimeError, "WECHAT_GUI_SEND_UNCERTAIN"):
+                    module.send_one({}, module.Window("1", 0, 0, 1000, 700),
+                                    module.TargetSpec("Shares", "Shares", "Shares"),
+                                    "reply", True, False, 0, True, True, False,
+                                    Path(tmp), Path(tmp) / "mirror.db", 1)
+            key.assert_called_once_with({}, "Return")
+            self.assertTrue(pending.exists())
+            self.assertEqual(record.call_args.kwargs["status"], "uncertain")
+
+    def test_pending_native_receipt_recovers_without_gui_send(self):
+        module = load_wechat_gui_send()
+        with tempfile.TemporaryDirectory() as tmp:
+            pending = Path(tmp) / "pending.json"
+            pending.write_text('{}')
+            evidence = {"verified": True, "method": "native_outbound_echo"}
+            with mock.patch.object(module, "pending_receipt_path", return_value=pending), \
+                 mock.patch.object(module, "wait_native_receipt", return_value=evidence), \
+                 mock.patch.object(module, "record_event") as record, \
+                 mock.patch.object(module, "reset_wechat_send_surface") as reset:
+                result = module.send_one({}, module.Window("1", 0, 0, 1000, 700),
+                                         module.TargetSpec("Shares", "Shares", "Shares"),
+                                         "reply", True, False, 0, False, True, False,
+                                         Path(tmp), Path(tmp) / "mirror.db", 1)
+            self.assertEqual(result["status"], "sent")
+            reset.assert_not_called()
+            self.assertFalse(pending.exists())
+            self.assertEqual(record.call_args.kwargs["metadata"]["delivery_verification"], evidence)
 
     def test_target_search_requires_explicit_opt_in(self):
         module = load_wechat_gui_send()

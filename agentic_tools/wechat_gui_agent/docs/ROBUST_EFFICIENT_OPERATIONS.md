@@ -22,6 +22,15 @@ that contract. Use polite, ownership-checked window close requests for native
 preview cleanup, never force-destroy application windows. A heartbeat or an
 unlocked client does not prove the player or sender is operational.
 
+For text delivery, fresh clipboard readback and an exact native outgoing row
+are required; a stale clipboard or screenshot difference is not confirmation.
+Persist the pre-Enter receipt and resolve uncertain sends before any retry.
+Queue expiry must not erase a current client's file-picker failure from health.
+See [native delivery verification](../../../references/labcanvas-native-delivery-verification-2026-09-05.md)
+for the implementation, private receipt format, tests, and remaining GUI blocker.
+Accept concise structured ordinary replies without a minimum character count;
+use source, requested-artifact, and coverage gates to assess actual completion.
+
 ## Operating Model
 
 Treat WeChat as a communication bridge, not as the executor. A WeChat message

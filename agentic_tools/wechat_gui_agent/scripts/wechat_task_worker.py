@@ -2679,6 +2679,8 @@ def send_errors_indicate_gui_compose_verification(errors: list[str]) -> bool:
     text = "\n".join(str(error) for error in errors).lower()
     return (
         "wecom_gui_compose_unverified" in text
+        or "wechat_compose_verify_failed" in text
+        or "wechat_clipboard_paste_timeout" in text
         or "wecom composer did not contain the exact unicode message" in text
         or "wecom did not compose the exact staged artifact" in text
         or "refusing to overwrite a non-empty wecom draft" in text
@@ -2690,7 +2692,7 @@ def send_errors_indicate_gui_compose_verification(errors: list[str]) -> bool:
 def send_errors_indicate_gui_postcommit_uncertain(errors: list[str]) -> bool:
     """Keep a possibly committed GUI send out of automatic retry loops."""
     text = "\n".join(str(error) for error in errors).lower()
-    return "wecom_gui_send_uncertain" in text
+    return "wecom_gui_send_uncertain" in text or "wechat_gui_send_uncertain" in text
 
 
 def send_errors_indicate_wechat_android_send_failed(errors: list[str]) -> bool:
@@ -22247,6 +22249,11 @@ def worker_result_needs_escalation(
         return True
     if task_accepts_concise_conversation_result(task):
         return False
+    if isinstance(payload, dict) and task is not None:
+        # Response length does not establish task completion. Structured short
+        # answers still pass source, artifact, and numbered-coverage gates below
+        # the model loop; do not retry them merely to obtain more characters.
+        return task_contract_requires_file_delivery(task)
     return len(text) < 80
 
 

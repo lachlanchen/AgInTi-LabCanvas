@@ -8423,6 +8423,9 @@ def is_deferable_send_error(exc: Exception | str) -> bool:
         or is_gui_send_timeout_error(exc)
         or is_blank_title_guard_error(exc)
         or is_android_send_error(exc)
+        or "wechat_compose_verify_failed" in str(exc).lower()
+        or "wechat_clipboard_paste_timeout" in str(exc).lower()
+        or "wechat_gui_send_uncertain" in str(exc).lower()
     )
 
 
@@ -8435,6 +8438,10 @@ def deferred_send_status(exc: Exception | str) -> str:
 
 
 def deferred_send_reason(exc: Exception | str) -> str:
+    if "wechat_gui_send_uncertain" in str(exc).lower():
+        return "gui_postcommit_uncertain"
+    if any(marker in str(exc).lower() for marker in ("wechat_compose_verify_failed", "wechat_clipboard_paste_timeout")):
+        return "gui_compose_verification"
     if is_gui_send_busy_error(exc):
         return "gui_send_busy"
     if is_gui_send_timeout_error(exc):

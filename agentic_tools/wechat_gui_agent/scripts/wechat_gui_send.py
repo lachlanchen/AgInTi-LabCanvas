@@ -24,11 +24,15 @@ import sys
 import time
 from typing import Any
 import unicodedata
+import uuid
 
 from file_lock import fcntl_compat as fcntl
 from wechat_message_policy import file_transport_identity, is_no_reply_control
 from wechat_mirror import DEFAULT_DB, record_event
 from wechat_window_control import request_close
+from wechat_native_text_delivery import (
+    pending_receipt_path, prepare_receipt, retain_pending_receipt, wait_native_receipt,
+)
 
 try:
     from opencc import OpenCC
@@ -345,6 +349,19 @@ def send_one(
     download_file_md5: str = "",
     outgoing_file: Path | None = None,
 ) -> dict[str, Any]:
+    pending_path = None
+    if do_send and outgoing_file is None and not download_file_title:
+        pending_path = pending_receipt_path(target.__dict__, message)
+        if pending_path.exists():
+            pending = json.loads(pending_path.read_text(encoding="utf-8"))
+            evidence = wait_native_receipt(pending, message, timeout=0)
+            if not evidence:
+                raise RuntimeError("WECHAT_GUI_SEND_UNCERTAIN: previous submission lacks a native receipt; not resending")
+            record_event(chat_name=target.name, query=target.query, action="send", direction="outbound",
+                         message=message, status="sent", db_path=mirror_db,
+                         metadata={"delivery_verification": evidence, "recovered": True})
+            pending_path.unlink()
+            return {"target": target.name, "status": "sent", "delivery_verification": evidence, "recovered": True}
     reset_wechat_send_surface(env, window, target, pause)
     attempt_id = datetime.now().strftime("%H%M%S-%f")
     shot_prefix = f"{index:02d}-{safe_name(target.name)}-{attempt_id}"
@@ -506,12 +523,19 @@ def send_one(
     if same_screenshot(opened_path, composed_path):
         raise RuntimeError(f"Message compose did not visibly change the WeChat window for {target.name}")
     if do_send:
+        receipt = prepare_receipt(target.__dict__)
+        assert pending_path is not None
+        retain_pending_receipt(pending_path, receipt)
         key(env, "Return")
         time.sleep(pause)
         sent_path = out_dir / f"{shot_prefix}-sent.png"
         screenshot(env, sent_path)
-        if same_screenshot(composed_path, sent_path):
-            raise RuntimeError(f"Message send did not visibly change the WeChat window for {target.name}")
+        delivery_verification = wait_native_receipt(receipt, message)
+        if not delivery_verification:
+            record_event(chat_name=target.name, query=target.query, action="send", direction="outbound",
+                         message=message, status="uncertain", db_path=mirror_db,
+                         screenshot_path=str(sent_path), metadata={"guard": guard, "native_receipt_pending": True})
+            raise RuntimeError("WECHAT_GUI_SEND_UNCERTAIN: no exact native outgoing message confirmed after Send")
         status = "sent"
         evidence_path = sent_path
     else:
@@ -526,8 +550,11 @@ def send_one(
         status=status,
         db_path=mirror_db,
         screenshot_path=str(evidence_path),
-        metadata={"target": target.__dict__, "guard": guard},
+        metadata={"target": target.__dict__, "guard": guard,
+                  "delivery_verification": delivery_verification if do_send else None},
     )
+    if do_send and pending_path is not None:
+        pending_path.unlink(missing_ok=True)
     return {"target": target.name, "status": status, "screenshot_prefix": shot_prefix}
 
 
@@ -2337,16 +2364,44 @@ def paste_text(env: dict[str, str], text: str) -> None:
 
 def verify_composer_text(env: dict[str, str], expected: str) -> None:
     """Read the focused composer back through the clipboard before sending."""
-    run(["xdotool", "key", "--clearmodifiers", "ctrl+a"], env=env)
-    run(["xdotool", "key", "--clearmodifiers", "ctrl+c"], env=env)
-    time.sleep(0.2)
-    copied = run(["xclip", "-selection", "clipboard", "-o"], env=env).stdout
-    run(["xdotool", "key", "--clearmodifiers", "ctrl+End"], env=env)
+    copied = read_composer_text(env)
     if normalize_composer_text(copied) != normalize_composer_text(expected):
         raise RuntimeError(
             "WECHAT_COMPOSE_VERIFY_FAILED: composed text does not match the intended message "
             f"(expected {len(expected)} chars, read back {len(copied)} chars)"
         )
+
+
+def read_composer_text(env: dict[str, str]) -> str:
+    # Ctrl+C on an empty/unresponsive composer leaves the old clipboard intact.
+    # Own it with a fresh nonce first so the earlier pasted message cannot pass.
+    marker = "labcanvas-clipboard-probe-" + uuid.uuid4().hex
+    proc = subprocess.Popen(["xclip", "-selection", "clipboard", "-quiet"],
+                            stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL, text=True, env=env)
+    try:
+        assert proc.stdin is not None
+        proc.stdin.write(marker)
+        proc.stdin.close()
+        time.sleep(0.15)
+        if run(["xclip", "-selection", "clipboard", "-o"], env=env).stdout != marker:
+            raise RuntimeError("WECHAT_COMPOSE_VERIFY_FAILED: clipboard verification probe unavailable")
+        run(["xdotool", "key", "--clearmodifiers", "ctrl+a"], env=env)
+        run(["xdotool", "key", "--clearmodifiers", "ctrl+c"], env=env)
+        time.sleep(0.2)
+        copied = run(["xclip", "-selection", "clipboard", "-o"], env=env).stdout
+        run(["xdotool", "key", "--clearmodifiers", "ctrl+End"], env=env)
+        if copied == marker:
+            raise RuntimeError("WECHAT_COMPOSE_VERIFY_FAILED: WeChat did not copy text from its composer")
+        return copied
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=1)
 
 
 def normalize_composer_text(value: str) -> str:

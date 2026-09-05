@@ -4812,6 +4812,48 @@ stderr: noisy internal trace
 
         self.assertTrue(worker.worker_result_needs_escalation(response, task=task))
 
+    def test_short_structured_reply_survives_fallback_research_route(self) -> None:
+        worker = load_worker()
+        task = {
+            "chat": "notes-chat",
+            "request": "These are ordinary notes, not a research request.",
+            "routine": {"id": "research_summary", "default_effort": "medium"},
+            "route_decision": {
+                "route_kind": "research_or_summary",
+                "reason": "fallback heuristic route",
+                "agent_bridge_mode": True,
+            },
+        }
+        response = json.dumps({"message": "Understood; I will keep these as notes.", "files": []})
+        with mock.patch.object(worker, "run_worker_codex_once", return_value=response) as run, \
+             mock.patch.object(worker, "recover_completed_research_artifacts", return_value=None):
+            self.assertEqual(worker.run_worker_codex(task), response)
+        run.assert_called_once()
+        self.assertFalse(task["worker_result_exhausted"])
+
+    def test_short_structured_reply_does_not_bypass_research_evidence_gate(self) -> None:
+        worker = load_worker()
+        task = {
+            "chat": "research-chat",
+            "routine": {"id": "research_summary"},
+            "route_decision": {"artifact_delivery": "forbidden"},
+            "execution_contract": {
+                "artifact_delivery": "forbidden",
+                "research_evidence": {"required": True, "message_only": True},
+            },
+        }
+        result = {"message": "Nature reports a 50% improvement.", "files": []}
+        self.assertFalse(worker.worker_result_needs_escalation(json.dumps(result), task=task))
+        with mock.patch.object(worker, "load_task_research_evidence_manifest", return_value={}), \
+             mock.patch.object(worker, "capture_codex_reference_evidence"):
+            guarded = worker.enforce_message_only_research_evidence(task, result)
+        self.assertEqual(guarded["private_failure"]["kind"], "unverified_research_claims")
+
+    def test_structured_explicit_failure_still_requires_recovery(self) -> None:
+        worker = load_worker()
+        response = json.dumps({"message": "Worker failed: cannot complete the request.", "files": []})
+        self.assertTrue(worker.worker_result_needs_escalation(response, task={"chat": "notes-chat"}))
+
     def test_run_worker_codex_retries_through_xhigh(self) -> None:
         worker = load_worker()
         calls: list[str] = []
@@ -14873,6 +14915,21 @@ stderr: noisy internal trace
             worker.send_deferred_reason_from_errors(errors),
             "gui_postcommit_uncertain",
         )
+
+    def test_wechat_native_sender_failures_retain_reply_without_inline_retry(self) -> None:
+        worker = load_worker()
+        for marker, reason in (
+            ("WECHAT_COMPOSE_VERIFY_FAILED", "gui_compose_verification"),
+            ("WECHAT_CLIPBOARD_PASTE_TIMEOUT", "gui_compose_verification"),
+            ("WECHAT_GUI_SEND_UNCERTAIN", "gui_postcommit_uncertain"),
+        ):
+            with self.subTest(marker=marker), mock.patch.object(
+                worker, "send_result_once", side_effect=RuntimeError(marker)
+            ) as sender:
+                errors = worker.send_result_with_retries({"message": "reply"}, "Shares", Path("targets.json"))
+                self.assertEqual(len(errors), 1)
+                sender.assert_called_once()
+                self.assertEqual(worker.send_deferred_reason_from_errors(errors), reason)
 
     def test_claim_next_deferred_send_repairs_legacy_wecom_composer_failure(self) -> None:
         worker = load_worker()

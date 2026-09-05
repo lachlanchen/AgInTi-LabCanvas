@@ -4,6 +4,11 @@ Updated: 2026-09-05. This scope supersedes this session's earlier combined
 LabCanvas/AgInTi development campaign. It records the owner's latest direction;
 it does not claim that the Codex native goal text has been changed.
 
+Immediate priority: leave the currently failed Shipinhao card task alone and
+audit ordinary group-message intake, consecutive-message coverage, processing,
+and response delivery. A later link is an independent source/task; do not let
+the abandoned card block it or automatically replay the card during recovery.
+
 Make LabCanvas a reliable conversation bridge to a resumable agent:
 
 1. Receive every authorized WeChat/WeCom message with exact chat, sender,
