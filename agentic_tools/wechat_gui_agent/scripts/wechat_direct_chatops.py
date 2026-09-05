@@ -74,6 +74,22 @@ DEFAULT_CATCHUP_POLL_SECONDS = 0.1
 DEFAULT_WORKER_PENDING_TTL_SECONDS = 15 * 60
 DEFAULT_WORKER_DEFERRED_SEND_TTL_SECONDS = 10 * 60
 GUI_SEND_LOCK = PRIVATE / "wechat_gui_send.lock"
+
+
+class FastAgentUnavailable(RuntimeError):
+    """Signal that all configured fast-response backends failed."""
+
+    def __init__(self, result: dict[str, Any]) -> None:
+        self.result = dict(result)
+        reason = str(
+            result.get("reason")
+            or result.get("stderr_tail")
+            or result.get("message")
+            or "fast agent unavailable"
+        ).strip()
+        super().__init__(reason[:500])
+
+
 INTERRUPTIBLE_TASK_STATUSES = {
     "pending",
     "in_progress",
@@ -569,19 +585,53 @@ def run_once(config: dict[str, Any], state: dict[str, Any], *, send: bool, no_de
                     ).strip()
                 else:
                     started = time.monotonic()
-                    response = run_codex(config, trigger_row, context_rows, focus_rows=focus_rows)
-                    metrics["codex_ms"] = elapsed_ms(started)
-                    routed = parse_fast_response(response)
-                    if routed["task"]:
+                    try:
+                        response = run_codex(
+                            config,
+                            trigger_row,
+                            context_rows,
+                            focus_rows=focus_rows,
+                        )
+                    except Exception as exc:
+                        metrics["fast_agent_status"] = "deferred_to_worker"
+                        metrics["fast_agent_error_type"] = type(exc).__name__
+                        recovery_request = combined_focus_request(
+                            config,
+                            trigger_row,
+                            context_rows,
+                            focus_rows=focus_rows,
+                        )
                         task = enqueue_worker_task(
                             config,
                             trigger_row,
-                            routed["task"],
+                            recovery_request,
                             context_rows=context_rows,
                             focus_rows=focus_rows,
+                            route_decision={
+                                "route_kind": "other_worker",
+                                "worker_needed": True,
+                                "reason": "fast_agent_unavailable",
+                                "fast_agent_recovery": True,
+                            },
                         )
                         task_enqueued = task["id"]
-                    reply_text = routed["chat"] or routed["ack"]
+                        reply_text = ""
+                    else:
+                        routed = parse_fast_response(response)
+                        if routed["task"]:
+                            task = enqueue_worker_task(
+                                config,
+                                trigger_row,
+                                routed["task"],
+                                context_rows=context_rows,
+                                focus_rows=focus_rows,
+                            )
+                            task_enqueued = task["id"]
+                        reply_text = routed["chat"] or routed["ack"]
+                        if is_no_reply_control(response):
+                            metrics["fast_agent_status"] = "evaluated_no_reply"
+                            mark_responded_rows(state, focus_rows or [trigger_row])
+                    metrics["codex_ms"] = elapsed_ms(started)
         if (
             reply_text
             and not is_no_reply_control(reply_text)
@@ -592,6 +642,7 @@ def run_once(config: dict[str, Any], state: dict[str, Any], *, send: bool, no_de
                 trigger_row,
                 reply_text,
                 context_rows=context_rows,
+                focus_rows=focus_rows,
                 route_decision={
                     "route_kind": "other_worker",
                     "reason": "long_response_delivery",
@@ -618,16 +669,24 @@ def run_once(config: dict[str, Any], state: dict[str, Any], *, send: bool, no_de
                     status = "sent"
                 except Exception as exc:
                     metrics["send_error"] = str(exc)[:500]
-                    status = deferred_send_status(exc) if is_deferable_send_error(exc) else "send-failed"
+                    status = (
+                        deferred_send_status(exc)
+                        if is_deferable_send_error(exc)
+                        else "send-deferred-guard"
+                    )
                     send_ok = False
-                    if status.startswith("send-deferred") and not task_enqueued:
+                    if not task_enqueued:
                         deferred = enqueue_deferred_reply(
                             config,
                             trigger_row,
                             reply_text,
                             context_rows=context_rows,
-                            route_decision={"route_kind": "other_worker", "reason": deferred_send_reason(exc)},
-                            reason=deferred_send_reason(exc),
+                            focus_rows=focus_rows,
+                            route_decision={
+                                "route_kind": "other_worker",
+                                "reason": durable_send_failure_reason(exc),
+                            },
+                            reason=durable_send_failure_reason(exc),
                         )
                         task_enqueued = deferred["id"]
                 metrics["send_ms"] = elapsed_ms(started)
@@ -676,19 +735,30 @@ def run_once(config: dict[str, Any], state: dict[str, Any], *, send: bool, no_de
                     status = "sent"
                 except Exception as exc:
                     metrics["send_error"] = str(exc)[:500]
-                    status = deferred_send_status(exc) if is_deferable_send_error(exc) else "send-failed"
+                    status = (
+                        deferred_send_status(exc)
+                        if is_deferable_send_error(exc)
+                        else "send-deferred-guard"
+                    )
                     send_ok = False
-                    if status.startswith("send-deferred"):
-                        source_row = latest_inbound_row(config, new_rows) or new_rows[-1]
-                        deferred = enqueue_deferred_reply(
-                            config,
-                            source_row,
-                            ack_text,
-                            context_rows=new_rows,
-                            route_decision={"route_kind": "other_worker", "reason": deferred_send_reason(exc)},
-                            reason=deferred_send_reason(exc),
-                        )
-                        task_enqueued = deferred["id"]
+                    source_row = latest_inbound_row(config, new_rows) or new_rows[-1]
+                    deferred = enqueue_deferred_reply(
+                        config,
+                        source_row,
+                        ack_text,
+                        context_rows=new_rows,
+                        focus_rows=[
+                            item
+                            for item in new_rows
+                            if is_inbound_user_row(config, item)
+                        ],
+                        route_decision={
+                            "route_kind": "other_worker",
+                            "reason": durable_send_failure_reason(exc),
+                        },
+                        reason=durable_send_failure_reason(exc),
+                    )
+                    task_enqueued = deferred["id"]
                 metrics["send_ms"] = elapsed_ms(started)
             latest_row = latest_inbound_row(config, new_rows)
             record_event(
@@ -6716,7 +6786,7 @@ def run_codex(
         backend_config=agent_backend_config(config, backend),
     )
     if not result["ok"]:
-        return "NO_REPLY"
+        raise FastAgentUnavailable(result)
     return str(result.get("message") or "").strip()
 
 
@@ -7858,14 +7928,16 @@ def enqueue_deferred_reply(
     reply_text: str,
     *,
     context_rows: list[dict[str, Any]],
+    focus_rows: list[dict[str, Any]] | None = None,
     route_decision: dict[str, Any] | None = None,
     reason: str = "wechat_locked",
 ) -> dict[str, Any]:
     """Persist a fast reply so the worker outbox can send it after unlock."""
     queue = Path(config.get("worker_queue") or DEFAULT_QUEUE)
     queue.parent.mkdir(parents=True, exist_ok=True)
+    task_id = datetime.now().strftime("%Y%m%d%H%M%S") + f"-deferred-{row['local_id']}"
     task = {
-        "id": datetime.now().strftime("%Y%m%d%H%M%S") + f"-deferred-{row['local_id']}",
+        "id": task_id,
         "chat": config["chat_name"],
         "session_scope": agent_session_chat_name(config),
         "request": "Deferred fast WeChat reply; send stored result only, do not rerun backend work.",
@@ -7887,6 +7959,20 @@ def enqueue_deferred_reply(
         "route": build_route_contract(config),
         "route_decision": route_decision or {"route_kind": "other_worker", "reason": reason},
         "response_policy": build_chat_response_policy(config),
+        "message_ledger": build_task_message_ledger(
+            config,
+            row,
+            context_rows,
+            focus_rows=focus_rows,
+            task_id=task_id,
+        ),
+        "message_ledger_contract": {
+            "schema": "labcanvas-message-ledger-v1",
+            "authoritative_before_backend_selection": True,
+            "coverage_required_per_item": True,
+            "combined_reply_allowed": True,
+            "backend_changes_quality_not_message_scope": True,
+        },
         "source": {
             "chat": config["chat_name"],
             "config_id": config.get("config_id") or "",
@@ -8258,6 +8344,14 @@ def deferred_send_reason(exc: Exception | str) -> str:
             else "android_send_failed"
         )
     return "wechat_locked"
+
+
+def durable_send_failure_reason(exc: Exception | str) -> str:
+    """Classify every send failure without discarding the prepared reply."""
+
+    if is_deferable_send_error(exc):
+        return deferred_send_reason(exc)
+    return "gui_send_guard_failed"
 
 
 def is_android_send_error(exc: Exception | str) -> bool:

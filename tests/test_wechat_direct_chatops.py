@@ -204,10 +204,12 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertIn("pcb_kicad_gerber", prompt)
         self.assertIn("A safe explicit request always overrides the focus", prompt)
 
-    def test_monitor_checkpoints_inbound_cursor_before_agent_failure(self) -> None:
+    def test_monitor_checkpoints_and_defers_inbound_after_fast_agent_failure(self) -> None:
         config = self.base_config()
         state_path = Path(self._tmpdir.name) / "direct.state.json"
+        queue_path = Path(self._tmpdir.name) / "worker.jsonl"
         config["_runtime_state_path"] = str(state_path)
+        config["worker_queue"] = str(queue_path)
         row = self.row("Please summarize this", local_id=42, server_id="srv-42")
         state: dict[str, object] = {"last_local_id": 41}
 
@@ -217,13 +219,62 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
             mock.patch.object(direct_chatops, "read_recent_history", return_value=[row]),
             mock.patch.object(direct_chatops, "run_codex", side_effect=TimeoutError("network stalled")),
         ):
-            with self.assertRaises(TimeoutError):
-                direct_chatops.run_once(config, state, send=False, no_decrypt=True)
+            result = direct_chatops.run_once(config, state, send=False, no_decrypt=True)
 
         saved = json.loads(state_path.read_text(encoding="utf-8"))
+        queued = json.loads(queue_path.read_text(encoding="utf-8").strip())
         self.assertEqual(saved["last_local_id"], 42)
         self.assertEqual(saved["inbound_checkpoint_count"], 1)
         self.assertEqual(saved["inflight_local_ids"], [42])
+        self.assertEqual(result["tasks_enqueued"], 1)
+        self.assertEqual(result["metrics"]["fast_agent_status"], "deferred_to_worker")
+        self.assertEqual(result["state"]["responded_server_ids"], ["srv-42"])
+        self.assertNotIn("inflight_local_ids", result["state"])
+        self.assertEqual(queued["request"], "friend: Please summarize this")
+        self.assertTrue(queued["route_decision"]["fast_agent_recovery"])
+        self.assertEqual(
+            [item["server_id"] for item in queued["message_ledger"]],
+            ["srv-42"],
+        )
+
+    def test_fast_agent_failure_preserves_every_coalesced_message(self) -> None:
+        queue_path = Path(self._tmpdir.name) / "burst-worker.jsonl"
+        config = self.base_config()
+        config["worker_queue"] = str(queue_path)
+        rows = [
+            self.row("first instruction", local_id=41, server_id="srv-41"),
+            self.row("second instruction", local_id=42, server_id="srv-42"),
+        ]
+        state: dict[str, object] = {"last_local_id": 40}
+
+        with (
+            mock.patch.object(direct_chatops, "read_new_messages", return_value=rows),
+            mock.patch.object(direct_chatops, "sync_row_to_mirror"),
+            mock.patch.object(direct_chatops, "read_recent_history", return_value=rows),
+            mock.patch.object(
+                direct_chatops,
+                "run_codex",
+                side_effect=direct_chatops.FastAgentUnavailable(
+                    {"reason": "all configured backends unavailable"}
+                ),
+            ),
+        ):
+            result = direct_chatops.run_once(
+                config,
+                state,
+                send=False,
+                no_decrypt=True,
+            )
+
+        queued = json.loads(queue_path.read_text(encoding="utf-8").strip())
+        self.assertEqual(result["tasks_enqueued"], 1)
+        self.assertEqual(result["state"]["responded_server_ids"], ["srv-41", "srv-42"])
+        self.assertEqual(
+            [item["server_id"] for item in queued["message_ledger"]],
+            ["srv-41", "srv-42"],
+        )
+        self.assertIn("first instruction", queued["request"])
+        self.assertIn("second instruction", queued["request"])
 
     def test_inflight_checkpoint_clears_only_completed_rows(self) -> None:
         state: dict[str, object] = {
@@ -2907,13 +2958,15 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
                 "mirror_db": str(Path(tmp) / "mirror.sqlite"),
                 "send_target": {"name": "鏈接", "expected_title": "鏈接"},
             }
+            first = self.row("first", local_id=11, server_id="srv-11", sender="self")
             row = self.row("best", local_id=12, server_id="srv-12", sender="self")
 
             task = direct_chatops.enqueue_deferred_reply(
                 config,
                 row,
                 "在线，已收到。",
-                context_rows=[row],
+                context_rows=[first, row],
+                focus_rows=[first, row],
                 reason="test_wechat_locked",
             )
             saved = json.loads(queue.read_text(encoding="utf-8").strip())
@@ -2923,6 +2976,11 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertEqual(saved["result"]["message"], "在线，已收到。")
         self.assertEqual(saved["routine"]["id"], "general_worker")
         self.assertEqual(saved["route"]["expected_title"], "鏈接")
+        self.assertEqual(
+            [item["server_id"] for item in saved["message_ledger"]],
+            ["srv-11", "srv-12"],
+        )
+        self.assertTrue(saved["message_ledger_contract"]["coverage_required_per_item"])
 
     def test_story_edit_request_does_not_reuse_previous_result(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -3095,6 +3153,31 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertIn("metrics", result)
         self.assertIn("total_ms", result["metrics"])
         self.assertIn("last_loop_at", result["state"])
+
+    def test_intentional_no_reply_marks_entire_burst_as_evaluated(self) -> None:
+        config = self.base_config()
+        config["immediate_ack_enabled"] = False
+        state: dict[str, object] = {"last_local_id": 0}
+        rows = [
+            self.row("peer fragment one", server_id="1", local_id=1),
+            self.row("peer fragment two", server_id="2", local_id=2),
+        ]
+        with (
+            mock.patch.object(direct_chatops, "read_new_messages", return_value=rows),
+            mock.patch.object(direct_chatops, "read_recent_history", return_value=rows),
+            mock.patch.object(direct_chatops, "run_codex", return_value="NO_REPLY"),
+        ):
+            result = direct_chatops.run_once(
+                config,
+                state,
+                send=False,
+                no_decrypt=True,
+            )
+
+        self.assertEqual(result["responses_sent"], 0)
+        self.assertEqual(result["tasks_enqueued"], 0)
+        self.assertEqual(result["metrics"]["fast_agent_status"], "evaluated_no_reply")
+        self.assertEqual(result["state"]["responded_server_ids"], ["1", "2"])
 
     def test_unread_worker_burst_keeps_every_source_before_backend_selection(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -3276,10 +3359,12 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertNotIn("force_replay_local_ids", result["state"])
         self.assertEqual(result["metrics"]["force_replay_completed"], 1)
 
-    def test_send_failure_does_not_mark_row_responded(self) -> None:
+    def test_send_guard_failure_preserves_reply_in_durable_outbox(self) -> None:
         config = self.base_config()
         config["immediate_ack_enabled"] = False
         config["codex"] = {"model": "gpt-5.5", "reasoning_effort": "low", "sandbox": "read-only", "timeout_seconds": 60}
+        queue = Path(self._tmpdir.name) / "send-guard-worker.jsonl"
+        config["worker_queue"] = str(queue)
         state: dict[str, object] = {"last_local_id": 0}
         row = self.row("今日はいい天気です", server_id="1", local_id=1)
         original_read_new = direct_chatops.read_new_messages
@@ -3304,8 +3389,12 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
 
         self.assertEqual(result["responses_sent"], 0)
         self.assertIsNone(result["response_sent"])
-        self.assertEqual(result["state"].get("responded_server_ids"), None)
+        self.assertEqual(result["tasks_enqueued"], 1)
+        self.assertEqual(result["state"].get("responded_server_ids"), ["1"])
         self.assertEqual(result["metrics"]["send_error"], "title guard failed")
+        queued = json.loads(queue.read_text(encoding="utf-8").strip())
+        self.assertEqual(queued["result"]["message"], "reply")
+        self.assertEqual(queued["send_deferred_reason"], "gui_send_guard_failed")
 
     def test_gui_send_busy_defers_fast_reply_for_worker_flush(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -4337,6 +4426,20 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertEqual(response, "CHAT: ok")
         self.assertEqual(calls[0]["chat_name"], "EchoMind")
         self.assertEqual(calls[0]["role"], "fast")
+
+    def test_run_codex_exposes_backend_failure_instead_of_returning_no_reply(self) -> None:
+        config = self.base_config()
+        original = direct_chatops.run_codex_session
+        try:
+            direct_chatops.run_codex_session = lambda *_args, **_kwargs: {  # type: ignore[assignment]
+                "ok": False,
+                "reason": "all_backends_unavailable",
+                "message": "",
+            }
+            with self.assertRaises(direct_chatops.FastAgentUnavailable):
+                direct_chatops.run_codex(config, self.row("你好"), [self.row("你好")])
+        finally:
+            direct_chatops.run_codex_session = original  # type: ignore[assignment]
 
     def test_send_gui_message_uses_fast_current_chat_path(self) -> None:
         calls: list[dict[str, object]] = []

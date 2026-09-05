@@ -5795,6 +5795,50 @@ stderr: noisy internal trace
                 guarded["data"]["message_only_research_quality"]["issues"],
             )
 
+    def test_codex_resolved_identifier_accepts_explicit_failure_condition(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            task = {
+                "id": "codex-resolved-with-failure-condition",
+                "artifact_dir": tmp,
+                "agent_session": {"backend": "codex", "ok": True},
+                "route_decision": {
+                    "message_only": True,
+                    "artifact_delivery": "forbidden",
+                },
+                "execution_contract": {
+                    "artifact_delivery": "forbidden",
+                    "research_evidence": {"required": True, "message_only": True},
+                },
+            }
+            result = {
+                "message": (
+                    "2026年研究提出了一个类器官代谢读出方法。"
+                    "DOI: 10.1000/verified。失效条件：跨供体预测增益消失。"
+                ),
+                "files": [],
+            }
+            evidence = {
+                "identifier": "doi:10.1000/verified",
+                "kind": "doi",
+                "canonical_url": "https://doi.org/10.1000/verified",
+                "http_status": 302,
+                "resolved_location_host": "publisher.example",
+                "checked_at": "2026-09-03T09:00:00",
+                "evidence_level": "identifier_resolved",
+            }
+            with mock.patch.object(
+                worker,
+                "verify_scholarly_reference",
+                return_value=evidence,
+            ):
+                guarded = worker.enforce_message_only_research_evidence(task, result)
+
+            self.assertEqual(guarded, result)
+            self.assertEqual(
+                task["message_only_research_quality"]["status"], "accepted"
+            )
+
     def test_codex_message_only_research_rejects_unresolved_doi(self) -> None:
         worker = load_worker()
         with tempfile.TemporaryDirectory() as tmp:
@@ -7082,6 +7126,100 @@ stderr: noisy internal trace
         self.assertFalse(
             task["completion_audit"]["attempts"][-1]["model_invoked"]
         )
+
+    def test_repair_stored_research_reply_reconciles_suppressed_single_gap(self) -> None:
+        worker = load_worker()
+        raw = json.dumps(
+            {
+                "message": (
+                    "研究提出了一个可验证方向（DOI: 10.1000/verified）。"
+                    "失效条件：跨供体预测增益消失。"
+                ),
+                "files": [],
+                "confirmation": "",
+            },
+            ensure_ascii=False,
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "message-only-repair",
+                        "chat": "LabAgent",
+                        "status": "worker_failed",
+                        "request": "Return one concise research inspiration.",
+                        "agent_session": {"backend": "codex", "ok": True},
+                        "route_decision": {
+                            "message_only": True,
+                            "artifact_delivery": "forbidden",
+                        },
+                        "execution_contract": {
+                            "artifact_delivery": "forbidden",
+                            "research_evidence": {
+                                "required": True,
+                                "message_only": True,
+                            },
+                        },
+                        "message_coverage": {
+                            "status": "supplement_required",
+                            "expected_item_ids": ["task:message-only-repair"],
+                            "covered_item_ids": [],
+                            "unresolved_item_ids": ["task:message-only-repair"],
+                            "missing": [
+                                {
+                                    "item_id": "task:message-only-repair",
+                                    "requirement": "Return the research inspiration.",
+                                    "kind": "reply",
+                                }
+                            ],
+                        },
+                        "result": {
+                            "message": "",
+                            "files": [],
+                            "raw": raw,
+                            "no_reply": True,
+                            "private_failure": {
+                                "kind": "unverified_research_claims"
+                            },
+                        },
+                    }
+                ],
+            )
+            evidence = {
+                "identifier": "doi:10.1000/verified",
+                "kind": "doi",
+                "canonical_url": "https://doi.org/10.1000/verified",
+                "http_status": 302,
+                "resolved_location_host": "publisher.example",
+                "checked_at": "2026-09-05T09:00:00",
+                "evidence_level": "identifier_resolved",
+            }
+            with (
+                mock.patch.object(
+                    worker,
+                    "verify_scholarly_reference",
+                    return_value=evidence,
+                ),
+                mock.patch.object(
+                    worker,
+                    "run_worker_codex",
+                    side_effect=AssertionError("repair must not invoke the agent"),
+                ),
+            ):
+                repaired = worker.repair_stored_result_contract(
+                    queue,
+                    "message-only-repair",
+                )
+
+        self.assertEqual(repaired["message_coverage"]["status"], "covered")
+        self.assertEqual(
+            repaired["message_coverage"]["covered_item_ids"],
+            ["task:message-only-repair"],
+        )
+        self.assertEqual(repaired["coverage_status"], "covered")
+        self.assertFalse(repaired["stored_contract_repair"]["model_invoked"])
 
     def test_video_publish_preflight_writes_context_and_uses_exact_message_id(self) -> None:
         worker = load_worker()

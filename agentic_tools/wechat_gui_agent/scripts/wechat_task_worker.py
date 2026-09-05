@@ -617,8 +617,9 @@ def reconcile_repaired_artifact_coverage(
     result: dict[str, Any],
     *,
     checked_at: str,
+    allow_single_reply: bool = False,
 ) -> list[str]:
-    """Clear only stale artifact gaps proven by the repaired result itself."""
+    """Clear only stale gaps proven by the repaired result itself."""
     coverage = (
         task.get("message_coverage")
         if isinstance(task.get("message_coverage"), dict)
@@ -645,38 +646,51 @@ def reconcile_repaired_artifact_coverage(
             and not reader_facing_pdf_quality_issues(task, path)
         ):
             passing_pdf_paths.append(path)
-    if not passing_pdf_paths:
-        return []
     passing_pdf_path_set = {str(path) for path in passing_pdf_paths}
-    remaining_skipped = [
-        item
-        for item in task.get("skipped_files") or []
-        if not (
-            isinstance(item, dict)
-            and str(Path(str(item.get("path") or "")).expanduser().resolve())
-            in passing_pdf_path_set
-            and str(item.get("reason") or "").startswith(
-                "reader-facing-pdf-quality:"
+    if passing_pdf_path_set:
+        remaining_skipped = [
+            item
+            for item in task.get("skipped_files") or []
+            if not (
+                isinstance(item, dict)
+                and str(Path(str(item.get("path") or "")).expanduser().resolve())
+                in passing_pdf_path_set
+                and str(item.get("reason") or "").startswith(
+                    "reader-facing-pdf-quality:"
+                )
             )
-        )
-    ]
-    if remaining_skipped:
-        task["skipped_files"] = remaining_skipped
-    else:
-        task.pop("skipped_files", None)
+        ]
+        if remaining_skipped:
+            task["skipped_files"] = remaining_skipped
+        else:
+            task.pop("skipped_files", None)
     if not missing:
         return []
 
     resolved_ids: list[str] = []
     unresolved_missing: list[dict[str, Any]] = []
+    single_reply_proven = bool(
+        allow_single_reply
+        and len(missing) == 1
+        and str(result.get("message") or "").strip()
+        and not result_is_no_reply(result)
+    )
     for item in missing:
         requirement = str(item.get("requirement") or "")
         item_id = str(item.get("item_id") or "")
+        item_kind = str(item.get("kind") or "").casefold()
         is_pdf_artifact = (
-            str(item.get("kind") or "").casefold() == "artifact"
+            item_kind == "artifact"
             and bool(re.search(r"(?:\bpdf\b|\.pdf\b)", requirement, flags=re.I))
         )
-        if is_pdf_artifact and item_id:
+        is_single_reply = single_reply_proven and item_kind in {
+            "answer",
+            "reply",
+            "response",
+        }
+        if item_id and (
+            (is_pdf_artifact and bool(passing_pdf_paths)) or is_single_reply
+        ):
             resolved_ids.append(item_id)
         else:
             unresolved_missing.append(item)
@@ -708,6 +722,10 @@ def reconcile_repaired_artifact_coverage(
         "repair_attempted": True,
         "repair_succeeded": not unresolved_ids,
     }
+    task["coverage_status"] = (
+        "covered" if not unresolved_ids else "supplement_required"
+    )
+    task["coverage_checked_at"] = checked_at
 
     audit = (
         dict(task.get("completion_audit"))
@@ -722,9 +740,10 @@ def reconcile_repaired_artifact_coverage(
         ),
         {
             "stage": "stored_contract_revalidation",
-            "status": "artifact_requirements_revalidated",
+            "status": "requirements_revalidated",
             "resolved_item_ids": resolved_ids,
             "verified_files": [str(path) for path in passing_pdf_paths],
+            "single_reply_revalidated": single_reply_proven,
             "model_invoked": False,
         },
     ]
@@ -816,10 +835,39 @@ def repair_stored_result_contract(
         repaired = enforce_reader_facing_pdf_quality(task, repaired)
         repaired = enforce_message_only_research_evidence(task, repaired)
         repaired = recover_stored_result_required_files(task, repaired, raw_text)
+        original_private_failure = (
+            stored_result.get("private_failure")
+            if isinstance(stored_result.get("private_failure"), dict)
+            else {}
+        )
+        prior_contract_repair = (
+            task.get("stored_contract_repair")
+            if isinstance(task.get("stored_contract_repair"), dict)
+            else {}
+        )
+        prior_message_quality = (
+            task.get("message_only_research_quality")
+            if isinstance(task.get("message_only_research_quality"), dict)
+            else {}
+        )
         resolved_coverage_ids = reconcile_repaired_artifact_coverage(
             task,
             repaired,
             checked_at=now_text,
+            allow_single_reply=bool(
+                (
+                    str(original_private_failure.get("kind") or "")
+                    == "unverified_research_claims"
+                    or (
+                        str(prior_contract_repair.get("delivery_status") or "")
+                        == "prepared"
+                        and str(prior_message_quality.get("status") or "")
+                        == "accepted"
+                    )
+                )
+                and message_only_research_evidence_contract_applies(task)
+                and not message_only_research_evidence_issues(task, repaired)
+            ),
         )
         if not worker_result_has_delivery_content(repaired):
             raise SystemExit(f"Task {task_id} raw result has no repairable delivery content")
@@ -5399,7 +5447,8 @@ MESSAGE_ONLY_HYPOTHESIS_RE = re.compile(
     flags=re.IGNORECASE,
 )
 MESSAGE_ONLY_UNCERTAINTY_RE = re.compile(
-    r"(?:局限|限制|不确定|不確定|证据.{0,12}(?:有限|不足)|證據.{0,12}(?:有限|不足)|"
+    r"(?:局限|限制|不确定|不確定|反例|失效条件|失效條件|失败条件|失敗條件|"
+    r"证据.{0,12}(?:有限|不足)|證據.{0,12}(?:有限|不足)|"
     r"(?:不能|不可|不应|不應).{0,24}(?:外推|证明|證明|视为|視為)|"
     r"仅.{0,30}(?:样本|樣本|证据|證據)|(?:尚需|仍需|需要).{0,16}(?:验证|驗證|复现|復現)|"
     r"limitation|uncertain|limited\s+evidence|cannot\s+be\s+generalized)",
