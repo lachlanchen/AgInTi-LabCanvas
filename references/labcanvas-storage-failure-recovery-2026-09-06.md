@@ -161,6 +161,72 @@ The working recovery checkout and launcher backups are on the healthy home
 filesystem under `~/.local/state/labcanvas-storage-recovery-20260906/`. They
 must not be confused with a recovered production private-data directory.
 
+## Post-repair restart, 2026-09-06 evening
+
+After the owner repaired the disk and rebooted, the project filesystem was
+read-write and its backing NVMe reported `live`. Startup remained held by the
+deliberate recovery-review latch; an active guard service did not mean that
+the chat workers had resumed.
+
+Recovery performed:
+
+- Fast-forwarded the original checkout from `309314b` to `34a31a3`, preserving
+  all existing uncommitted work. The healthy-volume recovery clone was not
+  substituted for the production private directory.
+- Validated both JSONL queues (733 WeChat and 490 WeCom records), private JSON
+  configuration/cursors, and ten nonempty SQLite databases. Used SQLite's
+  backup API and ran `PRAGMA quick_check` on the copies, including the 2 GB
+  WeChat mirror. Preserved terminal task states and successful-send receipts.
+- Saved the consistent database copies and lock-protected queue snapshots
+  under `~/.local/state/labcanvas/storage-recovery-20260906-1938/`, on the
+  separate home volume. `validation.json` records the checks privately.
+- Acknowledged the storage hold only after that review. The WeCom user service
+  resumed its existing supervisor. Invoked
+  `~/scripts/create-labcanvas-wechat-after-reboot.sh start` once to restore
+  WeChat, the Studio, the career/memo scheduler, and EchoMind's scheduler.
+- Started the existing Tiny11 disk through its original launcher after
+  confirming no VM was running. Its qcow2 consistency check passed. Did not
+  create a new VM, account, profile, or Android relay.
+- Today's three LabAgent daily jobs were queued by the scheduler once. The
+  first entered processing; the remaining two waited in sequence. EchoMind's
+  daily PDF and the career/memo work also resumed. This is generation/queue
+  evidence, not proof of delivery.
+
+Current review endpoints, opened in the existing desktop Firefox:
+
+- Studio: `http://127.0.0.1:19474/`
+- Ubuntu WeChat:
+  `http://127.0.0.1:6107/vnc.html?host=127.0.0.1&port=6107&autoconnect=1&resize=scale&reconnect=1&reconnect_delay=1000`
+- Windows WeCom: `http://127.0.0.1:6143/`
+
+All three returned HTTP 200. The restored long-running sessions are
+`labcanvas-wechat`, `labcanvas-wecom`, `labcanvas-web`,
+`labcanvas-career-daily`, `labcanvas-echomind-language`, and
+`windows-tiny11-novnc`. WeChat uses display `:97`; WeCom uses the dedicated
+Tiny11 console, not Wine or the phone. Android ingress remains disabled and
+the desktop unlock watchdog remains in observation-only mode.
+
+At this checkpoint, WeChat rejected its saved-account entry with an account
+exception, and Windows was waiting at the existing user's sign-in screen.
+Do not describe the system as able to receive/send live messages until both
+native clients are actually logged in. WeCom's status has distinct fields:
+`ok` can describe the bridge endpoint while `chat_ready=false`,
+`client_visible=false`, or `closed_loop_state=login_required` describes the
+unavailable chat transport.
+
+An interactive scheduled task named `LabCanvas-WeCom-Client` now launches the
+installed `C:\Program Files (x86)\WXWork\WXWork.exe` at the existing Windows
+user's logon. It uses `LogonType=Interactive`, `RunLevel=Limited`, and
+`MultipleInstances=IgnoreNew`. It does not store a password, enable automatic
+Windows sign-in, or change WeCom credentials. The separate
+`LabCanvas-WeCom-Bridge` task still owns the helper. After sign-in, verify both
+the native app and the authenticated helper, followed by a source-chat
+delivery check; do not reset cursors or force replay old reports.
+
+Post-repair validation: all 11 storage-guard tests and
+`labcanvas wechat selftest --suite all --json` passed. These checks do not
+replace a live authenticated inbound-to-outbound test.
+
 ## Technical basis
 
 [Linux ext4 documentation](https://www.kernel.org/doc/html/latest/admin-guide/ext4.html)
