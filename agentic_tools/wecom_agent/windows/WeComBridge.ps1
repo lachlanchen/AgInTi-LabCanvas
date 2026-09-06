@@ -144,7 +144,11 @@ function Invoke-BridgeAction {
             Invoke-Key -Keys ([string]$Action.keys)
         }
         "set_clipboard" {
-            [System.Windows.Forms.Clipboard]::SetText([string]$Action.text)
+            if ([string]::IsNullOrEmpty([string]$Action.text)) {
+                [System.Windows.Forms.Clipboard]::Clear()
+            } else {
+                [System.Windows.Forms.Clipboard]::SetText([string]$Action.text)
+            }
         }
         "get_clipboard" {
             return [System.Windows.Forms.Clipboard]::GetText()
@@ -188,7 +192,14 @@ function Write-JsonResponse {
 
 function Write-ScreenshotResponse {
     param($Response)
-    $bounds = [System.Windows.Forms.SystemInformation]::VirtualScreen
+    # WeCom owns the origin/primary monitor. Never include the adjacent WeChat
+    # screen in a research task's screenshots or OCR context.
+    $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+    $window = Get-WeComWindow
+    if ($bounds.X -ne 0 -or $bounds.Y -ne 0 -or ($null -ne $window -and
+        -not $bounds.Contains([int]($window.X + $window.Width/2), [int]($window.Y + $window.Height/2)))) {
+        throw 'WeCom is outside its origin monitor; refusing cross-app capture.'
+    }
     $bitmap = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
     $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
     $stream = New-Object System.IO.MemoryStream

@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Windows App View</title>
+<style>
+* { box-sizing: border-box; letter-spacing: 0; }
+body { margin:0; background:#16191c; color:#edf0f3; font:14px system-ui,sans-serif; height:100dvh; display:flex; flex-direction:column; }
+header { min-height:46px; padding:6px 12px; display:flex; flex-wrap:wrap; align-items:center; gap:12px; border-bottom:1px solid #42474c; }
+strong { margin-right:auto; } a { color:#9ddcc9; } button { font:inherit; padding:5px 10px; cursor:pointer; }
+#status { color:#bbc2ca; } #screen { flex:1; min-height:0; overflow:hidden; }
+dialog { width:min(480px,90vw); } textarea { width:100%; height:140px; } dialog button { margin-top:8px; }
+</style>
+<header><strong id="name"></strong><span id="status">Connecting</span><button id="control">Take control</button><button id="clipboard" disabled>Clipboard</button><a href="http://127.0.0.1:6143/" target="_blank" rel="noopener">VM console</a></header>
+<main id="screen"></main>
+<dialog id="clip"><textarea aria-label="Clipboard text"></textarea><button id="paste">Send clipboard</button><button id="close">Close</button></dialog>
+<script type="module">
+import RFB from '/novnc/core/rfb.js';
+const name = location.pathname.slice(1);
+const title = name === 'wecom' ? 'WeCom' : 'WeChat';
+document.title = `${title} | Tiny11`;
+document.querySelector('#name').textContent = title;
+const status = document.querySelector('#status');
+const control = document.querySelector('#control');
+const clipboard = document.querySelector('#clipboard');
+const clip = document.querySelector('#clip');
+let rfb, generation = 0, controlling = false, activity = Date.now(), reconnect;
+let lease = '';
+function connect(wantControl = false) {
+    clearTimeout(reconnect);
+    const current = ++generation;
+    if (rfb) rfb.disconnect();
+    controlling = false;
+    clipboard.disabled = true;
+    control.disabled = true;
+    status.textContent = wantControl ? 'Requesting control' : 'Connecting';
+    lease = wantControl ? crypto.randomUUID() : '';
+    rfb = new RFB(document.querySelector('#screen'), `ws://${location.host}/ws/${name}?control=${wantControl ? 1 : 0}&lease=${lease}`, {shared:true});
+    rfb.scaleViewport = true;
+    rfb.resizeSession = false;
+    rfb.viewOnly = !wantControl;
+    rfb.addEventListener('connect', () => {
+        if (current !== generation) return;
+        controlling = wantControl;
+        activity = Date.now();
+        status.textContent = controlling ? 'You have control' : 'Viewing';
+        control.textContent = controlling ? 'Release control' : 'Take control';
+        control.disabled = false;
+        clipboard.disabled = !controlling;
+    });
+    rfb.addEventListener('disconnect', () => {
+        if (current !== generation) return;
+        controlling = false;
+        control.disabled = true;
+        clipboard.disabled = true;
+        status.textContent = wantControl ? 'Input busy or disconnected; returning to view' : 'Reconnecting';
+        reconnect = setTimeout(() => connect(false), 1500);
+    });
+}
+control.onclick = () => connect(!controlling);
+async function clipboardRequest(action, text) {
+    const response = await fetch('/clipboard', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({lease,action,text})});
+    if (!response.ok) throw new Error('Clipboard unavailable; check control status');
+    return response.json();
+}
+clipboard.onclick = async () => {
+    try { const data=await clipboardRequest('read'); clip.querySelector('textarea').value=data.text; clip.showModal(); }
+    catch(e) { status.textContent=e.message; }
+};
+document.querySelector('#close').onclick = () => clip.close();
+document.querySelector('#paste').onclick = async () => {
+    try { if (controlling) await clipboardRequest('write',clip.querySelector('textarea').value); clip.close(); }
+    catch(e) { status.textContent=e.message; }
+};
+for (const event of ['pointerdown','pointermove','keydown','wheel']) document.addEventListener(event, () => { activity = Date.now(); }, {capture:true,passive:true});
+setInterval(() => { if (controlling && Date.now()-activity > 90000) connect(false); }, 5000);
+document.addEventListener('visibilitychange', () => { if (document.hidden && controlling) connect(false); });
+window.addEventListener('pagehide', () => { generation++; clearTimeout(reconnect); rfb?.disconnect(); });
+connect();
+</script>
+</html>

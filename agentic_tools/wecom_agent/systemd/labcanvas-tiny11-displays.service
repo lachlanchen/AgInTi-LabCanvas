@@ -1,0 +1,17 @@
+[Unit]
+Description=LabCanvas two-monitor views for the existing Tiny11 VM
+After=network-online.target labcanvas-wecom-autostart.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=%h
+ExecStart=/usr/bin/python3 %h/.local/lib/labcanvas/storage_guard.py --config %h/.config/labcanvas/storage-guard.json wait -- /bin/bash %h/ProjectsLFS/AgenticApp/agentic_tools/wecom_agent/scripts/tiny11_displays.sh supervise
+ExecStop=/bin/bash %h/ProjectsLFS/AgenticApp/agentic_tools/wecom_agent/scripts/tiny11_displays.sh stop
+Restart=on-failure
+RestartSec=30
+KillMode=process
+UMask=0077
+
+[Install]
+WantedBy=default.target

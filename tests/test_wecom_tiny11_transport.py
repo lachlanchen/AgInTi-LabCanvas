@@ -116,6 +116,12 @@ class Tiny11WeComTransportTests(unittest.TestCase):
         self.assertIn('http://127.0.0.1:$Port/', source)
         self.assertNotIn('http://+:$Port/', source)
 
+    def test_windows_screenshots_do_not_include_adjacent_wechat_monitor(self) -> None:
+        source = (ROOT / 'agentic_tools/wecom_agent/windows/WeComBridge.ps1').read_text()
+        self.assertIn('[System.Windows.Forms.Screen]::PrimaryScreen.Bounds', source)
+        self.assertNotIn('[System.Windows.Forms.SystemInformation]::VirtualScreen', source)
+        self.assertIn('refusing cross-app capture', source)
+
 
 if __name__ == "__main__":
     unittest.main()
