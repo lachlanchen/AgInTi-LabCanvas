@@ -720,6 +720,9 @@ start_session() {
     -- \
     "$scrcpy_bin" \
     --serial "$serial" \
+    --no-audio \
+    --max-fps 15 \
+    --render-driver software \
     --stay-awake \
     --disable-screensaver \
     --window-title "LabCanvas Android MIX 2S ($serial)" \

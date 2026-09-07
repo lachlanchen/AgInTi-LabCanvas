@@ -9,11 +9,12 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 LAUNCHER = ROOT / "agentic_tools" / "virtual_desktop" / "launch_virtual_desktop.sh"
 WECHAT = ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wechat_virtual_desktop.sh"
+ANDROID = ROOT / "agentic_tools" / "android_device_agent" / "scripts" / "android_device_desktop.sh"
 
 
 class VirtualDesktopLifecycleTests(unittest.TestCase):
     def test_scripts_are_valid_bash(self) -> None:
-        for script in (LAUNCHER, WECHAT):
+        for script in (LAUNCHER, WECHAT, ANDROID):
             with self.subTest(script=script.name):
                 result = subprocess.run(
                     ["bash", "-n", str(script)],
@@ -22,6 +23,14 @@ class VirtualDesktopLifecycleTests(unittest.TestCase):
                     check=False,
                 )
                 self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_phone_mirror_is_silent_and_frame_limited(self) -> None:
+        source = ANDROID.read_text(encoding="utf-8").split("start_session() {", 1)[1]
+        command = source.split("primary_loop_command=", 1)[0]
+        self.assertIn("--no-audio", command)
+        self.assertIn("--max-fps 15", command)
+        self.assertIn("--render-driver software", command)
+        self.assertNotIn("--start-app", command)
 
     def test_shared_launcher_requires_explicit_stale_recovery(self) -> None:
         source = LAUNCHER.read_text(encoding="utf-8")
