@@ -20,7 +20,7 @@ dialog p { line-height:1.5; } textarea { width:100%; height:180px; resize:vertic
 <dialog id="clip" aria-labelledby="clip-title">
 <h2 id="clip-title">Clipboard</h2>
 <p>Move text between this browser's device and Windows. Sending changes the Windows clipboard; paste it in the app when ready.</p>
-<textarea aria-label="Clipboard text" maxlength="65536" spellcheck="false"></textarea>
+<textarea aria-label="Clipboard text" spellcheck="false"></textarea>
 <div class="clip-actions"><button id="copy-local">Copy to this device</button><button id="read-local">Paste from this device</button><button id="paste">Send to Windows clipboard</button><button id="reload-clip">Reload Windows clipboard</button><button id="close">Close</button></div>
 <p id="clip-status" role="status" aria-live="polite"></p>
 </dialog>
@@ -134,6 +134,7 @@ document.querySelector('#paste').onclick = async () => {
     busy(true);
     try {
         if (!controlling) throw new Error('Control was released. Your text is kept here; take control again before sending.');
+        if (clipText.value.length > 65536) throw new Error('Text exceeds the 65,536-character limit. Your draft is kept here.');
         await clipboardRequest('write',clipText.value);
         clipboardDraft = false;
         clipStatus.textContent = 'Windows clipboard updated. Paste in Windows when ready.';
