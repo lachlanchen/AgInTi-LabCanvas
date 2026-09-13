@@ -58,6 +58,9 @@ class Tiny11Transport:
         self.remote_root = str(self.config.get("remote_root") or r"C:\LabCanvas\WeComBridge")
         self.task_name = str(self.config.get("task_name") or "LabCanvas-WeCom-Bridge")
         self.timeout = float(self.config.get("timeout_seconds") or 12.0)
+        self.app = str(self.config.get("app") or "wecom")
+        if self.app not in {"wecom", "wechat"}:
+            raise Tiny11TransportError("Tiny11 app must be wecom or wechat")
         if not self.token:
             raise Tiny11TransportError("Tiny11 helper token is missing")
         if self.host not in {"127.0.0.1", "localhost"}:
@@ -108,6 +111,10 @@ class Tiny11Transport:
         return proc.returncode == 0
 
     def powershell(self, script: str, *, timeout: float = 45.0) -> str:
+        script = (
+            "[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false); "
+            "$OutputEncoding = [Console]::OutputEncoding; " + script
+        )
         encoded = base64.b64encode(script.encode("utf-16le")).decode("ascii")
         proc = subprocess.run(
             [
@@ -208,6 +215,7 @@ Write-Output 'installed'
             data=body,
             headers={
                 "Authorization": f"Bearer {self.token}",
+                "X-LabCanvas-App": self.app,
                 "Content-Type": "application/json; charset=utf-8",
             },
             method="POST",
@@ -220,7 +228,7 @@ Write-Output 'installed'
     def health(self) -> dict[str, Any]:
         req = request.Request(
             self.helper_url + "/health",
-            headers={"Authorization": f"Bearer {self.token}"},
+            headers={"Authorization": f"Bearer {self.token}", "X-LabCanvas-App": self.app},
         )
         try:
             return self._json_request(req)
@@ -230,7 +238,7 @@ Write-Output 'installed'
     def screenshot(self) -> bytes:
         req = request.Request(
             self.helper_url + "/screenshot",
-            headers={"Authorization": f"Bearer {self.token}"},
+            headers={"Authorization": f"Bearer {self.token}", "X-LabCanvas-App": self.app},
         )
         try:
             with request.urlopen(req, timeout=self.timeout) as response:

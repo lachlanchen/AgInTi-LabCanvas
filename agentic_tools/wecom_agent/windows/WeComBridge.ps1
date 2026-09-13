@@ -5,6 +5,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$script:TargetApp = 'wecom'
 Add-Type -AssemblyName System.Drawing
 Add-Type -AssemblyName System.Windows.Forms
 . "$PSScriptRoot\NativeWindows.ps1"
@@ -49,7 +50,9 @@ function Write-BridgeLog {
 }
 
 function Get-WeComWindow {
-    $processIds = @(Get-Process WXWork -ErrorAction SilentlyContinue | ForEach-Object { $_.Id })
+    # The legacy function name is retained; every request selects one app only.
+    $names = if ($script:TargetApp -eq 'wechat') { @('Weixin', 'WeChat') } else { @('WXWork') }
+    $processIds = @(Get-Process -Name $names -ErrorAction SilentlyContinue | ForEach-Object { $_.Id })
     if ($processIds.Count -eq 0) {
         return $null
     }
@@ -113,20 +116,23 @@ function Invoke-BridgeAction {
     $kind = [string]$Action.action
     switch ($kind) {
         "click" {
-            Focus-WeCom | Out-Null
+            $window = Focus-WeCom
+            Assert-AppPoint $window $Action
             [LabCanvasWin32]::SetCursorPos([int]$Action.x, [int]$Action.y) | Out-Null
             [LabCanvasWin32]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
             [LabCanvasWin32]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
         }
         "right_click" {
-            Focus-WeCom | Out-Null
+            $window = Focus-WeCom
+            Assert-AppPoint $window $Action
             [LabCanvasWin32]::SetCursorPos([int]$Action.x, [int]$Action.y) | Out-Null
             [LabCanvasWin32]::mouse_event(0x0008, 0, 0, 0, [UIntPtr]::Zero)
             [LabCanvasWin32]::mouse_event(0x0010, 0, 0, 0, [UIntPtr]::Zero)
         }
         "wheel" {
-            Focus-WeCom | Out-Null
+            $window = Focus-WeCom
             if ($null -ne $Action.x -and $null -ne $Action.y) {
+                Assert-AppPoint $window $Action
                 [LabCanvasWin32]::SetCursorPos([int]$Action.x, [int]$Action.y) | Out-Null
             }
             [LabCanvasWin32]::mouse_event(0x0800, 0, 0, [int]$Action.delta, [UIntPtr]::Zero)
@@ -171,6 +177,17 @@ function Invoke-BridgeAction {
     return $true
 }
 
+function Assert-AppPoint {
+    param($Window, $Action)
+    # On a shared console, focusing one app does not constrain pointer input.
+    # Reject stale coordinates rather than clicking the neighbouring account.
+    if ($null -eq $Action.x -or $null -eq $Action.y -or
+        $Action.x -lt $Window.X -or $Action.x -ge ($Window.X + $Window.Width) -or
+        $Action.y -lt $Window.Y -or $Action.y -ge ($Window.Y + $Window.Height)) {
+        throw 'Input point is outside the selected app; refusing cross-app input.'
+    }
+}
+
 function Write-JsonResponse {
     param($Response, $Payload, [int]$StatusCode = 200)
     $body = [System.Text.Encoding]::UTF8.GetBytes(($Payload | ConvertTo-Json -Depth 10 -Compress))
@@ -194,8 +211,10 @@ function Write-ScreenshotResponse {
     if ($null -eq $window) { throw 'No visible WeCom window; refusing desktop capture.' }
     $rect = New-Object System.Drawing.Rectangle($window.X,$window.Y,$window.Width,$window.Height)
     $region = [System.Drawing.Rectangle]::Intersect($bounds,$rect)
-    $wechatIds = @(Get-Process WeChat,Weixin -ErrorAction SilentlyContinue | ForEach-Object Id)
+    $otherNames = if ($script:TargetApp -eq 'wechat') { @('WXWork') } else { @('WeChat', 'Weixin') }
+    $wechatIds = @(Get-Process -Name $otherNames -ErrorAction SilentlyContinue | ForEach-Object Id)
     foreach ($other in [LabCanvasDesktop.NativeWindows]::Snapshot([int[]]$wechatIds)) {
+        if ($other.ClassName -in @('PerryShadowWnd', 'TitleBarWindow')) { continue }
         $otherRect = New-Object System.Drawing.Rectangle($other.X,$other.Y,$other.Width,$other.Height)
         if ($region.IntersectsWith($otherRect)) {
             throw 'WeChat overlaps WeCom; refusing cross-app capture.'
@@ -237,11 +256,18 @@ try {
                 Write-JsonResponse $context.Response ([ordered]@{ ok = $false; error = "unauthorized" }) 401
                 continue
             }
+            $script:TargetApp = [string]$context.Request.Headers['X-LabCanvas-App']
+            if ([string]::IsNullOrEmpty($script:TargetApp)) { $script:TargetApp = 'wecom' }
+            if ($script:TargetApp -notin @('wecom', 'wechat')) {
+                Write-JsonResponse $context.Response @{ ok = $false; error = 'invalid_app' } 400
+                continue
+            }
             $path = $context.Request.Url.AbsolutePath
             if ($context.Request.HttpMethod -eq "GET" -and $path -eq "/health") {
                 $window = Get-WeComWindow
                 $payload = [ordered]@{
                     ok = ($null -ne $window)
+                    app = $script:TargetApp
                     session_id = [System.Diagnostics.Process]::GetCurrentProcess().SessionId
                     wecom_running = (@(Get-Process WXWork -ErrorAction SilentlyContinue).Count -gt 0)
                     window = if ($null -eq $window) { $null } else {
@@ -249,6 +275,7 @@ try {
                             name = $window.Name
                             class_name = $window.ClassName
                             process_id = $window.ProcessId
+                            handle = $window.Handle.ToInt64()
                             x = $window.X
                             y = $window.Y
                             width = $window.Width

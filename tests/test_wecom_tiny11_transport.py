@@ -34,6 +34,17 @@ def config(**tiny11):
 
 
 class Tiny11WeComTransportTests(unittest.TestCase):
+    def test_each_request_scopes_one_app_with_legacy_default(self):
+        self.assertEqual(transport.Tiny11Transport(config()).app, 'wecom')
+        client = transport.Tiny11Transport(config(app='wechat'))
+        with mock.patch.object(client, '_json_request', return_value={'ok': True}) as call:
+            client.health()
+            self.assertEqual(call.call_args.args[0].get_header('X-labcanvas-app'), 'wechat')
+            client.invoke({'action': 'get_clipboard'})
+            self.assertEqual(call.call_args.args[0].get_header('X-labcanvas-app'), 'wechat')
+        with self.assertRaises(transport.Tiny11TransportError):
+            transport.Tiny11Transport(config(app='desktop'))
+
     def test_native_history_includes_tail_and_composer_excludes_history(self):
         bridge = object.__new__(gui.Tiny11WeComGuiBridge)
         bridge.runtime_dir = Path("/tmp/test-wecom-runtime")
