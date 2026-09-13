@@ -122,6 +122,28 @@ class Tiny11WeComTransportTests(unittest.TestCase):
         self.assertNotIn('[System.Windows.Forms.SystemInformation]::VirtualScreen', source)
         self.assertIn('refusing cross-app capture', source)
 
+    def test_persistent_helpers_use_native_value_snapshots_not_uia_providers(self):
+        folder = ROOT / 'agentic_tools/wecom_agent/windows'
+        for name in ('WeComBridge.ps1', 'Set-Tiny11AppScreens.ps1'):
+            source = (folder / name).read_text()
+            self.assertIn('NativeWindows.ps1', source)
+            self.assertIn('NativeWindows]::Snapshot', source)
+            self.assertNotIn('AutomationElement', source)
+        source = (folder / 'Set-Tiny11AppScreens.ps1').read_text()
+        self.assertIn('$seen.Remove($key)', source)
+        self.assertIn('$env:COMPUTERNAME -ne $ExpectedComputer', source)
+
+    def test_install_stages_shared_native_helper_before_restarting_task(self):
+        client = transport.Tiny11Transport(config())
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(
+            transport, 'PRIVATE', Path(directory)
+        ), mock.patch.object(client, 'ensure_vm'), mock.patch.object(
+            client, 'powershell'
+        ), mock.patch.object(client, 'scp_to_guest') as upload:
+            client.install()
+        self.assertIn(mock.call(transport.GUEST_HELPER.with_name('NativeWindows.ps1'),
+                                client.remote_root + r'\NativeWindows.ps1'), upload.call_args_list)
+
 
 if __name__ == "__main__":
     unittest.main()

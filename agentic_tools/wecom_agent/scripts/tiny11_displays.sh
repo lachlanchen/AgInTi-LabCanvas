@@ -5,9 +5,18 @@ SESSION=labcanvas-tiny11-displays
 PYTHON="${TINY11_DISPLAYS_PYTHON:-$HOME/.local/share/labcanvas/tiny11-displays-venv/bin/python}"
 OUT="$ROOT/output/tiny11-dual-monitor"
 
+window_alive() {
+    [[ "$(tmux list-panes -t "$SESSION:$1" -F '#{pane_dead}' 2>/dev/null)" == 0 ]]
+}
+
 ensure_window() {
     local name="$1" command="$2"
-    if tmux list-windows -t "$SESSION" -F '#{window_name}' 2>/dev/null | grep -qx "$name"; then return; fi
+    if window_alive "$name"; then return; fi
+    # remain-on-exit can retain a dead pane after SSH or a reflector fails.
+    if [[ "$(tmux list-panes -t "$SESSION:$name" -F '#{pane_dead}' 2>/dev/null)" == 1 ]]; then
+        tmux respawn-window -t "$SESSION:$name" "$command"
+        return
+    fi
     if tmux has-session -t "$SESSION" 2>/dev/null; then
         tmux new-window -d -t "$SESSION" -n "$name" "$command"
     else
@@ -19,8 +28,9 @@ case "${1:-status}" in
     supervise)
         trap 'bash "$0" stop; exit 0' TERM INT
         while true; do
-            count="$(tmux list-windows -t "$SESSION" -F '#{window_name}' 2>/dev/null | grep -Ec '^(tunnel|wecom|wechat|views)$' || true)"
-            if [[ "$count" != 4 ]]; then bash "$0" start || true; fi
+            for name in tunnel wecom wechat views; do
+                if ! window_alive "$name"; then bash "$0" start || true; break; fi
+            done
             sleep 30 & wait $! || true
         done
         ;;

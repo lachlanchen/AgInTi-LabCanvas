@@ -67,8 +67,12 @@ async def socket_view(request: web.Request) -> web.WebSocketResponse:
     writer = None
     tasks = []
     try:
-        reader, writer = await asyncio.wait_for(
-            asyncio.open_connection("127.0.0.1", PORTS[name]), 5)
+        try:
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_connection("127.0.0.1", PORTS[name]), 5)
+        except (OSError, TimeoutError) as exc:
+            raise web.HTTPServiceUnavailable(
+                text="Windows display reconnecting", headers={"Retry-After": "2"}) from exc
         await ws.prepare(request)
 
         async def to_vnc():
@@ -101,7 +105,8 @@ async def socket_view(request: web.Request) -> web.WebSocketResponse:
             lease.release()
             if control and request.app[OWNER_KEY] == owner:
                 request.app[OWNER_KEY] = ''
-            await ws.close()
+            if ws.prepared:
+                await ws.close()
     return ws
 
 

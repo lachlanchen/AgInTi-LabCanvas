@@ -1,5 +1,11 @@
 # One Tiny11 VM, Two App Monitors
 
+September 13 maintenance: the Windows computer is now `LABCANVAS-PC`.
+Read [the memory-crash recovery and native helper update](labcanvas-windows-memory-recovery-2026-09-13.md)
+before redeploying the display scripts. They now require the shared
+`NativeWindows.ps1` file and a matching `-ExpectedComputer` value. The original
+installation evidence below describes September 7, not current account login.
+
 ## Current Result
 
 Implemented on 2026-09-07 without rebooting Windows, logging out WeCom, starting

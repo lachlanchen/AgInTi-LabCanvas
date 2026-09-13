@@ -7,8 +7,7 @@ param(
 $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName System.Drawing
 Add-Type -AssemblyName System.Windows.Forms
-Add-Type -AssemblyName UIAutomationClient
-Add-Type -AssemblyName UIAutomationTypes
+. "$PSScriptRoot\NativeWindows.ps1"
 
 Add-Type @"
 using System;
@@ -51,29 +50,9 @@ function Get-WeComWindow {
     if ($processIds.Count -eq 0) {
         return $null
     }
-    $root = [System.Windows.Automation.AutomationElement]::RootElement
-    $condition = [System.Windows.Automation.Condition]::TrueCondition
-    $candidates = @()
-    foreach ($window in $root.FindAll([System.Windows.Automation.TreeScope]::Children, $condition)) {
-        if ($processIds -notcontains $window.Current.ProcessId) {
-            continue
-        }
-        $rectangle = $window.Current.BoundingRectangle
-        if ($rectangle.Width -lt 700 -or $rectangle.Height -lt 500) {
-            continue
-        }
-        $candidates += [pscustomobject]@{
-            Handle = [IntPtr]$window.Current.NativeWindowHandle
-            Name = [string]$window.Current.Name
-            ClassName = [string]$window.Current.ClassName
-            ProcessId = [int]$window.Current.ProcessId
-            X = [int][math]::Round($rectangle.X)
-            Y = [int][math]::Round($rectangle.Y)
-            Width = [int][math]::Round($rectangle.Width)
-            Height = [int][math]::Round($rectangle.Height)
-        }
-    }
-    return $candidates | Sort-Object { $_.Width * $_.Height } -Descending | Select-Object -First 1
+    return [LabCanvasDesktop.NativeWindows]::Snapshot([int[]]$processIds) |
+        Where-Object { $_.Width -ge 700 -and $_.Height -ge 500 } |
+        Sort-Object { $_.Width * $_.Height } -Descending | Select-Object -First 1
 }
 
 function Focus-WeCom {

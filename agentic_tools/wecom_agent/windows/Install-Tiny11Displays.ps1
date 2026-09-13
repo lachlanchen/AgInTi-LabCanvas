@@ -1,10 +1,11 @@
 param(
     [string]$Setup = 'C:\LabCanvas\Displays\setup',
-    [switch]$InstallVnc
+    [switch]$InstallVnc,
+    [string]$ExpectedComputer = 'LABCANVAS-PC'
 )
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding
-if ($env:COMPUTERNAME -ne 'TINY11-KVM') { throw 'Dedicated Tiny11 VM only.' }
+if ($env:COMPUTERNAME -ne $ExpectedComputer) { throw 'Unexpected computer; refusing driver installation.' }
 
 function Assert-Signature([string]$Path, [string]$Publisher) {
     $signature = Get-AuthenticodeSignature -LiteralPath $Path

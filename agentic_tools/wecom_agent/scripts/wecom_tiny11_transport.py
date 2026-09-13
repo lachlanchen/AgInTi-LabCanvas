@@ -164,6 +164,8 @@ class Tiny11Transport:
             f"New-Item -ItemType Directory -Force -Path {ps_quote(self.remote_root)} | Out-Null"
         )
         self.scp_to_guest(GUEST_HELPER, remote_helper)
+        self.scp_to_guest(GUEST_HELPER.with_name("NativeWindows.ps1"),
+                          self.remote_root + r"\NativeWindows.ps1")
         self.scp_to_guest(token_file, remote_token)
         script = f"""$ErrorActionPreference='Stop'
 $taskName={ps_quote(self.task_name)}

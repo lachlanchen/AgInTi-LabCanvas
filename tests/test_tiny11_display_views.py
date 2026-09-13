@@ -3,8 +3,10 @@ from __future__ import annotations
 import importlib
 from pathlib import Path
 import sys
+import subprocess
 import tempfile
 import unittest
+from unittest import mock
 
 SCRIPTS = Path(__file__).resolve().parents[1] / 'agentic_tools/wecom_agent/scripts'
 sys.path.insert(0, str(SCRIPTS))
@@ -31,6 +33,31 @@ class InputLeaseTests(unittest.TestCase):
 
     def test_release_without_acquisition_is_safe(self):
         views.InputLease(Path('/unused')).release()
+
+
+class DisplaySupervisorTests(unittest.TestCase):
+    def test_only_dead_or_missing_owned_windows_are_restarted(self):
+        source = (SCRIPTS / 'tiny11_displays.sh').read_text().split('case "${1:-status}" in')[0]
+        for state, expected in [('0', ''), ('1', 'respawn-window'), ('missing', 'new-window')]:
+            stub = '''
+tmux() {
+    case "$1" in
+        list-panes) if [[ "$STATE" == missing ]]; then return 1; else printf '%s' "$STATE"; fi ;;
+        has-session) return 0 ;;
+        *) printf '%s\\n' "$*" ;;
+    esac
+}
+ensure_window wecom 'exec replacement'
+'''
+            result = subprocess.run(['bash', '-c', source + '\nSTATE=' + state + '\n' + stub],
+                                    capture_output=True, text=True, check=True)
+            if expected:
+                self.assertIn(expected, result.stdout)
+                self.assertIn('labcanvas-tiny11-displays', result.stdout)
+                self.assertIn('wecom', result.stdout)
+            else:
+                self.assertEqual(result.stdout, '')
+            self.assertNotIn('kill-', result.stdout)
 
 
 @unittest.skipIf(views.web is None, 'optional display service aiohttp dependency')
@@ -65,6 +92,23 @@ class ViewerHttpTests(unittest.IsolatedAsyncioTestCase):
         response = await self.client.post('/clipboard', headers={'Origin': origin},
                                           json={'lease': 'expired', 'action': 'write', 'text': 'probe'})
         self.assertEqual(response.status, 409)
+
+    async def test_unavailable_upstream_returns_503_and_releases_input(self):
+        origin = str(self.client.make_url('/')).rstrip('/')
+        with tempfile.TemporaryDirectory() as directory:
+            lease = views.InputLease(Path(directory) / 'input.lock')
+            for error in (ConnectionRefusedError(), TimeoutError()):
+                with mock.patch.object(views, 'InputLease', return_value=lease), mock.patch.object(
+                    views.asyncio, 'open_connection', new=mock.AsyncMock(side_effect=error)
+                ):
+                    response = await self.client.get(
+                        '/ws/wecom?control=1&lease=00000000-0000-0000-0000-000000000000',
+                        headers={'Origin': origin})
+                self.assertEqual(response.status, 503)
+                self.assertEqual(response.headers['Retry-After'], '2')
+                self.assertEqual(await response.text(), 'Windows display reconnecting')
+                self.assertIsNone(lease.handle)
+                self.assertEqual(self.client.server.app[views.OWNER_KEY], '')
 
 
 if __name__ == '__main__':

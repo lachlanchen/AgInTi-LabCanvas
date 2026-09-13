@@ -1,12 +1,11 @@
-param([switch]$LaunchWeChat, [switch]$Watch)
+param([switch]$LaunchWeChat, [switch]$Watch, [string]$ExpectedComputer = 'LABCANVAS-PC')
 $ErrorActionPreference = 'Stop'
-if ($env:COMPUTERNAME -ne 'TINY11-KVM') { throw 'Dedicated Tiny11 VM only.' }
+if ($env:COMPUTERNAME -ne $ExpectedComputer) { throw 'Unexpected computer; refusing window placement.' }
 if ([System.Diagnostics.Process]::GetCurrentProcess().SessionId -eq 0) {
     throw 'Run through an interactive scheduled task, not in the SSH desktop.'
 }
 Add-Type -AssemblyName System.Windows.Forms
-Add-Type -AssemblyName UIAutomationClient
-Add-Type -AssemblyName UIAutomationTypes
+. "$PSScriptRoot\NativeWindows.ps1"
 Add-Type @'
 using System;
 using System.Runtime.InteropServices;
@@ -29,21 +28,21 @@ if ($LaunchWeChat -and -not (Get-Process WeChat,Weixin -ErrorAction SilentlyCont
     Start-Process -FilePath $exe
     Start-Sleep -Seconds 5
 }
-$placed = @()
 $seen = @{}
 $first = $true
 do {
     $changed = $false
+    $placed = @()
+    $live = @{}
     $ids = @(Get-Process WeChat,Weixin -ErrorAction SilentlyContinue | ForEach-Object Id)
-    $windows = [System.Windows.Automation.AutomationElement]::RootElement.FindAll(
-        [System.Windows.Automation.TreeScope]::Children,[System.Windows.Automation.Condition]::TrueCondition)
+    $windows = [LabCanvasDesktop.NativeWindows]::Snapshot([int[]]$ids)
     foreach ($window in $windows) {
-        if ($ids -notcontains $window.Current.ProcessId) { continue }
-        $rect = $window.Current.BoundingRectangle
-        if ($rect.Width -lt 200 -or $rect.Height -lt 200 -or $window.Current.IsOffscreen) { continue }
-        $handle = [IntPtr]$window.Current.NativeWindowHandle
+        $rect = $window
+        if ($rect.Width -lt 200 -or $rect.Height -lt 200) { continue }
+        $handle = $window.Handle
         $kind = if ($rect.Width -lt 700) { 'login' } else { 'main' }
-        $key = '{0}-{1}-{2}' -f $window.Current.ProcessId,$handle,$kind
+        $key = '{0}-{1}-{2}' -f $window.ProcessId,$handle,$kind
+        $live[$key] = $true
         if ($seen.ContainsKey($key)) { continue }
         $b = $screens[1].WorkingArea
         if ($kind -eq 'login') {
@@ -55,6 +54,10 @@ do {
         $seen[$key] = $true
         $placed += "WeChat-$kind"
         $changed = $true
+    }
+    # Keep only currently visible window identities, not years of handle history.
+    foreach ($key in @($seen.Keys)) {
+        if (-not $live.ContainsKey($key)) { $seen.Remove($key) }
     }
 $result = [ordered]@{ observed_at = [DateTimeOffset]::Now.ToString('o'); placed = $placed
     screens = @($screens | ForEach-Object { @{ name=$_.DeviceName; x=$_.Bounds.X; y=$_.Bounds.Y; width=$_.Bounds.Width; height=$_.Bounds.Height; primary=$_.Primary } }) }
