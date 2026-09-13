@@ -126,6 +126,24 @@ class WeChatTransportStallGuardTests(unittest.TestCase):
                 path.write_text(json.dumps(state))
                 self.assertFalse(guard.decrypt_refresh_health(path, now=now)["ok"])
 
+    def test_source_refresh_uses_active_tiny11_store(self) -> None:
+        tiny11 = {
+            "ok": True,
+            "state_age_seconds": 3,
+            "binding_missing_chats": [],
+        }
+        with (
+            mock.patch("wechat_transport_selection.tiny11_enabled", return_value=True),
+            mock.patch("wechat_transport_selection.tiny11_health", return_value=tiny11),
+            mock.patch.object(guard, "decrypt_refresh_health") as decrypt_health,
+        ):
+            result = guard.source_refresh_health()
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["transport"], "wechat_tiny11")
+        self.assertEqual(result["age_seconds"], 3)
+        decrypt_health.assert_not_called()
+
     def test_agent_backend_runtime_status_exposes_emergency_override(self) -> None:
         with mock.patch.dict(
             "os.environ",

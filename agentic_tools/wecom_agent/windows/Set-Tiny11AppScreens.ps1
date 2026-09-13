@@ -50,6 +50,14 @@ function Select-AppPlacementWindows {
         $main = @($Windows | Where-Object { $_.ClassName -eq 'WeWorkWindow' })
         if ($main.Count -gt 0) { return $main }
     }
+    if ($AppName -eq 'WeChat') {
+        # Search results and Channels menus are separate top-level Qt windows.
+        # Moving them as "login" windows invalidates native click coordinates.
+        return @($Windows | Where-Object {
+            $_.Name -in @('Weixin', 'WeChat', '微信') -and
+            $_.ClassName -eq 'Qt51514QWindowIcon'
+        })
+    }
     return $Windows
 }
 

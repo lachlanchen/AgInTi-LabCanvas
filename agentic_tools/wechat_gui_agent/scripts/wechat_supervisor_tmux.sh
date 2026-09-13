@@ -36,6 +36,15 @@ ANDROID_INGRESS_INTERVAL="${WECHAT_ANDROID_INGRESS_INTERVAL:-1}"
 ANDROID_INGRESS_SERIAL="${WECHAT_ANDROID_INGRESS_SERIAL:-$UNLOCK_ADB_SERIAL}"
 ANDROID_SCREEN_INGRESS="${WECHAT_ANDROID_SCREEN_INGRESS:-1}"
 ANDROID_SCREEN_INGRESS_INTERVAL="${WECHAT_ANDROID_SCREEN_INGRESS_INTERVAL:-4}"
+TINY11=0
+if PYTHONPATH="$ROOT/agentic_tools/wechat_gui_agent/scripts" python3 -c \
+  'from wechat_transport_selection import tiny11_enabled; raise SystemExit(0 if tiny11_enabled() else 1)'; then
+  TINY11=1
+  UNLOCK_WATCHDOG=0
+  CHAT_SYNC_WATCHDOG=0
+  ANDROID_INGRESS=0
+  ANDROID_SCREEN_INGRESS=0
+fi
 WORKER_COUNT="${WECHAT_WORKER_COUNT:-2}"
 LOG_MAINTENANCE="${WECHAT_LOG_MAINTENANCE:-1}"
 LOG_MAINTENANCE_INTERVAL="${WECHAT_LOG_MAINTENANCE_INTERVAL:-300}"
@@ -296,17 +305,26 @@ direct_monitor_command() {
     "$ROOT" "$PRIVATE_ENV" "$PRIVATE_ENV" "direct-chatops-$direct_name" "$PY" "$direct_config" "$QUEUE" "$DIRECT_POLL_SECONDS" "$DIRECT_CATCHUP_POLL_SECONDS" "$LOG_DIR/supervisor-direct-chatops-$direct_name.log"
 }
 
+tiny11_store_command() {
+  printf "cd %q && agentic_tools/wechat_gui_agent/scripts/wechat_restart_loop.sh tiny11-store python3 -u agentic_tools/wechat_gui_agent/scripts/wechat_tiny11_bridge.py sync --loop >> %q 2>&1" \
+    "$ROOT" "$LOG_DIR/supervisor-tiny11-store.log"
+}
+
 ensure_runtime_windows() {
   if ! tmux has-session -t "$SESSION" 2>/dev/null; then
     echo "Session not running: $SESSION" >&2
     return 2
   fi
+  if [[ "$TINY11" == "1" ]]; then
+    start_missing_window tiny11-store "$(tiny11_store_command)"
+  else
   start_missing_window desktop \
     "cd '$ROOT' && while true; do agentic_tools/wechat_gui_agent/scripts/wechat_virtual_desktop.sh; sleep 60; done >> '$LOG_DIR/supervisor-desktop.log' 2>&1"
   if ! pane_start_command_exists "wechat_decrypt_refresh_loop.sh"; then
     tmux split-window -h -t "$SESSION:desktop" \
       "cd '$ROOT' && agentic_tools/wechat_gui_agent/scripts/wechat_restart_loop.sh decrypt-refresh agentic_tools/wechat_gui_agent/scripts/wechat_decrypt_refresh_loop.sh >> '$LOG_DIR/supervisor-decrypt-refresh.log' 2>&1"
     echo "Started missing pane: decrypt-refresh"
+  fi
   fi
   IFS=',' read -r -a DIRECT_CONFIGS <<< "$CONFIGS"
   for direct_config in "${DIRECT_CONFIGS[@]}"; do
@@ -320,8 +338,10 @@ ensure_runtime_windows() {
     worker_label="$(worker_window_name "$worker_index")"
     start_missing_window "$worker_label" "$(worker_command "$worker_index")"
   done
+  if [[ "$TINY11" == "0" ]]; then
   start_missing_window media-sync \
     "cd '$ROOT' && WECHAT_CHAT_NAME='$CHAT_NAME' WECHAT_MEDIA_CHATS='$MEDIA_CHATS' agentic_tools/wechat_gui_agent/scripts/wechat_restart_loop.sh media-sync agentic_tools/wechat_gui_agent/scripts/wechat_media_sync_loop.sh >> '$LOG_DIR/supervisor-media-sync.log' 2>&1"
+  fi
   if [[ "$UNLOCK_WATCHDOG" != "0" ]]; then
     start_missing_window unlock-watchdog "$(unlock_watchdog_command)"
   fi
@@ -365,8 +385,12 @@ reload_worker_windows() {
     return 1
   fi
   stop_gui_senders_for_reload
+  if [[ "$TINY11" == "1" ]]; then
+    start_missing_window tiny11-store "$(tiny11_store_command)"
+  else
   respawn_or_new_pane_by_start_command "decrypt-refresh" "wechat_decrypt_refresh_loop.sh" \
     "cd '$ROOT' && agentic_tools/wechat_gui_agent/scripts/wechat_restart_loop.sh decrypt-refresh agentic_tools/wechat_gui_agent/scripts/wechat_decrypt_refresh_loop.sh >> '$LOG_DIR/supervisor-decrypt-refresh.log' 2>&1"
+  fi
   IFS=',' read -r -a DIRECT_CONFIGS <<< "$CONFIGS"
   for direct_config in "${DIRECT_CONFIGS[@]}"; do
     direct_config="$(echo "$direct_config" | xargs)"
@@ -379,8 +403,10 @@ reload_worker_windows() {
     worker_label="$(worker_window_name "$worker_index")"
     respawn_or_new_window "$worker_label" "$(worker_command "$worker_index")"
   done
+  if [[ "$TINY11" == "0" ]]; then
   respawn_or_new_window "media-sync" \
     "cd '$ROOT' && WECHAT_CHAT_NAME='$CHAT_NAME' WECHAT_MEDIA_CHATS='$MEDIA_CHATS' agentic_tools/wechat_gui_agent/scripts/wechat_restart_loop.sh media-sync agentic_tools/wechat_gui_agent/scripts/wechat_media_sync_loop.sh >> '$LOG_DIR/supervisor-media-sync.log' 2>&1"
+  fi
   if [[ "$UNLOCK_WATCHDOG" != "0" ]]; then
     respawn_or_new_window "unlock-watchdog" "$(unlock_watchdog_command)"
   fi
@@ -404,6 +430,9 @@ reload_worker_windows() {
 reload_monitor_windows() {
   if ! tmux has-session -t "$SESSION" 2>/dev/null; then
     exec "$0" start
+  fi
+  if [[ "$TINY11" == "1" ]]; then
+    start_missing_window tiny11-store "$(tiny11_store_command)"
   fi
   IFS=',' read -r -a DIRECT_CONFIGS <<< "$CONFIGS"
   for direct_config in "${DIRECT_CONFIGS[@]}"; do
@@ -446,6 +475,11 @@ case "$action" in
     if tmux has-session -t "$SESSION" 2>/dev/null; then
       echo "Session already running: $SESSION"
       list_session_panes
+      exit 0
+    fi
+    if [[ "$TINY11" == "1" ]]; then
+      tmux new-session -d -s "$SESSION" -n tiny11-store "$(tiny11_store_command)"
+      ensure_runtime_windows
       exit 0
     fi
     tmux new-session -d -s "$SESSION" -n desktop \

@@ -36,6 +36,28 @@ def load_worker():
 
 
 class WeChatTaskWorkerTests(unittest.TestCase):
+    def test_windows_personal_media_never_probes_inactive_linux_or_phone(self):
+        worker = load_worker()
+        task = {"id": "native-test", "chat": "Shares"}
+        with mock.patch("wechat_transport_selection.tiny11_enabled", return_value=True), \
+                mock.patch.object(worker.subprocess, "run") as run:
+            self.assertTrue(worker.uses_tiny11_wechat(task))
+            self.assertFalse(worker.uses_tiny11_wechat({"chat": "wecom:group:labagent"}))
+            result = worker.run_automatic_shipinhao_gui_capture(task, {"title": "exact card"})
+            self.assertEqual(result["transport"], "wechat_tiny11")
+            self.assertEqual(result["failure_stage"], "share_link")
+            self.assertEqual(worker.materialize_exact_file_for_cache(task, Path("/tmp"), "report.pdf")["reason"],
+                             "native_file_cache_transport_unavailable")
+            run.assert_not_called()
+
+    def test_windows_worker_context_overrides_old_resumed_transport_notes(self):
+        worker = load_worker()
+        with mock.patch("wechat_transport_selection.tiny11_enabled", return_value=True):
+            text = worker.build_worker_tool_context({"id": "native", "chat": "Shares"})
+        self.assertIn("Current personal-WeChat transport is Windows Tiny11", text)
+        self.assertIn("This overrides old transport notes in the resumed session", text)
+        self.assertIn("An unavailable media adapter is not evidence of logout", text)
+
     def test_source_knowledge_is_available_to_both_worker_backends(self) -> None:
         worker = load_worker()
         task = {"id": "memory-test", "chat": "test-chat", "source": {"chat": "test-chat"},

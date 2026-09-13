@@ -324,7 +324,7 @@ Q3: 今天谁可以给我一个真实反馈?
         sent_messages = []
         sent_files = []
         module.send_message = lambda message, chat, send_targets, **_kwargs: sent_messages.append((message, chat, send_targets))
-        module.send_file = lambda report, chat, send_targets: sent_files.append((report, chat, send_targets))
+        module.send_file = lambda report, chat, send_targets, **_kwargs: sent_files.append((report, chat, send_targets))
         module.ensure_markdown_pdf_companions = lambda report: [
             report.with_name("report.zh.pdf"),
             report.with_name("report.en.pdf"),

@@ -3461,6 +3461,11 @@ def task_transport_kind(task: dict[str, Any]) -> str:
     return "wechat"
 
 
+def uses_tiny11_wechat(task: dict[str, Any]) -> bool:
+    from wechat_transport_selection import tiny11_enabled
+    return task_transport_kind(task) == "wechat" and tiny11_enabled()
+
+
 def task_transport_channel(task: dict[str, Any]) -> str:
     source = task.get("source") if isinstance(task.get("source"), dict) else {}
     route = task.get("route") if isinstance(task.get("route"), dict) else {}
@@ -13565,6 +13570,9 @@ def native_shipinhao_capture_needed(result: dict[str, Any], profile: dict[str, A
 
 
 def run_automatic_shipinhao_gui_capture(task: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any]:
+    if uses_tiny11_wechat(task):
+        return {"status": "failed", "transport": "wechat_tiny11",
+                "error_code": "native_share_link_transport_unavailable", "failure_stage": "share_link"}
     if android_native_source_task(task) and WECHAT_ANDROID_SOURCE_RECOVERY_SCRIPT.is_file():
         mobile = run_automatic_shipinhao_android_capture(task, profile)
         if str(mobile.get("status") or "") == "verified":
@@ -15110,6 +15118,9 @@ def should_materialize_exact_file(task: dict[str, Any]) -> bool:
 
 
 def materialize_exact_file_for_cache(task: dict[str, Any], artifact_dir: Path, title: str) -> dict[str, Any]:
+    if uses_tiny11_wechat(task):
+        return {"status": "failed", "transport": "wechat_tiny11",
+                "reason": "native_file_cache_transport_unavailable"}
     source = task.get("source") if isinstance(task.get("source"), dict) else {}
     config_id = Path(str(source.get("config_id") or "")).name
     config_path = PRIVATE / config_id
@@ -15262,6 +15273,16 @@ def materialize_chat_for_media_cache(task: dict[str, Any], artifact_dir: Path) -
     chat = str(task.get("chat") or "").strip()
     if not chat:
         return {"status": "skipped", "reason": "missing_chat"}
+    if uses_tiny11_wechat(task):
+        from wechat_tiny11_bridge import Tiny11WeChatBridge
+        try:
+            bridge = Tiny11WeChatBridge()
+            with bridge.serialized_gui():
+                bridge.ensure_chat(chat)
+            return {"status": "ok", "transport": "wechat_tiny11", "sent": False,
+                    "media_export_verified": False}
+        except Exception as exc:
+            return {"status": "failed", "transport": "wechat_tiny11", "error": str(exc)[:500]}
     script = ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wechat_chat_sync_loop.py"
     if not script.is_file():
         return {"status": "skipped", "reason": "missing_wechat_chat_sync_loop"}
@@ -16724,7 +16745,7 @@ def exact_source_file_identity(task: dict[str, Any]) -> dict[str, Any]:
         table = str(config.get("message_table") or "")
         if not re.fullmatch(r"Msg_[A-Za-z0-9_]+", table):
             return identity
-        from wechat_direct_chatops import decode_content
+        from wechat_direct_chatops import decode_content, message_db_path
 
         refs = exact_source_file_row_refs(task)
         db_root = PRIVATE / "wechat_decrypt" / "decrypted" / "message"
@@ -16737,7 +16758,7 @@ def exact_source_file_identity(task: dict[str, Any]) -> dict[str, Any]:
                 ref.get("message_db") or ref.get("_message_db")
             )
             if preferred:
-                preferred_path = db_root / preferred
+                preferred_path = message_db_path(preferred) if preferred == "message_999998.db" else db_root / preferred
                 # Local IDs restart in each shard. An exact shard reference
                 # must fail closed rather than falling through to another DB.
                 dbs = [preferred_path]
@@ -21628,7 +21649,22 @@ def build_worker_tool_context(task: dict[str, Any]) -> str:
     generated_video_note = build_generated_video_tool_context(task)
     media_resolution_note = build_media_resolution_tool_context(task)
     existing_video_publish_note = build_existing_video_publish_tool_context(task)
+    transport_note = ""
+    if uses_tiny11_wechat(task):
+        transport_note = (
+            "Current personal-WeChat transport is Windows Tiny11, console http://127.0.0.1:6143/. "
+            "This overrides old transport notes in the resumed session. Ubuntu :97/6107 and Android "
+            "are inactive fallbacks: do not inspect their login screens, ask for their QR codes, "
+            "or operate them for this task. Use wechat_tiny11_bridge.py for exact chat navigation "
+            "and delivery. Native Windows history, text and PDF delivery are enabled, but native "
+            "attachment-cache export and Channels copy-link recovery must be independently verified. "
+            "An unavailable media adapter is not evidence of logout or silent audio. Do not ask "
+            "for login based on another transport's state. Use current exact links/cache and source "
+            "recovery routines; if no verified original can be retrieved, report that limitation "
+            "once without a login confirmation request. Never substitute recordings."
+        )
     return f"""LabCanvas tool playbook:
+{transport_note}
 - Use `{artifact_dir}` as the preferred working/output folder for new artifacts.
 - Match every input file/media path to this task's exact `chat`, `source.local_id`, `source.server_id`, explicit source/reference rows in `request`, or source-scoped context text. Do not borrow files from another group/direct chat or from unrelated previous worker tasks.
 - If the exact requested media is missing, stop with a source-limited message asking the user to resend/provide it instead of using a nearby file.
@@ -24128,6 +24164,11 @@ def send_message(
 ) -> None:
     message = sanitize_chat_visible_text(message)
     target = target if target is not None else guarded_send_target(chat, send_targets)
+    from wechat_transport_selection import tiny11_enabled, send_tiny11
+    if target and tiny11_enabled():
+        send_tiny11(chat, message=message,
+                    task_id=str((task or {}).get('id') or f'adhoc-text-{time.time_ns()}'))
+        return
     if target:
         transport = os.environ.get("WECHAT_WORKER_TEXT_TRANSPORT", "desktop").strip().casefold()
         if transport not in {"auto", "android", "desktop"}:
@@ -24220,6 +24261,11 @@ def send_file(
     if not ok:
         raise ValueError(f"Refusing outbound file {file_path}: {reason}")
     target = target if target is not None else guarded_send_target(chat, send_targets)
+    from wechat_transport_selection import tiny11_enabled, send_tiny11
+    if target and tiny11_enabled():
+        send_tiny11(chat, files=[file_path],
+                    task_id=str((task or {}).get('id') or f'adhoc-file-{time.time_ns()}'))
+        return
     if target:
         transport = os.environ.get("WECHAT_WORKER_FILE_TRANSPORT", "desktop").strip().casefold()
         if transport == "android":

@@ -1155,7 +1155,7 @@ def cmd_selftest(args: argparse.Namespace) -> int:
         proc = run_command(
             [sys.executable, "-m", "unittest", check["test"]],
             capture=True,
-            env={**os.environ, "PYTHONPATH": str(PACKAGE_ROOT / "src") + os.pathsep + os.environ.get("PYTHONPATH", "")},
+            env={**os.environ, "WECHAT_TINY11_DISABLE": "1", "PYTHONPATH": str(PACKAGE_ROOT / "src") + os.pathsep + os.environ.get("PYTHONPATH", "")},
         )
         results.append(
             {
@@ -3777,6 +3777,12 @@ def discover_media_sources() -> list[Path]:
 
 
 def desktop_status() -> dict[str, Any]:
+    sys.path.insert(0, str(SCRIPTS))
+    from wechat_transport_selection import tiny11_enabled, tiny11_health
+    if tiny11_enabled():
+        client = tiny11_health()
+        return {**client, 'client': client, 'display': 'tiny11-console',
+                'ports': {'6143': port_listening(6143)}}
     display_ok = run_command(["xdpyinfo"], capture=True, env=display_env(DEFAULT_DISPLAY)).returncode == 0
     wechat_window = run_command(["xdotool", "search", "--onlyvisible", "--class", "wechat"], capture=True, env=display_env(DEFAULT_DISPLAY))
     ports = {str(port): port_listening(port) for port in (DEFAULT_VNC_PORT, DEFAULT_NOVNC_PORT)}
@@ -3848,6 +3854,11 @@ def wechat_client_availability(
     watchdog: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Classify whether the official client can currently ingest and send."""
+
+    sys.path.insert(0, str(SCRIPTS))
+    from wechat_transport_selection import tiny11_enabled, tiny11_health
+    if tiny11_enabled():
+        return tiny11_health()
 
     observed = fresh_unlock_watchdog_state() if watchdog is None else watchdog
     state = effective_watchdog_desktop_state(observed)

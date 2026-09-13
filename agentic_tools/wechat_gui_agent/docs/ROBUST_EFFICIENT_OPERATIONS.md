@@ -2440,6 +2440,11 @@ Then:
 
 ## Documentation Map
 
+- [Tiny11 personal-WeChat cutover](../../../references/tiny11-dual-chat-transport-and-fallbacks-2026-09-13.md):
+  selected transport, native sender attribution, pre-send echo intents,
+  verified PDF delivery and non-replaying schedule recovery. Inactive Ubuntu
+  or Android state must not be used to diagnose the selected Windows account.
+
 - `FULL_CONTROL_MANUAL.md`: complete architecture, scripts, private state, and
   safety boundaries.
 - `RUNBOOK.md`: launch, verify, send, and operator procedures.

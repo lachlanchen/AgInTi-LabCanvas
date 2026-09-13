@@ -1486,14 +1486,20 @@ def elapsed_ms(started: float) -> float:
 
 
 def message_db_path(value: Any) -> Path:
+    from wechat_transport_selection import STORE
     name = normalized_message_db_name(value)
+    if name == STORE.name:
+        return STORE
     if name == ANDROID_INGRESS_DB_NAME:
         return DEFAULT_ANDROID_INGRESS_DB
     return DECRYPTED / "message" / (name or "message_0.db")
 
 
 def available_message_db_paths(config: dict[str, Any]) -> list[Path]:
+    from wechat_transport_selection import tiny11_enabled, STORE
     table = str(config.get("message_table") or "")
+    if tiny11_enabled():
+        return [STORE] if STORE.is_file() and message_db_has_table(STORE, table) else []
     paths = list_message_db_paths(DECRYPTED / "message", table=table)
     android_db = Path(config.get("android_ingress_db") or DEFAULT_ANDROID_INGRESS_DB)
     if android_db.is_file() and message_db_has_table(android_db, table):
@@ -8294,6 +8300,15 @@ def android_send_python(config: dict[str, Any]) -> str:
 def send_gui_message(config: dict[str, Any], message: str) -> str:
     if is_no_reply_control(message):
         return ""
+    from wechat_transport_selection import tiny11_enabled, send_tiny11
+    if tiny11_enabled():
+        target = config.get('send_target') or {}
+        if not target.get('name'):
+            raise RuntimeError('Refusing unguarded Windows WeChat send')
+        result = send_tiny11(config.get('chat_name') or target['name'], message=message,
+                             task_id=str(config.get('_android_task_id') or
+                                         hashlib.sha256(message.encode()).hexdigest()))
+        return json.dumps(result, ensure_ascii=False)
     attempts = max(1, int(os.environ.get("WECHAT_DIRECT_SEND_RETRIES", str(config.get("send_retries", 2)))))
     delay = max(0.0, float(os.environ.get("WECHAT_DIRECT_SEND_RETRY_DELAY", str(config.get("send_retry_delay_seconds", 1.0)))))
     errors: list[str] = []

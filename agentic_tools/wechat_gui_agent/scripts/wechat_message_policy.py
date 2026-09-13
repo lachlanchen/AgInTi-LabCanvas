@@ -10,6 +10,7 @@ from pathlib import Path
 import re
 import sqlite3
 import unicodedata
+import xml.etree.ElementTree as ET
 
 
 NO_REPLY_RE = re.compile(
@@ -241,6 +242,17 @@ def attachment_transport_identity(text: str) -> dict[str, object]:
             value = match.group(1).strip()
             identity[key] = int(value) if key == "size_bytes" else value.lower() if key in {"md5", "sha256"} else value
             break
+    # Native Windows file messages use an XML element, not a size attribute.
+    # Its size is needed to match an in-flight outbound file before the send
+    # receipt arrives, even when WeChat omits the file hash.
+    if "size_bytes" not in identity and "<msg" in source:
+        try:
+            root = ET.fromstring(source[source.index("<msg"):])
+            size = root.findtext("./appmsg/appattach/totallen", "").strip()
+            if size.isdigit():
+                identity["size_bytes"] = int(size)
+        except ET.ParseError:
+            pass
     md5_values = {
         match.lower()
         for match in re.findall(

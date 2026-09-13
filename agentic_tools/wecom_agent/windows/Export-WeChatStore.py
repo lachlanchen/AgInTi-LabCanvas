@@ -3,6 +3,7 @@
 import base64
 from contextlib import redirect_stdout, closing
 import importlib.util
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -26,21 +27,27 @@ def export(request_path, output_path):
                         workdir=str(ROOT / "cache"))
     if db.account != account_dir.name or db.wxid != request["self_wxid"]:
         raise RuntimeError("WeChat account identity mismatch")
-    # Windows real_sender_id belongs to the resource DB, not each shard's
-    # Name2Id chat index. Mixing those maps silently attributes the wrong author.
-    names = {}
-    for rel, path, _ in db._db_files:
-        if Path(path).name == 'message_resource.db':
-            with closing(open_snapshot(db, rel, reader)) as conn:
-                names.update(conn.execute('SELECT rowid,user_name FROM SenderName2Id'))
     result = {"account_verified": True, "rows": [], "high_watermarks": {}, "tables": []}
+    result['bindings'] = []
+    for rel, path, _ in db._db_files:
+        if Path(path).name != 'contact.db':
+            continue
+        with closing(open_snapshot(db, rel, reader)) as conn:
+            for username, nickname, remark in conn.execute('SELECT username,nick_name,remark FROM contact'):
+                table = 'Msg_' + hashlib.md5(username.encode()).hexdigest()
+                aliases = request.get('binding_titles', {})
+                matches = [key for key, titles in aliases.items() if nickname in titles or remark in titles]
+                if table in request['tables'] or matches:
+                    result['bindings'].append({'table': table, 'username': username,
+                                               'title': remark or nickname, 'exact_title_matches': matches})
     for rel in db._message_dbs():
         with closing(open_snapshot(db, rel, reader)) as conn:
             conn.row_factory = sqlite3.Row
             conn.text_factory = reader._sqlite_text_factory
-            # Some current builds leave SenderName2Id empty and use the shard
-            # index instead. Do not mix indexes within a populated schema.
-            sender_names = names or dict(conn.execute('SELECT rowid,user_name FROM Name2Id'))
+            # real_sender_id references this shard's Name2Id. The resource
+            # database has a different index, populated by media transfers;
+            # switching to it after the first upload corrupts attribution.
+            sender_names = dict(conn.execute('SELECT rowid,user_name FROM Name2Id'))
             for table in request["tables"]:
                 if not re.fullmatch(r"Msg_[0-9a-fA-F]{32}", table):
                     raise ValueError("Invalid allowlisted table")
@@ -53,12 +60,12 @@ def export(request_path, output_path):
                 columns = ('local_id', 'server_id', 'local_type', 'real_sender_id',
                            'create_time', 'status', 'message_content', 'compress_content',
                            'WCDB_CT_message_content')
-                rows = conn.execute(f"SELECT {','.join(columns)} FROM {table} WHERE local_id>? ORDER BY local_id LIMIT 500", (cursor,))
+                # Re-read a small tail for asynchronous server IDs/status updates;
+                # host identities are upserted, never emitted as new messages.
+                rows = conn.execute(f"SELECT {','.join(columns)} FROM {table} WHERE local_id>? ORDER BY local_id LIMIT 500", (max(0, cursor - 32),))
                 for row in rows:
                     record = dict(row)
                     record['sender'] = sender_names.get(record['real_sender_id'], '')
-                    if record['real_sender_id'] == 2:
-                        record['sender'] = request['self_wxid']
                     if not record['sender'] and (int(record['local_type']) & 0xffffffff) == 10000:
                         record['sender'] = 'wechat-system'
                     if not record['sender']:
@@ -71,7 +78,7 @@ def export(request_path, output_path):
                         if isinstance(record[name], bytes):
                             record[name] = {'base64': base64.b64encode(record[name]).decode('ascii')}
                     result['rows'].append(record)
-                    cursor = int(row['local_id'])
+                    cursor = max(cursor, int(row['local_id']))
                 result['high_watermarks'][key] = cursor
     target = Path(output_path)
     temp = target.with_suffix('.tmp')

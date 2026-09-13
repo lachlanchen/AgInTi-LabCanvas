@@ -1243,17 +1243,20 @@ class WeComGuiBridge:
             return None
         return (top + bottom) / 2.0
 
-    def find_ocr_line(self, path: Path, target: str, *, scale: int = 3) -> dict[str, Any] | None:
+    def find_ocr_line(self, path: Path, target: str, *, scale: int = 3,
+                      native_pixels: bool = False) -> dict[str, Any] | None:
         if Image is None or ImageOps is None or ImageFilter is None:
             raise RuntimeError("Pillow is required for WeCom GUI conversation selection")
         prepared = self.runtime_dir / f"{path.stem}-ocr.png"
-        with Image.open(path).convert("L") as image:
-            image = ImageOps.autocontrast(image)
+        with Image.open(path) as image:
+            if not native_pixels:
+                image = ImageOps.autocontrast(image.convert('L'))
             image = image.resize((image.width * scale, image.height * scale), Image.Resampling.LANCZOS)
-            image = image.filter(ImageFilter.SHARPEN)
+            if not native_pixels:
+                image = image.filter(ImageFilter.SHARPEN)
             image.save(prepared)
         proc = subprocess.run(
-            ["tesseract", str(prepared), "stdout", "-l", "chi_sim+eng", "--psm", "11", "tsv"],
+            ["tesseract", str(prepared), "stdout", "-l", "chi_sim" if native_pixels else "chi_sim+eng", "--psm", "11", "tsv"],
             capture_output=True,
             text=True,
             timeout=45,
@@ -2568,7 +2571,7 @@ def delivery_done(path: Path, key: str, chat: str) -> bool:
         row = conn.execute(
             "SELECT chat_name FROM deliveries WHERE delivery_key = ?", (key,)
         ).fetchone()
-    return bool(row and secrets.compare_digest(str(row[0]), chat))
+    return bool(row and secrets.compare_digest(str(row[0]).encode('utf-8'), chat.encode('utf-8')))
 
 
 def remember_delivery(path: Path, key: str, chat: str, text: str) -> None:

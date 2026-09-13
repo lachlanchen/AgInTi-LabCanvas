@@ -307,6 +307,10 @@ def wechat_client_health(
 ) -> dict[str, Any]:
     """Read the authoritative GUI state without treating a live loop as login."""
 
+    from wechat_transport_selection import tiny11_enabled, tiny11_health
+    if tiny11_enabled() and path == WECHAT_UNLOCK_STATE:
+        return tiny11_health()
+
     current = now or utc_now()
     payload = read_json(path)
     try:
@@ -378,6 +382,15 @@ def cli_transport_health(
 
 def expected_wechat_windows(snapshot: dict[str, Any]) -> tuple[list[str], list[str]]:
     windows = snapshot.get("windows", {})
+    from wechat_transport_selection import tiny11_enabled
+    if tiny11_enabled():
+        required = ['tiny11-store']
+        missing = [name for name in required if not window_live(snapshot, name)]
+        if not any(name == 'worker' or name.startswith('worker-') for name in windows):
+            missing.append('worker*')
+        if not any(name.startswith('direct-') for name in windows):
+            missing.append('direct-*')
+        return required, missing
     required = ["desktop", "media-sync"]
     if os.environ.get("WECHAT_CHAT_SYNC_WATCHDOG", "1") != "0":
         required.append("chat-sync")
@@ -1361,6 +1374,24 @@ def decrypt_refresh_health(path: Path | None = None, *, now: datetime | None = N
     }
 
 
+def source_refresh_health() -> dict[str, Any]:
+    """Report freshness for the source selected by the active transport."""
+    from wechat_transport_selection import tiny11_enabled, tiny11_health
+
+    if not tiny11_enabled():
+        return decrypt_refresh_health()
+    state = tiny11_health()
+    return {
+        "ok": bool(state.get("ok")),
+        "status": "ready" if state.get("ok") else "refresh_stale",
+        "age_seconds": int(state.get("state_age_seconds") or 0),
+        "failed_count": 0,
+        "missing_key_count": 0,
+        "required_missing_count": len(state.get("binding_missing_chats") or []),
+        "transport": "wechat_tiny11",
+    }
+
+
 def queue_health_issue(name: str, status: dict[str, Any]) -> dict[str, str] | None:
     for key, suffix, severity, detail in (
         ("stale_ids", "stale", "critical", "stale active task(s)"),
@@ -1400,7 +1431,7 @@ def build_snapshot(*, max_sender_seconds: float = 180.0) -> dict[str, Any]:
         and gui_timeout_health.get("artifact_delivery_ok", True),
     }
     direct_monitors = direct_monitor_health(client=client)
-    source_refresh = decrypt_refresh_health() if direct_monitors.get("configured") else {"ok": True, "enabled": False}
+    source_refresh = source_refresh_health() if direct_monitors.get("configured") else {"ok": True, "enabled": False}
     schedules = schedule_health()
     cli_transport = cli_transport_health()
     agent_failures = recent_terminal_agent_failures()
@@ -1433,6 +1464,9 @@ def build_snapshot(*, max_sender_seconds: float = 180.0) -> dict[str, Any]:
         )
     if not source_refresh.get("ok"):
         issue("wechat_source_refresh_failed", "critical", str(source_refresh.get("status")))
+    if client.get("binding_missing_chats"):
+        issue("wechat_chat_binding_missing", "degraded",
+              f"{len(client['binding_missing_chats'])} configured chat(s) missing from the selected account")
     if not wecom["running"]:
         issue("wecom_session_missing", "critical", "WeCom tmux session is absent")
     elif wecom_missing:

@@ -772,6 +772,15 @@ Then inspect fresh logs under `output/wechat_gui_agent/YYYY-MM-DD/`.
 | Scheduled report exists locally but did not arrive | Inspect trigger, artifact, transport, and delivery-ledger state separately. Recover the exact stored artifact without rerunning research. For WeChat, let the watchdog complete normal phone confirmation; for WeCom, ensure the Android relay is foregrounded and outbound delivery is not waiting behind passive polling. |
 | Risky action requested | Mark `waiting_confirmation` or open browser assist; do not bypass protections. |
 
+## Windows Personal-WeChat Transport
+
+The existing direct monitors and workers can select the dedicated Windows
+account without replacing their agent sessions. See
+[Tiny11 cutover and verified delivery](../../../references/tiny11-dual-chat-transport-and-fallbacks-2026-09-13.md)
+for the shadow DB, receipt/deduplication contract, startup, preserved fallbacks,
+and remaining native-media limitations. A healthy poller is not proof that
+every configured chat or media operation is available.
+
 ## Non-Goals
 
 Do not add methods that recover credentials, intercept encrypted traffic, bypass

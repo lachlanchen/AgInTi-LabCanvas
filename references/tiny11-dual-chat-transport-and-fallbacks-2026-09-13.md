@@ -14,23 +14,43 @@ Android input/polling. Do not revive retired per-app noVNC stacks.
 
 ## Verified State and Limitations
 
-On 2026-09-13:
+Verified during the 2026-09-13 evening cutover:
 
 - Both native Windows clients were visibly logged in on interactive session 1.
 - The existing WeCom Tiny11 helper, relay, worker, and schedules remained active.
   This is not proof that every historical task was delivered.
-- Personal WeChat's read-only store probe found 19 usable database keys and a
-  valid session store. Only three of the six configured message tables were
-  present in the locally available message store. This must not be reported as
-  a healthy six-chat receiver.
-- Exact title probes passed for EchoMind, LazyResearch, and Shares. Initial
-  probes for the other configured targets failed. A missing native search
-  result must not fall through to an internet search or a guessed recipient.
-- Personal WeChat's new adapter remains disabled, is not connected to the
-  production direct monitors/workers, and has not passed outbound text/file
-  delivery verification. Ubuntu transport code and state were left intact.
-- No test messages or files were sent, no historical tasks were replayed, and
-  no Android UI polling was enabled during these checks.
+- Personal WeChat is enabled in the existing six direct monitors, worker
+  senders, and daily senders. The read-only Windows shadow is
+  `message_999998.db`. Five configured native contact bindings are present;
+  `My devices` is not found under its configured identity. Four native message
+  tables are currently materialized. Empty shadow tables let known contacts
+  with no local history be monitored; they do not prove that a missing group
+  exists. Health reports the missing binding separately.
+- Live exact-title navigation passed for EchoMind, LazyResearch, Shares, MEMO,
+  and the career DM. Both Shares-to-DM and DM-to-Shares switching passed. A
+  missing native result never falls through to an internet search or guessed
+  recipient.
+- A new actual Shares card/request reached the direct agent and worker. The
+  agent's acknowledgement has a native outgoing receipt. This proves text
+  intake/routing/reply, not successful video download.
+- Today's MEMO PDF, career summary, and Chinese/English career PDFs were
+  delivered through the normal routines. Exact new native rows verified sender,
+  conversation, server ID, text or filename/byte count, and send status. Retry
+  reconciliation recognized completed sends without uploading the PDFs again.
+- EchoMind's six-hour quiet-time policy remains intact. The previous-day daily
+  PDF was `skipped_no_source`, not delivered; do not call it delivered merely
+  because the scheduler process is alive.
+- No synthetic test messages, Android UI polling, account logout, or bulk
+  historical replay was used. Only the current authorized scheduled outputs
+  were recovered. Original Ubuntu/Android code, profiles and cursors remain.
+
+**Remaining media gap:** Windows-native attachment-cache export and automatic
+Channels copy-link recovery are not verified end to end. The exact Shares card
+opened and played in native Windows WeChat, but the original download was not
+recovered. The old worker incorrectly inspected Ubuntu's inactive QR screen.
+The worker now receives the selected Windows transport context, avoids legacy
+GUI probes, and distinguishes unavailable media tooling from a logged-out
+client. Do not report a successful download or transcribe a recording instead.
 
 Do not interpret a visible login, `helper.ok`, or a successful database copy as
 end-to-end delivery. Do not flip the private `enabled` flag based on this note.
@@ -56,7 +76,7 @@ authenticated SSH tunnel; never expose the token or decrypted store.
 
 ## Read-Only Personal WeChat Store
 
-The diagnostic adapter is:
+The production adapter is:
 
 ```bash
 python3 agentic_tools/wechat_gui_agent/scripts/wechat_tiny11_bridge.py status
@@ -65,9 +85,11 @@ python3 agentic_tools/wechat_gui_agent/scripts/wechat_tiny11_bridge.py probe-cha
 ```
 
 `sync` imports allowlisted native rows into an ignored shadow database only.
-It does not enqueue a task or send a message. `probe-chat` can change the selected
-native chat but does not send. A failed one-shot sync exits nonzero. The optional
-loop is diagnostic, not installed as a production receiver by this change.
+It does not itself enqueue or send; the existing direct monitors consume its
+rows. `probe-chat` changes the selected native chat but does not send. A failed
+one-shot sync exits nonzero. The supervisor owns one `tiny11-store` loop, which
+polls without GUI interaction and backs off on failures. Unchanged successful
+polls are quiet.
 
 Guest scripts under `agentic_tools/wecom_agent/windows/`:
 
@@ -114,17 +136,21 @@ On Windows, `with sqlite3.connect(...)` commits/rolls back but does **not** clos
 the connection. Use `contextlib.closing` before replacing a database file, or
 Windows can reject replacement because the file is still open.
 
-Sender mapping is schema-dependent: use `message_resource.SenderName2Id` when
-populated, otherwise the current build's shard `Name2Id`. Do not mix populated
-indexes. Reserved self ID 2 resolves to the configured, verified account;
-unresolved sender identities fail closed. The current sample's ordinary
-message prefixes agreed with the shard mapping. System notices are separate.
+For this verified Windows schema, `real_sender_id` references **the message
+shard's `Name2Id`**. Do not switch to `message_resource.SenderName2Id` after it
+becomes populated: that independent index first appeared after a PDF upload and
+caused a receipt read to fail. Never hardcode self ID 2. The configured account
+must match the actual reader account, and every sender comes from its own shard.
+System notices remain separate.
 
 The host shadow retains binary content losslessly, distinguishes local IDs by
 source shard, and commits row identities and cursors in one transaction. Local
 system rows may share server ID zero; server ID alone is not a unique key.
 Repeated native exports must not duplicate messages. Only one export runs at a
 time, so probes cannot overwrite the poller's request/result packet.
+Exports reread a short tail to update native send status/server IDs in place;
+the shadow row's identity does not change and the monitor does not see another
+incoming message.
 
 ### Private Provisioning
 
@@ -137,6 +163,9 @@ reviewed standalone `db.py`, the three Python scripts above, private
 `config.json` with the exact account's `db_storage` path, private key cache,
 snapshot cache, request/export JSON, and logs. Restrict its ACL to the owning
 Windows user, SYSTEM, and Administrators. Do not print or commit those files.
+Set the protected ACL on the workspace root and let children inherit it.
+Removing inheritance recursively without granting replacement permissions can
+leave existing child files unreadable. Verify file access as the owning user.
 
 Host private state lives under
 `agentic_tools/wechat_gui_agent/.private/tiny11/`, configured by sibling
@@ -145,29 +174,79 @@ WeCom configuration, queue, event ledger, and helper credential remain owned by
 the WeCom transport. Use verified SFTP with the existing transport for file
 staging; use forward-slash guest paths and PowerShell `-LiteralPath`.
 
-## Remaining Cutover Gates
+## Delivery and Recovery
 
-These are required work, not completed claims:
+`wechat_transport_selection.py` is the lightweight selector shared by the
+minimal monitor venv, full workers, CLI health, and supervisors. The ignored
+`wechat_tiny11.local.json` enables the Windows route. WeCom uses its separate
+config, queue, identity and state; only GUI input serialization and the
+app-scoped Windows helper are shared.
 
-1. Resolve all six exact native chats and their current account/table bindings.
-   Do not copy another group's table, rename a target by guess, or use fuzzy
-   sidebar text as send authorization.
-2. Prove incoming text, source IDs, sender identities, group isolation, and
-   consecutive-message handling using the existing direct-agent runtime.
-3. Connect the Windows shadow source to the existing monitor/worker message DB
-   resolver without changing agent sessions, prompts, schedules, or backends.
-   Keep Linux and Android resolvers for deliberate fallback.
-4. Verify text delivery by a new exact native outbound receipt, not merely an
-   empty composer. Persist send intent before Enter and account for own-message
-   echoes before intake can route them.
-5. Verify personal WeChat's actual file-composer/modal behavior and exact new
-   file receipt. The existing WeCom file UI must not be assumed identical.
-   Retain uncertain-send holds; never blind-retry an attempted submission.
-6. Preserve old cursors and seed new Windows cursors at an explicit cutover
-   boundary. Reconcile pending authorized work separately; no automatic replay
-   of an old backlog after changing transports or rebooting.
-7. Make receiver/sender selection exclusive, persist the selected transport for
-   reboot, and perform one end-to-end verification without group spam.
+- Use existing `send_gui_message`, worker `send_message`/`send_file`, or the daily
+  delivery routines. They select Windows automatically. The bridge also accepts
+  a private `send --request-file` JSON with `chat`, `task_id`, `message`, `files`.
+- Keep task IDs stable across retries. Intent is persisted before Enter. If a
+  process loses its reply after submission, reconcile the native receipt; do
+  not switch transports or submit again because of a timeout.
+- Text delivery needs exact normalized content, current native row, self sender,
+  exact chat, successful status and nonzero server ID. File delivery additionally
+  needs exact filename and byte count. A truncated composer filename is only a
+  pre-send check, never proof of delivery.
+- Before a file submission, write `file_send_intent` with status `sending` and
+  content identity to the mirror. Using `file_send` at that stage fails the
+  established echo contract and can route our own PDF as a user request. Native
+  `<appattach><totallen>` must be parsed even when the message has no MD5.
+- Compare Chinese chat IDs as UTF-8 bytes with `hmac.compare_digest`; its string
+  mode rejects non-ASCII. Normalize Windows clipboard paths with
+  `PureWindowsPath`, not raw slash-sensitive strings.
+- Clipboard access can retry briefly when another app owns it. Do not retry
+  clicks or Enter. Preserve existing drafts on every failed composer check.
+- Prefer raw-pixel Chinese OCR for small native titles; aggressive sharpening
+  changed a short DM title into another character. Verify the full title after
+  navigation, not just the sidebar or search row.
+- Personal WeChat uses Enter, not WeCom's Alt+S. Escape can hide its main window
+  in the tray. Restore through the running client's configured normal hotkey
+  (verified default Ctrl+Alt+W here), gated to one exact existing app window.
+  Do not force-show a Qt tray-hidden window (it can become white), launch a
+  second login process, restart the client, or log out to restore it. The live
+  restore retained the same main process and authenticated conversation.
+- The shared desktop placement watcher must not move personal WeChat's search
+  results, menus or Channels popups. They are top-level Qt windows too. The old
+  broad size-based rule misclassified the search popup as a login dialog,
+  centered it mid-navigation, and invalidated the sender's coordinates.
+  `Select-AppPlacementWindows` now selects only named WeChat main/login
+  windows with the native main-window class. Keep the existing WeCom filter.
+  Pale native search-category labels need contrast-preserving OCR, and the
+  title crop must exclude toolbar icons even after the main window narrows.
+
+## Startup and Schedules
+
+`wechat_supervisor_tmux.sh` owns `labcanvas-wechat:tiny11-store`, the existing
+six `direct-*` windows, and two workers. With Tiny11 selected, it does not launch
+the legacy decrypt/media-sync/chat-sync/unlock or Android ingress loops. Old
+cursors were backed up and Windows cursors seeded at the cutover boundary;
+only subsequent current messages were handled. Do not reset those cursors on
+reboot.
+
+The existing enabled `create-tmux-session.service` invokes
+`~/scripts/create-labcanvas-wechat-after-reboot.sh`; the WeCom autostart service
+retains the VM/helper connection. This cutover did not reboot the live logged-in
+VM to test persistence. Only idle monitor/worker/scheduler processes were
+reloaded. No current message task may be killed for a deployment.
+
+Recover a completed daily output without rerunning its agent or duplicating a
+send:
+
+```bash
+python3 agentic_tools/wechat_gui_agent/scripts/wechat_career_daily_agent.py retry-organize --send --json
+python3 agentic_tools/wechat_gui_agent/scripts/wechat_career_daily_agent.py retry --send --attach-report --json
+PYTHONPATH=src python3 -m agenticapp wechat health --json --compact
+```
+
+Career retry preserves `pdf_required` and both language PDF requirements.
+A previously sent summary is not a completed report delivery. EchoMind daily
+06:00 HKT and six-hour lessons remain distinct; 20:00-08:00 quiet hours apply to
+periodic conversation only, not daily output.
 
 The previous WeCom retry-loop repair remains authoritative:
 [uncertain file send recovery](wecom-file-retry-loop-repair-2026-09-13.md).
@@ -176,19 +255,24 @@ Windows clients are now logged in.
 
 ## Regression Checks
 
-Local validation on 2026-09-13 passed: 2,053 tests, 13 skipped. Live WeCom health
-reported `chat_ready=true` and `closed_loop_state=ready`; the shared noVNC URL
-returned HTTP 200. The second personal WeChat shadow import inserted zero
-duplicate rows and explicitly reported `all_tables_available=false` (3/6).
+The initial pre-cutover baseline passed 2,053 tests (13 skipped). The final
+cutover suite, including the layout-watcher fix, passed **2,070 tests**. All
+25 personal-WeChat transport tests passed. Live navigation then passed the
+career DM, MEMO, EchoMind, LazyResearch, Shares, and back to MEMO with the
+fixed watcher running. Run tests
+with private transport selection disabled so a developer's logged-in account
+cannot change mock database resolution or cause a real send. Worker startup
+selftests set this automatically.
 
 ```bash
-python3 -m unittest discover -s tests -p 'test_wechat_tiny11_bridge.py'
-python3 -m unittest discover -s tests -p 'test_wecom_tiny11_transport.py'
-PYTHONPATH=src python3 -m unittest discover -s tests
+WECHAT_TINY11_DISABLE=1 python3 -m unittest discover -s tests -p 'test_wechat_tiny11_bridge.py'
+WECHAT_TINY11_DISABLE=1 python3 -m unittest discover -s tests -p 'test_wecom_tiny11_transport.py'
+WECHAT_TINY11_DISABLE=1 PYTHONPATH=src python3 -m unittest discover -s tests
 ```
 
 Coverage includes real SQLite WAL overflow/commit handling, corrupt headers,
 private mirror identity/deduplication, zero server IDs, invalid tables,
-disabled-send gating, no Enter on missing native search results, app-scoped
-helper headers, pointer boundaries, and unchanged WeCom defaults. Mocked tests
-do not substitute for the pending live Windows personal-WeChat cutover gates.
+disabled-send gating, native receipt updates, in-flight file echo suppression,
+no Enter on missing native search results, app-scoped helper headers, pointer
+boundaries, and unchanged WeCom defaults. Mocked tests do not substitute for
+the remaining exact media retrieval and missing-chat binding checks.

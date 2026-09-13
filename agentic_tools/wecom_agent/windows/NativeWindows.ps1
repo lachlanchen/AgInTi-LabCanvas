@@ -28,13 +28,17 @@ namespace LabCanvasDesktop {
         [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
 
         public static WindowInfo[] Snapshot(int[] processIds) {
+            return Snapshot(processIds, false);
+        }
+
+        public static WindowInfo[] Snapshot(int[] processIds, bool includeHidden) {
             var result = new List<WindowInfo>();
             var allowed = new HashSet<int>(processIds);
             if (allowed.Count == 0) return result.ToArray();
             EnumWindows(delegate(IntPtr handle, IntPtr arg) {
                 uint pid;
                 GetWindowThreadProcessId(handle, out pid);
-                if (!allowed.Contains((int)pid) || !IsWindowVisible(handle) || IsIconic(handle)) return true;
+                if (!allowed.Contains((int)pid) || (!includeHidden && (!IsWindowVisible(handle) || IsIconic(handle)))) return true;
                 Rect rect;
                 if (!GetWindowRect(handle, out rect)) return true;
                 var name = new StringBuilder(512);

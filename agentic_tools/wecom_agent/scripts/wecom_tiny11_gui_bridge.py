@@ -221,7 +221,8 @@ class Tiny11WeComGuiBridge(WeComGuiBridge):
             normalized = [observed]
         else:
             normalized = [str(item) for item in (observed or [])]
-        if [item.casefold() for item in normalized] != [item.casefold() for item in remote_paths]:
+        from pathlib import PureWindowsPath
+        if [PureWindowsPath(item) for item in normalized] != [PureWindowsPath(item) for item in remote_paths]:
             raise RuntimeError("WECOM_GUI_FILE_CLIPBOARD_UNVERIFIED: Tiny11 clipboard did not round-trip")
         return normalized
 

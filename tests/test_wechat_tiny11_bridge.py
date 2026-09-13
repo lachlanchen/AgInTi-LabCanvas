@@ -1,5 +1,7 @@
 import base64
 import importlib
+import json
+import os
 from pathlib import Path
 import shutil
 import sqlite3
@@ -108,7 +110,7 @@ class Tiny11WeChatTests(unittest.TestCase):
         client.target_groups = ['Shares']
         client.config = {'targets': {'Shares': {'query': 'Shares'}}}
         client.runtime_dir = Path('/tmp/test-runtime')
-        client.find_window = mock.Mock(return_value=SimpleNamespace(x=100, y=0))
+        client.find_window = mock.Mock(return_value=SimpleNamespace(x=100, y=0, width=835, height=1000))
         client.current_title_matches = mock.Mock(return_value=False)
         client.click = mock.Mock()
         client.set_clipboard = mock.Mock()
@@ -116,10 +118,39 @@ class Tiny11WeChatTests(unittest.TestCase):
         client.capture_screen = mock.Mock()
         client.crop = mock.Mock()
         client.find_ocr_line = mock.Mock(return_value=None)
+        client.native_search_category = mock.Mock(return_value=None)
         with mock.patch.object(bridge.time, 'sleep'), \
                 self.assertRaisesRegex(RuntimeError, 'no web search'):
             client.ensure_chat('Shares')
         self.assertNotIn(mock.call('Return'), client.key.call_args_list)
+
+    def test_title_separator_recovery_does_not_alias_chinese_names(self):
+        self.assertTrue(bridge.title_matches('MEMO一外语', 'MEMO—外语'))
+        self.assertTrue(bridge.title_matches('第一组', '第一组'))
+        self.assertFalse(bridge.title_matches('第-组', '第一组'))
+        self.assertFalse(bridge.title_matches('MEMO—别组', 'MEMO—外语'))
+
+    def test_layout_watcher_never_moves_native_search_or_channels_popups(self):
+        source = (ROOT / 'agentic_tools/wecom_agent/windows/Set-Tiny11AppScreens.ps1').read_text()
+        personal = source.split("if ($AppName -eq 'WeChat')", 1)[1].split('return $Windows', 1)[0]
+        self.assertIn("$_.Name -in @('Weixin', 'WeChat', '微信')", personal)
+        self.assertIn("$_.ClassName -eq 'Qt51514QWindowIcon'", personal)
+
+    def test_native_search_recovers_pale_category_but_never_web_suggestion(self):
+        from PIL import Image
+        with tempfile.TemporaryDirectory() as folder:
+            client = object.__new__(bridge.Tiny11WeChatBridge)
+            client.runtime_dir = Path(folder)
+            crop = client.runtime_dir / 'search.png'
+            Image.new('L', (10, 10), 190).save(crop)
+            def find(path, label, **kwargs):
+                if path.name == 'wechat-search-categories.png' and label == 'Group Chats':
+                    self.assertEqual(Image.open(path).getpixel((0, 0)), 0)
+                    return {'similarity': 1.0, 'center_y': 200}
+                return None
+            client.find_ocr_line = mock.Mock(side_effect=find)
+            self.assertEqual(client.native_search_category(crop)['center_y'], 200)
+            self.assertNotIn('Internet search results', [call.args[1] for call in client.find_ocr_line.call_args_list])
 
     def test_personal_bridge_cannot_use_wecom_scope(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -146,6 +177,130 @@ class Tiny11WeChatTests(unittest.TestCase):
         self.assertIn('refusing cross-app input', text)
         for forbidden in ('WriteProcessMemory', 'CreateRemoteThread', 'Restart-Computer'):
             self.assertNotIn(forbidden, text)
+
+    def test_native_export_uses_shard_sender_index_even_after_upload(self):
+        source = (ROOT / 'agentic_tools/wecom_agent/windows/Export-WeChatStore.py').read_text()
+        self.assertIn("sender_names = dict(conn.execute('SELECT rowid,user_name FROM Name2Id'))", source)
+        self.assertNotIn("record['real_sender_id'] == 2", source)
+        self.assertNotIn('SELECT rowid,user_name FROM SenderName2Id', source)
+
+    def test_pending_row_update_keeps_identity_and_native_receipt(self):
+        table = 'Msg_' + 'c' * 32
+        source = 'message/message_0.db:' + table
+        row = {'source': source, 'table': table, 'local_id': 19, 'server_id': 0,
+               'local_type': 1, 'sender': 'owner', 'create_time': 200, 'status': 1,
+               'message_content': 'owner:\nHello', 'compress_content': None,
+               'WCDB_CT_message_content': 0}
+        payload = {'account_verified': True, 'tables': [table], 'rows': [row],
+                   'high_watermarks': {source: 19}}
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'message_999998.db'
+            receipt = {'table': table, 'sender': 'owner', 'started_at': 199,
+                       'after': {path.name: 0}}
+            self.assertEqual(bridge.ingest_export(payload, path), 1)
+            self.assertIsNone(bridge.find_receipt(receipt, message='Hello', db_path=path))
+            row.update(server_id=123456, status=2)
+            self.assertEqual(bridge.ingest_export(payload, path), 0)
+            proof = bridge.find_receipt(receipt, message='Hello', db_path=path)
+            self.assertTrue(proof['verified'])
+            self.assertEqual(proof['local_id'], 1)
+            self.assertIsNone(bridge.find_receipt(receipt, message='Different', db_path=path))
+            self.assertIsNone(bridge.find_receipt({**receipt, 'sender': 'other'}, message='Hello', db_path=path))
+            self.assertIsNone(bridge.find_receipt({**receipt, 'after': {path.name: 1}}, message='Hello', db_path=path))
+            self.assertIsNone(bridge.find_receipt({**receipt, 'started_at': 201}, message='Hello', db_path=path))
+
+    def test_file_receipt_requires_exact_filename_size_sender_and_new_row(self):
+        table = 'Msg_' + 'd' * 32
+        source = 'message/message_0.db:' + table
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder); file = root / 'report.pdf'; file.write_bytes(b'pdf bytes')
+            path = root / 'message_999998.db'
+            row = {'source': source, 'table': table, 'local_id': 1, 'server_id': 77,
+                   'local_type': (6 << 32) + 49, 'sender': 'owner', 'create_time': 200, 'status': 2,
+                   'message_content': 'owner:\n<msg><appmsg><title>report.pdf</title><appattach><totallen>9</totallen></appattach></appmsg></msg>',
+                   'compress_content': None, 'WCDB_CT_message_content': 0}
+            bridge.ingest_export({'account_verified': True, 'tables': [table], 'rows': [row],
+                                  'high_watermarks': {source: 1}}, path)
+            receipt = {'table': table, 'sender': 'owner', 'started_at': 199, 'after': {path.name: 0}}
+            self.assertTrue(bridge.find_receipt(receipt, file=file, db_path=path)['verified'])
+            file.write_bytes(b'different size')
+            self.assertIsNone(bridge.find_receipt(receipt, file=file, db_path=path))
+
+    def test_ellipsis_composer_label_is_not_final_delivery_proof(self):
+        self.assertTrue(bridge.composed_filename_matches('2026-09-13-recent-items.zh.pdf', '2026-09-13...ems.zh.pdf or'))
+        self.assertFalse(bridge.composed_filename_matches('2026-09-14-recent-items.zh.pdf', '2026-09-13...ems.zh.pdf'))
+        self.assertFalse(bridge.composed_filename_matches('report.pdf', 'other.pdf'))
+
+    def test_chinese_chat_delivery_ledger_can_be_reconciled(self):
+        from wecom_gui_bridge import init_state_db
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'delivery.sqlite'
+            init_state_db(path)
+            bridge.remember_delivery(path, 'key', '备忘', 'report')
+            self.assertTrue(bridge.delivery_done(path, 'key', '备忘'))
+            self.assertFalse(bridge.delivery_done(path, 'key', '另一个群'))
+
+    def test_pending_file_intent_uses_existing_echo_suppression_contract(self):
+        from wechat_message_policy import recorded_outbound_file_echo
+        from wechat_mirror import init_db
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder); db = root / 'mirror.sqlite'; file = root / 'report.pdf'
+            file.write_bytes(b'pdf bytes'); init_db(db)
+            bridge.record_event(chat_name='Memo', action='file_send_intent', direction='outbound',
+                                status='sending', db_path=db,
+                                metadata={'file_identity': bridge.file_transport_identity(file)})
+            xml = '<msg><appmsg><title>report.pdf</title><appattach><totallen>9</totallen></appattach></appmsg></msg>'
+            self.assertTrue(recorded_outbound_file_echo(db, 'Memo', xml, source_epoch=bridge.time.time()))
+            self.assertFalse(recorded_outbound_file_echo(db, 'Other', xml, source_epoch=bridge.time.time()))
+
+    def test_transport_selection_isolated_for_selftests(self):
+        from wechat_transport_selection import tiny11_enabled
+        with mock.patch.dict(os.environ, {'WECHAT_TINY11_DISABLE': '1'}):
+            self.assertFalse(tiny11_enabled())
+
+    def test_hidden_window_restores_once_without_restarting_client(self):
+        client = object.__new__(bridge.Tiny11WeChatBridge)
+        client.tiny11 = mock.Mock()
+        window = SimpleNamespace(width=1276, height=1392)
+        with mock.patch.object(bridge.Tiny11WeComGuiBridge, 'find_window', side_effect=[None, window]):
+            self.assertIs(client.find_window(), window)
+        client.tiny11.invoke.assert_called_once_with({'action': 'restore'})
+        client.tiny11.reset_mock()
+        with mock.patch.object(bridge.Tiny11WeComGuiBridge, 'find_window', return_value=window):
+            self.assertIs(client.find_window(), window)
+        client.tiny11.invoke.assert_not_called()
+
+    def test_native_restore_never_launches_or_terminates_a_chat_process(self):
+        script = (ROOT / 'agentic_tools/wecom_agent/windows/WeComBridge.ps1').read_text()
+        restore = script.split("{ $_ -in @('restore', 'activate') }", 1)[1].split('"click"', 1)[0]
+        self.assertIn("$script:TargetApp -ne 'wechat'", restore)
+        self.assertIn('$candidates.Count -ne 1', restore)
+        self.assertIn("SendWait('^%w')", restore)
+        self.assertNotIn('Start-Process', restore)
+        self.assertNotIn('Stop-Process', restore)
+
+    def test_native_file_identity_size_parses_xml_and_preserves_hash_checks(self):
+        from wechat_message_policy import attachment_transport_identity
+        identity = attachment_transport_identity('member:\n<msg><appmsg><title>report.pdf</title>'
+                                                  '<appattach><totallen>9</totallen></appattach></appmsg></msg>')
+        self.assertEqual(identity['size_bytes'], 9)
+        self.assertNotIn('size_bytes', attachment_transport_identity('<msg><appmsg><appattach><totallen>bad</totallen></appattach></appmsg></msg>'))
+
+    def test_windows_monitor_has_own_shard_and_preserves_ubuntu_fallback(self):
+        import wechat_direct_chatops as direct
+        import wechat_transport_selection as selected
+        table = 'Msg_' + 'e' * 32
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'message_999998.db'
+            bridge.ingest_export({'account_verified': True, 'tables': [table], 'rows': [],
+                                  'high_watermarks': {}}, path)
+            with mock.patch.object(selected, 'STORE', path), mock.patch.object(selected, 'tiny11_enabled', return_value=True):
+                self.assertEqual(direct.message_db_path(path.name), path)
+                self.assertEqual(direct.available_message_db_paths({'message_table': table}), [path])
+                self.assertEqual(direct.available_message_db_paths({'message_table': 'Msg_' + 'f' * 32}), [])
+            with mock.patch.object(selected, 'tiny11_enabled', return_value=False), \
+                    mock.patch.object(direct, 'list_message_db_paths', return_value=[Path('/legacy')]):
+                self.assertIn(Path('/legacy'), direct.available_message_db_paths({'message_table': table}))
 
 
 if __name__ == '__main__':

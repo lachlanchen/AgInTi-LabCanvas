@@ -45,6 +45,7 @@ if [[ "${WECHAT_WORKER_SKIP_SELFTEST:-0}" != "1" ]]; then
       -u WECHAT_WORKER_DISABLE_DETERMINISTIC_VIDEO_PUBLISH \
       -u WECHAT_WORKER_DISABLE_GENERATED_VIDEO_LAZYEDIT \
       WECHAT_WORKER_EXPIRE_LEGACY_QUEUE=0 \
+      WECHAT_TINY11_DISABLE=1 \
       PYTHONPATH="$ROOT/src:${PYTHONPATH:-}" \
       python3 -m agenticapp wechat selftest --suite all --json \
       >> "$LOG_DIR/supervisor-worker-selftest.log" 2>&1

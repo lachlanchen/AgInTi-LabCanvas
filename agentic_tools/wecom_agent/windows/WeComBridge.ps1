@@ -25,6 +25,9 @@ public static class LabCanvasWin32 {
     public static extern IntPtr GetAncestor(IntPtr hWnd, uint flags);
 
     [DllImport("user32.dll")]
+    public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+
+    [DllImport("user32.dll")]
     public static extern bool SetCursorPos(int x, int y);
 
     [DllImport("user32.dll")]
@@ -71,9 +74,12 @@ function Focus-WeCom {
     # use the same frame; resizing between those two steps invalidates the
     # calculated coordinates.
     $foreground = [LabCanvasWin32]::GetForegroundWindow()
+    [uint32]$foregroundProcessId = 0
+    [LabCanvasWin32]::GetWindowThreadProcessId($foreground, [ref]$foregroundProcessId) | Out-Null
     # GA_ROOTOWNER keeps WeCom's file picker or owned dialog active. Neither
     # polling nor an already-focused input sequence needs another focus event.
     if ($foreground -ne $window.Handle -and
+        $foregroundProcessId -ne $window.ProcessId -and
         [LabCanvasWin32]::GetAncestor($foreground, 3) -ne $window.Handle) {
         [LabCanvasWin32]::SetForegroundWindow($window.Handle) | Out-Null
         Start-Sleep -Milliseconds 80
@@ -111,10 +117,36 @@ function Invoke-Key {
     Start-Sleep -Milliseconds 60
 }
 
+function Invoke-ClipboardOperation {
+    param([scriptblock]$Operation)
+    # Only clipboard access is retried, never a click or message submission.
+    for ($attempt = 0; $attempt -lt 10; $attempt++) {
+        try { return (& $Operation) } catch {
+            if ($attempt -eq 9) { throw }
+            Start-Sleep -Milliseconds 100
+        }
+    }
+}
+
 function Invoke-BridgeAction {
     param($Action)
     $kind = [string]$Action.action
     switch ($kind) {
+        { $_ -in @('restore', 'activate') } {
+            if ($script:TargetApp -ne 'wechat') { throw 'Restore is scoped to personal WeChat.' }
+            if ($kind -eq 'restore' -and $null -ne (Get-WeComWindow)) { return $true }
+            $ids = @(Get-Process -Name @('Weixin','WeChat') -ErrorAction SilentlyContinue | ForEach-Object Id)
+            $candidates = @([LabCanvasDesktop.NativeWindows]::Snapshot([int[]]$ids, $true) |
+                Where-Object { $_.Name -in @('Weixin','WeChat','微信') -and
+                    $_.ClassName -eq 'Qt51514QWindowIcon' -and $_.Width -ge 700 -and $_.Height -ge 500 })
+            if ($candidates.Count -ne 1) { throw 'No unique existing WeChat main window to restore.' }
+            # Ask the running client to restore through its normal hotkey.
+            # ShowWindow leaves a tray-hidden Qt surface white; starting the
+            # executable can open another account login instead of restoring it.
+            [System.Windows.Forms.SendKeys]::SendWait('^%w')
+            Start-Sleep -Milliseconds 1000
+            return $true
+        }
         "click" {
             $window = Focus-WeCom
             Assert-AppPoint $window $Action
@@ -142,13 +174,13 @@ function Invoke-BridgeAction {
         }
         "set_clipboard" {
             if ([string]::IsNullOrEmpty([string]$Action.text)) {
-                [System.Windows.Forms.Clipboard]::Clear()
+                Invoke-ClipboardOperation { [System.Windows.Forms.Clipboard]::Clear() }
             } else {
-                [System.Windows.Forms.Clipboard]::SetText([string]$Action.text)
+                Invoke-ClipboardOperation { [System.Windows.Forms.Clipboard]::SetText([string]$Action.text) }
             }
         }
         "get_clipboard" {
-            return [System.Windows.Forms.Clipboard]::GetText()
+            return Invoke-ClipboardOperation { [System.Windows.Forms.Clipboard]::GetText() }
         }
         "set_file_clipboard" {
             $files = New-Object System.Collections.Specialized.StringCollection
@@ -159,7 +191,7 @@ function Invoke-BridgeAction {
                 }
                 [void]$files.Add($resolved)
             }
-            [System.Windows.Forms.Clipboard]::SetFileDropList($files)
+            Invoke-ClipboardOperation { [System.Windows.Forms.Clipboard]::SetFileDropList($files) }
             return @($files)
         }
         "macro" {

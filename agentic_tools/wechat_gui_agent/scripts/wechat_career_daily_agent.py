@@ -941,7 +941,10 @@ def retry_existing_career_delivery(
     if located is None:
         return None
     manifest_path, manifest = located
-    if bool((manifest.get("send") or {}).get("complete")):
+    previous_send = manifest.get('send') or {}
+    # An artifact-only retry must retain the original report requirement.
+    args.attach_report = bool(getattr(args, 'attach_report', False) or previous_send.get('pdf_required'))
+    if bool(previous_send.get("complete")) and (not args.attach_report or previous_send.get('file_sent')):
         return {"ok": True, "status": "already_delivered", "manifest": str(manifest_path)}
     if not force and not delivery_retry_due(manifest):
         return {
@@ -2875,7 +2878,8 @@ def send_daily_result_reserved(
             if resolved_report in set(status["files_sent"]):
                 continue
             try:
-                send_daily_with_busy_retry(send_file, report_file, args.send_chat, args.send_targets)
+                send_daily_with_busy_retry(send_file, report_file, args.send_chat, args.send_targets,
+                                           task={'id': f'daily-career-report-{report.stem}-v1'})
                 status["files_sent"].append(resolved_report)
             except Exception as exc:  # noqa: BLE001
                 status["errors"].append(f"file {report_file}: {exc}")
