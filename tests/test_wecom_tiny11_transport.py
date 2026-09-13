@@ -99,6 +99,17 @@ class Tiny11WeComTransportTests(unittest.TestCase):
 
         self.assertEqual(observed, [remote])
 
+    def test_live_tail_scroll_does_not_click_a_message_card(self) -> None:
+        bridge = object.__new__(gui.Tiny11WeComGuiBridge)
+        bridge.tiny11 = mock.Mock()
+        window = base.Window("shared", 100, 200, 1276, 1392)
+        with mock.patch.object(gui.time, "sleep"):
+            bridge.scroll_chat_to_bottom(window)
+        bridge.tiny11.invoke.assert_called_once_with({
+            "action": "macro",
+            "actions": [{"action": "wheel", "x": 891, "y": 923, "delta": -720}] * 4,
+        })
+
     def test_filename_verifier_tolerates_one_repeated_digit_lost_by_ocr(self) -> None:
         self.assertTrue(
             base.filename_matches_ocr(
@@ -157,6 +168,12 @@ class Tiny11WeComTransportTests(unittest.TestCase):
             with self.subTest(name=name):
                 source = (folder / name).read_text()
                 self.assertIn("@('PerryShadowWnd', 'TitleBarWindow')", source)
+
+    def test_logged_in_layout_does_not_reposition_wecom_settings_and_popups(self):
+        source = (ROOT / 'agentic_tools/wecom_agent/windows/Set-Tiny11AppScreens.ps1').read_text()
+        self.assertIn('Select-AppPlacementWindows -AppName $app.Name', source)
+        self.assertIn("$_.ClassName -eq 'WeWorkWindow'", source)
+        self.assertIn('if ($main.Count -gt 0) { return $main }', source)
 
     def test_display_mode_probe_is_read_only_and_session_scoped(self) -> None:
         source = (ROOT / 'agentic_tools/wecom_agent/windows/Get-DesktopModes.ps1').read_text()

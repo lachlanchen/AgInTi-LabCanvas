@@ -7,10 +7,10 @@
   <style>
     * { box-sizing: border-box; }
     html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
-    body { display: grid; grid-template-rows: 44px 1fr; background: #202020; color: #eee;
+    body { display: grid; grid-template-rows: auto 1fr; background: #202020; color: #eee;
       font: 14px system-ui, sans-serif; }
-    nav { display: flex; gap: 4px; align-items: center; padding: 5px 8px; background: #303030; }
-    button { font: inherit; border: 1px solid #666; background: #303030; color: #eee;
+    nav { display: flex; flex-wrap: wrap; min-height: 44px; gap: 4px; align-items: center; padding: 5px 8px; background: #303030; }
+    button, select { font: inherit; border: 1px solid #666; background: #303030; color: #eee;
       padding: 6px 10px; cursor: pointer; border-radius: 4px; white-space: nowrap; }
     button[aria-pressed="true"] { background: #e9eeee; color: #111; border-color: #e9eeee; }
     #state { margin-left: auto; color: #ccc; white-space: nowrap; font-size: 12px; }
@@ -31,6 +31,9 @@
     <button data-view="desktop" aria-pressed="true">Desktop</button>
     <button data-view="wecom" aria-pressed="false">WeCom QR</button>
     <button data-view="wechat" aria-pressed="false">WeChat Login</button>
+    <select id="zoom" aria-label="Desktop zoom" title="Desktop zoom">
+      <option value="fit">Fit</option><option value="100">100%</option>
+    </select>
     <span id="state" role="status"></span>
   </nav>
   <main>

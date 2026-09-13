@@ -10,13 +10,27 @@ export function loginCrop(width, height, mode) {
   return { x: Math.round(centerX - w / 2), y: Math.round(centerY - h / 2), width: w, height: h };
 }
 
+// Use noVNC's own local scaling control; never resize the guest desktop.
+export function setDesktopZoom(doc, zoom) {
+  if (!doc?.documentElement.classList.contains('noVNC_connected')) return false;
+  const resize = doc.querySelector('#noVNC_setting_resize');
+  if (!resize) return false;
+  const changed = (input) => input.dispatchEvent(new doc.defaultView.Event('change', { bubbles: true }));
+  resize.value = zoom === '100' ? 'off' : 'scale';
+  changed(resize);
+  return true;
+}
+
 if (typeof document !== 'undefined') {
   const frame = document.querySelector('#desktop');
   const preview = document.querySelector('#preview');
   const canvas = document.querySelector('#login');
   const state = document.querySelector('#state');
+  const zoom = document.querySelector('#zoom');
   const ctx = canvas.getContext('2d');
   let mode = 'desktop';
+  let zoomPending = true;
+  zoom.value = new URL(location.href).searchParams.get('zoom') === '100' ? '100' : 'fit';
 
   function selectView(next) {
     mode = ['wecom', 'wechat'].includes(next) ? next : 'desktop';
@@ -25,6 +39,8 @@ if (typeof document !== 'undefined') {
     // Enlarged views cannot forward accidental clicks/keys to a login dialog.
     frame.inert = mode !== 'desktop';
     frame.tabIndex = mode === 'desktop' ? 0 : -1;
+    zoom.disabled = mode !== 'desktop';
+    zoomPending = true;
     for (const button of document.querySelectorAll('button[data-view]')) {
       button.setAttribute('aria-pressed', String(button.dataset.view === mode));
     }
@@ -37,7 +53,12 @@ if (typeof document !== 'undefined') {
   }
 
   function draw() {
-    if (mode === 'desktop' || document.hidden) return;
+    if (document.hidden) return;
+    if (zoomPending) {
+      // QR crops need the full framebuffer even when 100% uses native panning.
+      zoomPending = !setDesktopZoom(frame.contentDocument, mode === 'desktop' ? zoom.value : 'fit');
+    }
+    if (mode === 'desktop') return;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     try {
       const doc = frame.contentDocument;
@@ -59,6 +80,15 @@ if (typeof document !== 'undefined') {
   for (const button of document.querySelectorAll('button[data-view]')) {
     button.addEventListener('click', () => selectView(button.dataset.view));
   }
+  zoom.addEventListener('change', () => {
+    const url = new URL(location.href);
+    if (zoom.value === '100') url.searchParams.set('zoom', '100');
+    else url.searchParams.delete('zoom');
+    history.replaceState(null, '', url);
+    zoomPending = true;
+    draw();
+  });
+  frame.addEventListener('load', () => { zoomPending = true; });
   selectView(new URL(location.href).searchParams.get('view'));
   // Display-only local pixels: no extra VNC connection, API polling, or QR cache.
   let timer = setInterval(draw, 250);

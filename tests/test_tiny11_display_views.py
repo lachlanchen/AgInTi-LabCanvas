@@ -16,6 +16,27 @@ views = importlib.import_module('tiny11_display_views')
 
 
 class SharedConsoleZoomTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which('node'), 'Node.js is needed for the viewer control test')
+    def test_desktop_zoom_uses_local_scale_only_and_waits_for_connection(self):
+        module = (SCRIPTS.parent / 'web/tiny11-console.mjs').as_uri()
+        script = f"import {{setDesktopZoom}} from {json.dumps(module)};" + '''
+            const events = [];
+            const resize = {value: '', dispatchEvent: () => events.push(resize.value)};
+            const doc = {
+                documentElement: {classList: {contains: () => true}},
+                defaultView: {Event: class {}},
+                querySelector: (s) => s.endsWith('_resize') ? resize : null,
+            };
+            const results = [setDesktopZoom(null, '100'), setDesktopZoom(doc, '100'),
+                             setDesktopZoom(doc, 'fit')];
+            console.log(JSON.stringify({events, results}));
+        '''
+        result = subprocess.run(['node', '--input-type=module', '-e', script],
+                                capture_output=True, text=True, check=True)
+        self.assertEqual(json.loads(result.stdout), {
+            'events': ['off', 'scale'], 'results': [False, True, True],
+        })
+
     @unittest.skipUnless(shutil.which('node'), 'Node.js is needed for the browser geometry unit test')
     def test_login_crop_tracks_shared_layout_without_guest_resize(self):
         module = (SCRIPTS.parent / 'web/tiny11-console.mjs').as_uri()

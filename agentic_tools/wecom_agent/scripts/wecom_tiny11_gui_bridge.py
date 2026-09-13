@@ -219,8 +219,9 @@ class Tiny11WeComGuiBridge(WeComGuiBridge):
     def scroll_chat_to_bottom(self, window: Window) -> None:
         x = window.x + int(window.width * 0.62)
         y = window.y + int(window.height * 0.52)
-        actions: list[dict[str, Any]] = [{"action": "click", "x": x, "y": y}]
-        actions.extend({"action": "wheel", "x": x, "y": y, "delta": -720} for _ in range(4))
+        # Wheel events already focus WeCom and position the pointer. Clicking
+        # the history first can open a card/file instead of scrolling it.
+        actions = [{"action": "wheel", "x": x, "y": y, "delta": -720} for _ in range(4)]
         self.tiny11.invoke({"action": "macro", "actions": actions})
         time.sleep(0.2)
 

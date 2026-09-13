@@ -41,6 +41,18 @@ if ($LaunchWeChat -and -not (Get-Process WeChat,Weixin -ErrorAction SilentlyCont
 }
 $seen = @{}
 $first = $true
+
+function Select-AppPlacementWindows {
+    param([string]$AppName, [object[]]$Windows)
+    # Once logged in, menus, settings and verification dialogs belong to
+    # WeCom. They are not additional login windows to center or maximize.
+    if ($AppName -eq 'WeCom') {
+        $main = @($Windows | Where-Object { $_.ClassName -eq 'WeWorkWindow' })
+        if ($main.Count -gt 0) { return $main }
+    }
+    return $Windows
+}
+
 $apps = @(@{ Name = 'WeChat'; Processes = @('WeChat', 'Weixin'); Side = 1 })
 if ($Layout -eq 'Shared') {
     $apps = @(@{ Name = 'WeCom'; Processes = @('WXWork'); Side = 0 }) + $apps
@@ -51,7 +63,9 @@ do {
     $live = @{}
     foreach ($app in $apps) {
         $ids = @(Get-Process -Name $app.Processes -ErrorAction SilentlyContinue | ForEach-Object Id)
-        $windows = [LabCanvasDesktop.NativeWindows]::Snapshot([int[]]$ids)
+        $windows = @(Select-AppPlacementWindows -AppName $app.Name -Windows (
+            [LabCanvasDesktop.NativeWindows]::Snapshot([int[]]$ids)
+        ))
         foreach ($window in $windows) {
             $rect = $window
             if ($rect.Width -lt 200 -or $rect.Height -lt 200 -or

@@ -41,6 +41,28 @@ Canonical files are `agentic_tools/wecom_agent/web/tiny11-console.html` and
 backup of the old index. Reload the existing Firefox tab; no VM, app, or
 websockify restart is needed. The VM launcher serves this persistent directory.
 
+### Readable Text Without Restart
+
+Use <http://127.0.0.1:6143/?zoom=100> for native-size text. The toolbar's
+Fit/100% selector changes only noVNC local scaling. Fit restores the complete
+side-by-side desktop; 100% uses native noVNC panning/scrolling when the desktop
+is larger than the viewport. Windows remains 2560x1440 at 100% DPI, so agent
+capture and input geometry do not change. QR views temporarily restore the
+complete framebuffer before cropping, then restore the selected desktop zoom.
+
+WeCom Settings -> General Setting -> Text Size offers Small, Middle, Large,
+and Largest. In the inspected client, switching from Small to Large requested
+an application restart. That restart was cancelled to preserve the freshly
+verified login. Viewer zoom is the reversible no-restart alternative. It is
+not a fix for Tencent's environment/security warning.
+
+After the owner's September 13 phone confirmation, the native notice showed
+verification completed for LABCANVAS-PC. The relay's own security quarantine
+cleared through passive stabilization and LabAgent became ready again. See
+[the warning investigation](tiny11-console-input-and-remote-warning-2026-09-13.md)
+for the evidence and limitations. No permanent Android polling or blanket
+approval loop was enabled.
+
 ## Data Path
 
 ```text

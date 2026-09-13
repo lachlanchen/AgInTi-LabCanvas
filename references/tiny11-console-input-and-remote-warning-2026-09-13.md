@@ -18,6 +18,51 @@ WeChat plus mobile WeCom as the fallback if the Windows warning keeps recurring.
 
 ## Evidence and Limits
 
+### Confirmed Native Notice, 2026-09-13
+
+After the owner logged in again, the MIX 2S WeCom Team notice identified
+`LABCANVAS-PC`, operation time 14:36 HKT, and remote-control activity. It
+required confirmation within five minutes and subsequently showed
+`已完成验证` (verification completed). The owner had already confirmed it;
+the inspection did not approve an unknown request or repeat the confirmation.
+The Windows client remained logged in. At 14:43 the relay recovered through
+its existing cooldown/stabilization checks and reported LabAgent ready with
+an empty auth blocker. This is not a guarantee against future warnings.
+
+Use the actual official-client notice as evidence. A small noVNC font or an
+unchanged Windows RDS flag does not explain the warning. The input helper
+uses ordinary Windows mouse/key APIs; QEMU and remote-access components also
+remain visible in this environment. Which signal Tencent used has not been
+established. Do not claim a particular API, font size, VM identifier, or VNC
+page is the proven cause, and do not patch the client or disguise the device.
+Windows exposes injected-event flags in
+[mouse events](https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-msllhookstruct)
+and [keyboard events](https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-kbdllhookstruct).
+That is a possible observable signal, not proof WeCom used it in this case.
+
+For an owner-authorized confirmation, inspect the exact pending request on
+the connected phone and match the device, account, and recent operation.
+Completed, expired, unrelated, or ambiguous requests are not actionable.
+Preserve native security checks. A bounded inspection must not restart the
+Android chat pollers, change credentials, or log out either client. Unknown
+requests still require owner review. No always-approve loop was installed.
+
+The Tiny11 live-tail scroll now sends wheel events without first clicking
+the middle of the chat. That redundant click could open an image, file, or
+channel card while polling. This is a functional correction with a regression
+test, not a claim of defeating or disabling remote-control detection.
+
+The shared-layout watcher previously treated every visible WeCom window as
+either a login dialog or main window. This also moved the avatar popup to the
+middle of the desktop and relocated `ConfigWindow` (Settings). When native
+`WeWorkWindow` is present, placement now targets only that window. Menus,
+settings, and security dialogs keep their app-selected positions. Login-only
+placement and the right WeChat window retain their existing behavior. The
+five-case Windows selector test performs no GUI input; a live popup remained
+beside its avatar after multiple watcher ticks.
+
+### Earlier Investigation
+
 The user observed a WeCom remote-control notice after adding separate browser
 views. A passive phone screenshot on September 13 also showed a WeCom Team
 notification preview referring to remote operation. The complete notification
