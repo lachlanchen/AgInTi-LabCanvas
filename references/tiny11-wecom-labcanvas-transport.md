@@ -17,6 +17,30 @@ selected backend. The Android MIX 2S mirror may remain available for the owner,
 but its WeCom relay configuration is disabled and no Android UI polling is part
 of this transport.
 
+### Large Login View
+
+On a wide 2560x1440 desktop, native fixed-size login dialogs become too small
+when the full desktop is scaled into a browser. Use the same console page:
+
+- Large live WeCom QR: <http://127.0.0.1:6143/?view=wecom>
+- Large WeChat login: <http://127.0.0.1:6143/?view=wechat>
+- Normal shared desktop: <http://127.0.0.1:6143/>
+
+The toolbar switches views without another VNC connection or guest display
+change. Enlarged login views are read-only, repaint only from the current local
+noVNC canvas, and hide stale pixels during disconnect. They do not re-encode,
+cache, publish, or transfer the QR code. Return to Desktop to click native
+Refresh/Log In controls or after scanning. Crops follow the centered Shared
+layout; after manually moving a login window, restore that layout before using
+the enlarged view. Do not inflate Windows DPI just to enlarge a QR, because it
+also increases minimum app widths and can break the shared layout.
+
+Canonical files are `agentic_tools/wecom_agent/web/tiny11-console.html` and
+`tiny11-console.mjs`. Deploy with `install -m 0644` into the existing VM's
+`tools/novnc-web/` as `index.html` and `tiny11-console.mjs`, retaining a private
+backup of the old index. Reload the existing Firefox tab; no VM, app, or
+websockify restart is needed. The VM launcher serves this persistent directory.
+
 ## Data Path
 
 ```text

@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Windows Tiny11</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+    body { display: grid; grid-template-rows: 44px 1fr; background: #202020; color: #eee;
+      font: 14px system-ui, sans-serif; }
+    nav { display: flex; gap: 4px; align-items: center; padding: 5px 8px; background: #303030; }
+    button { font: inherit; border: 1px solid #666; background: #303030; color: #eee;
+      padding: 6px 10px; cursor: pointer; border-radius: 4px; white-space: nowrap; }
+    button[aria-pressed="true"] { background: #e9eeee; color: #111; border-color: #e9eeee; }
+    #state { margin-left: auto; color: #ccc; white-space: nowrap; font-size: 12px; }
+    main { position: relative; min-height: 0; }
+    iframe { width: 100%; height: 100%; border: 0; display: block; }
+    #preview { position: absolute; inset: 0; background: #e7eaea; overflow: hidden; }
+    #preview[hidden] { display: none; }
+    #login { position: absolute; inset: 20px; display: block; object-fit: contain;
+      width: calc(100% - 40px); height: calc(100% - 40px); image-rendering: pixelated; }
+    body[data-view]:not([data-view="desktop"]) iframe { opacity: 0; pointer-events: none; }
+    @media (max-width: 520px) { nav { gap: 3px; padding: 4px; }
+      button { padding: 6px; font-size: 12px; } #state { font-size: 11px; }
+      #login { inset: 8px; width: calc(100% - 16px); height: calc(100% - 16px); } }
+  </style>
+</head>
+<body data-view="desktop">
+  <nav aria-label="Console view">
+    <button data-view="desktop" aria-pressed="true">Desktop</button>
+    <button data-view="wecom" aria-pressed="false">WeCom QR</button>
+    <button data-view="wechat" aria-pressed="false">WeChat Login</button>
+    <span id="state" role="status"></span>
+  </nav>
+  <main>
+    <iframe id="desktop" title="Windows Tiny11 noVNC console"
+      src="/vnc.html?autoconnect=1&amp;resize=scale&amp;reconnect=1&amp;quality=9"
+      allow="clipboard-read; clipboard-write; fullscreen"></iframe>
+    <div id="preview" hidden><canvas id="login" aria-label="Live enlarged login view"></canvas></div>
+  </main>
+  <script type="module" src="/tiny11-console.mjs"></script>
+</body>
+</html>

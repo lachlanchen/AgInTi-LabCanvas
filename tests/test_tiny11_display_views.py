@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import importlib
+import json
 from pathlib import Path
+import shutil
 import sys
 import subprocess
 import tempfile
@@ -11,6 +13,39 @@ from unittest import mock
 SCRIPTS = Path(__file__).resolve().parents[1] / 'agentic_tools/wecom_agent/scripts'
 sys.path.insert(0, str(SCRIPTS))
 views = importlib.import_module('tiny11_display_views')
+
+
+class SharedConsoleZoomTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which('node'), 'Node.js is needed for the browser geometry unit test')
+    def test_login_crop_tracks_shared_layout_without_guest_resize(self):
+        module = (SCRIPTS.parent / 'web/tiny11-console.mjs').as_uri()
+        result = subprocess.run(
+            ['node', '--input-type=module', '-e',
+             f"import {{loginCrop}} from {json.dumps(module)}; "
+             "console.log(JSON.stringify([loginCrop(2560,1440,'wecom'),"
+             "loginCrop(2560,1440,'wechat'),loginCrop(1280,800,'wecom'),"
+             "loginCrop(2560,1440,'unknown')]));"],
+            capture_output=True, text=True, check=True,
+        )
+        self.assertEqual(json.loads(result.stdout), [
+            {'x': 478, 'y': 526, 'width': 320, 'height': 340},
+            {'x': 1742, 'y': 476, 'width': 360, 'height': 440},
+            None, None,
+        ])
+
+    def test_enlargement_reuses_one_console_and_disables_input(self):
+        folder = SCRIPTS.parent / 'web'
+        html = (folder / 'tiny11-console.html').read_text()
+        js = (folder / 'tiny11-console.mjs').read_text()
+        self.assertEqual(html.count('<iframe '), 1)
+        self.assertIn('resize=scale', html)
+        self.assertIn("frame.inert = mode !== 'desktop'", js)
+        self.assertIn('ctx.drawImage(source,', js)
+        self.assertIn("classList.contains('noVNC_connected')", js)
+        self.assertNotIn('new WebSocket', js)
+        self.assertNotIn('fetch(', js)
+        self.assertNotIn('sendKey', js)
+        self.assertNotIn('localStorage', js)
 
 
 class InputLeaseTests(unittest.TestCase):
