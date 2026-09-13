@@ -55,6 +55,12 @@ These are bounded regression measurements, not a claim of indefinite leak-free
 operation. Historical process IDs alone cannot establish ownership after PID
 reuse; keep the event evidence and controlled reproduction separate.
 
+Later on September 13, passive inspection of the phone mirror showed a WeCom
+Team notification preview mentioning remote operation on the computer. That is
+evidence of a separate WeCom security notice; do not dismiss the user's report
+of it. Its full text and event timing were not inspected. The memory-crash fix
+does not claim to disable or resolve WeCom's authentication/security checks.
+
 ## Reusable Fixes
 
 `agentic_tools/wecom_agent/windows/NativeWindows.ps1` provides a shared Win32

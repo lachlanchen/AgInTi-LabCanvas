@@ -12,7 +12,8 @@ SCRIPT = ROOT / "agentic_tools/android_device_agent/scripts/android_device_deskt
 
 
 class AndroidMirrorLayoutTests(unittest.TestCase):
-    def run_fit(self, *, dual=False, saved_serial=True, geometry="1440 2400"):
+    def run_fit(self, *, dual=False, saved_serial=True, geometry="1440 2400",
+                window_geometry="X=0\nY=0\nWIDTH=672\nHEIGHT=1344"):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             log = root / "calls.jsonl"
@@ -34,6 +35,8 @@ class AndroidMirrorLayoutTests(unittest.TestCase):
                 "    else: print('111')\n"
                 "elif sys.argv[1] == 'getdisplaygeometry':\n"
                 "    print(os.environ['GEOMETRY'])\n"
+                "elif sys.argv[1] == 'getwindowgeometry':\n"
+                "    print(os.environ['WINDOW_GEOMETRY'])\n"
             )
             executable.chmod(0o755)
             for name in ("adb", "tmux", "scrcpy"):
@@ -47,6 +50,7 @@ class AndroidMirrorLayoutTests(unittest.TestCase):
                 "CALL_LOG": str(log),
                 "DUAL": "1" if dual else "0",
                 "GEOMETRY": geometry,
+                "WINDOW_GEOMETRY": window_geometry,
             }
             result = subprocess.run(
                 ["bash", str(SCRIPT), "fit"], env=env,
@@ -62,8 +66,29 @@ class AndroidMirrorLayoutTests(unittest.TestCase):
         self.assertIn("1920x1080", result.stdout)
         self.assertEqual(calls[-1], [
             "xdotool", "windowmove", "111", "0", "0",
-            "windowsize", "111", "1920", "1080", "windowraise", "111",
+            "windowsize", "111", "1920", "1080",
         ])
+
+    def test_correct_geometry_does_not_resize_or_steal_focus(self):
+        result, calls = self.run_fit(window_geometry="X=0\nY=0\nWIDTH=1440\nHEIGHT=2400")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("already fits", result.stdout)
+        self.assertFalse(any("windowmove" in call or "windowsize" in call for call in calls))
+
+    def test_correct_size_with_wrong_position_is_recentered(self):
+        result, calls = self.run_fit(window_geometry="X=200\nY=120\nWIDTH=1440\nHEIGHT=2400")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("windowmove", calls[-1])
+
+    def test_guard_is_host_only_and_skips_dual_layout(self):
+        source = SCRIPT.read_text()
+        guard = source.split("watch_single_fit() {", 1)[1].split("\n}\n", 1)[0]
+        self.assertIn('[[ "$(stored_layout)" != dual ]]', guard)
+        self.assertIn('fit_single_window >/dev/null 2>&1', guard)
+        self.assertNotIn('adb', guard)
+        self.assertNotIn('launch_physical_app', guard)
+        start = source.split("start_session() {", 1)[1].split('case "$ACTION"', 1)[0]
+        self.assertEqual(start.count('ensure_fit_guard'), 2)
 
     def test_fit_preserves_dual_layout(self):
         result, calls = self.run_fit(dual=True)

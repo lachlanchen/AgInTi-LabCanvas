@@ -55,16 +55,26 @@ run `scripts/mix2s transport-restart`. It replaces only websockify and keeps
 Xvfb, scrcpy, phone state, WeChat, and WeCom intact. A viewer opened with the
 URL above reconnects automatically.
 
-If the phone occupies only a small upper-left area, repair the **host window**:
+If the phone occupies only a small upper-left area, repair the **host window**
+and attach its persistent host-only fit guard to the existing mirror session:
 
 ```bash
-scripts/mix2s fit
+scripts/mix2s autofit
 ```
 
 This reads the live X desktop size and fits the existing single scrcpy window
 at `(0, 0)`. It does not call ADB, send phone input, switch apps, poll the phone,
-restart services, or change login state. It refuses to cover a visible dual
+restart the mirror, or change login state. It refuses to cover a visible dual
 mirror. Supply `--serial <ADB_SERIAL>` only if the saved mirror identity is absent.
+For a one-time host repair without a guard, use `scripts/mix2s fit`.
+
+Since September 13, normal startup/reuse also ensures one `mirror-fit` tmux
+window. Every two seconds it checks only X11 geometry, with bounded probes.
+It resizes only when position or dimensions differ from the live X root;
+it does not continually raise the window or steal focus. It re-discovers the
+exact mirror title so a recreated scrcpy window is fitted too. The guard pauses
+in dual mode, and stopping the owned mirror tmux session stops it as well.
+This is **host window maintenance**, not Android UI polling or automation.
 
 On 2026-09-05, the root canvas was 1440x2400 but scrcpy occupied only 672x1344
 at `(180, 120)`. The browser's `resize=scale` correctly scaled the entire canvas,
@@ -72,7 +82,19 @@ including its empty area. Fitting the window to 1440x2400 fixed the view; scrcpy
 keeps the phone aspect ratio with narrow centered side margins. The launcher
 now uses desktop-sized windows instead of the old 540x1080 defaults and fits
 single mode when starting/reusing it. A running legacy supervisor is not
-restarted just for sizing; `fit` repairs its current window in place.
+restarted just for sizing; `autofit` repairs it in place and keeps it fitted.
+
+On September 13, the same long-running mirror had again shrunk to 672x1344,
+this time at `(0,0)`, while Xvfb remained 1440x2400. The earlier one-shot fit
+had not survived subsequent window changes. The exact trigger was not captured.
+After the persistent fix, three deliberate host-only resize/move tests recovered
+within about two seconds; repeated `autofit` calls kept exactly one guard.
+Desktop and mobile browser screenshots verified a centered, nonblank canvas
+without clipping or JavaScript errors. The original scrcpy PID remained alive.
+Phone aspect ratio is preserved, so wide browsers still have side margins.
+
+Private evidence: `output/android_device_agent/2026-09-13-autofit/`. Never commit
+the screenshots because they can show private phone messages and account data.
 
 Dual mode includes a lock-aware activity guard. It repairs immediately when the
 shared phone lane is free. It publishes a cooperative fairness request only

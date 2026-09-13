@@ -24,6 +24,7 @@ LAYOUT_FILE="$STATE_DIR/${NAME}.layout"
 DUAL_WINDOW_NAME="${ANDROID_DEVICE_DUAL_WINDOW_NAME:-wecom-virtual}"
 DUAL_GUARD_WINDOW_NAME="${ANDROID_DEVICE_DUAL_GUARD_WINDOW_NAME:-layout-guard}"
 PRIMARY_WINDOW_NAME="${ANDROID_DEVICE_PRIMARY_WINDOW_NAME:-wechat-physical}"
+FIT_WINDOW_NAME="mirror-fit"
 DUAL_GUARD_SECONDS="${ANDROID_DEVICE_DUAL_GUARD_SECONDS:-10}"
 DUAL_GUARD_LEASE_TIMEOUT_SECONDS="${ANDROID_DEVICE_DUAL_GUARD_LEASE_TIMEOUT_SECONDS:-8}"
 DUAL_GUARD_STALE_SECONDS="${ANDROID_DEVICE_DUAL_GUARD_STALE_SECONDS:-45}"
@@ -43,7 +44,7 @@ ADB_KEY_FILE="${ANDROID_DEVICE_ADB_KEY_FILE:-$HOME/.android/adbkey}"
 usage() {
   cat <<'EOF'
 Usage:
-  android_device_desktop.sh [on|off|start|stop|restart|transport-restart|dual-heal|status|key-status|dual|single|wechat|wecom|fit] [--serial SERIAL] [--open-wechat]
+  android_device_desktop.sh [on|off|start|stop|restart|transport-restart|dual-heal|status|key-status|dual|single|wechat|wecom|fit|autofit] [--serial SERIAL] [--open-wechat]
 
 Starts a dedicated tmux-held noVNC desktop running scrcpy for an Android device.
 
@@ -62,6 +63,8 @@ Actions:
   wechat             Show WeChat on the physical mirror with media muted.
   fit               Fit the existing single mirror to its X desktop; no phone
                     commands, login changes, or service restarts.
+  autofit           Fit now and keep the existing mirror fitted with a single
+                    host-only guard. No ADB polling or phone input.
 
 Environment defaults:
   ANDROID_DEVICE_TMUX_SESSION=labcanvas-android-mix2s
@@ -77,7 +80,7 @@ EOF
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    on|off|start|stop|restart|transport-restart|dual-heal|status|key-status|dual|single|wechat|wecom|fit) ACTION="$1"; shift ;;
+    on|off|start|stop|restart|transport-restart|dual-heal|status|key-status|dual|single|wechat|wecom|fit|autofit|fit-watch) ACTION="$1"; shift ;;
     --serial) SERIAL="$2"; shift 2 ;;
     --open-wechat) OPEN_WECHAT="1"; shift ;;
     --no-wake) WAKE_DEVICE="0"; shift ;;
@@ -303,12 +306,13 @@ print("|".join((physical_package, str(virtual_id), virtual_package)))
 
 window_id_by_title() {
   local title="$1"
-  DISPLAY="$DISPLAY_ID" xdotool search --name "^$(regex_escape "$title")$" 2>/dev/null |
+  timeout 3s env DISPLAY="$DISPLAY_ID" XAUTHORITY= xdotool search --name "^$(regex_escape "$title")$" 2>/dev/null |
     tail -n 1 || true
 }
 
 fit_single_window() {
   local serial="$SERIAL" window width height geometry
+  local key value window_x="" window_y="" window_width="" window_height=""
   need xdotool
   # Host-only repair: do not discover devices through ADB or launch an app.
   if [[ -z "$serial" && -s "$SERIAL_FILE" ]]; then
@@ -327,15 +331,54 @@ fit_single_window() {
     echo "Existing mirror window not found; no services started." >&2
     return 1
   fi
-  geometry="$(DISPLAY="$DISPLAY_ID" xdotool getdisplaygeometry)" || return 1
+  geometry="$(timeout 3s env DISPLAY="$DISPLAY_ID" XAUTHORITY= xdotool getdisplaygeometry)" || return 1
   read -r width height <<<"$geometry"
   if [[ ! "$width" =~ ^[1-9][0-9]*$ || ! "$height" =~ ^[1-9][0-9]*$ ]]; then
     echo "Unable to read the live X desktop size." >&2
     return 1
   fi
-  DISPLAY="$DISPLAY_ID" xdotool windowmove "$window" 0 0 \
-    windowsize "$window" "$width" "$height" windowraise "$window" || return 1
+  geometry="$(timeout 3s env DISPLAY="$DISPLAY_ID" XAUTHORITY= xdotool getwindowgeometry --shell "$window")" || return 1
+  while IFS='=' read -r key value; do
+    case "$key" in
+      X) window_x="$value" ;;
+      Y) window_y="$value" ;;
+      WIDTH) window_width="$value" ;;
+      HEIGHT) window_height="$value" ;;
+    esac
+  done <<<"$geometry"
+  if [[ "$window_x" == 0 && "$window_y" == 0 && "$window_width" == "$width" && "$window_height" == "$height" ]]; then
+    echo "Mirror already fits ${width}x${height}; phone state unchanged."
+    return 0
+  fi
+  timeout 3s env DISPLAY="$DISPLAY_ID" XAUTHORITY= xdotool windowmove "$window" 0 0 \
+    windowsize "$window" "$width" "$height" || return 1
   echo "Mirror fitted to ${width}x${height}; phone state unchanged."
+}
+
+ensure_fit_guard() {
+  local command
+  need tmux
+  # Never create a desktop or touch the device to repair host window geometry.
+  tmux has-session -t "$SESSION" 2>/dev/null || return 0
+  command="$(printf '%q ' env ANDROID_DEVICE_DISPLAY="$DISPLAY_ID" \
+    ANDROID_DEVICE_STATE_DIR="$STATE_DIR" ANDROID_DEVICE_DESKTOP_NAME="$NAME" \
+    "$ROOT/scripts/mix2s" fit-watch --serial "$SERIAL")"
+  if tmux_window_exists "$FIT_WINDOW_NAME"; then
+    if [[ "$(tmux list-panes -t "$SESSION:$FIT_WINDOW_NAME" -F '#{pane_dead}')" == 1 ]]; then
+      tmux respawn-window -t "$SESSION:$FIT_WINDOW_NAME" "exec $command"
+    fi
+    return 0
+  fi
+  tmux new-window -d -t "$SESSION" -n "$FIT_WINDOW_NAME" "exec $command"
+}
+
+watch_single_fit() {
+  while true; do
+    if [[ "$(stored_layout)" != dual ]]; then
+      fit_single_window >/dev/null 2>&1 || true
+    fi
+    sleep 2
+  done
 }
 
 tile_dual_windows() {
@@ -753,6 +796,7 @@ start_session() {
     if [[ "$(stored_layout)" != "dual" ]]; then
       fit_single_window || true
     fi
+    ensure_fit_guard
     status
     return
   fi
@@ -774,6 +818,7 @@ start_session() {
   if [[ "$(stored_layout)" != "dual" ]]; then
     fit_single_window || true
   fi
+  ensure_fit_guard
   status
 }
 
@@ -794,6 +839,8 @@ case "$ACTION" in
     ;;
   transport-restart) restart_novnc_transport ;;
   fit) fit_single_window ;;
+  autofit) fit_single_window; ensure_fit_guard ;;
+  fit-watch) watch_single_fit ;;
   dual-heal) heal_dual_layout_once ;;
   status) status ;;
   key-status) adb_key_status ;;
