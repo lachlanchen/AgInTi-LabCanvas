@@ -6,6 +6,10 @@ before redeploying the display scripts. They now require the shared
 `NativeWindows.ps1` file and a matching `-ExpectedComputer` value. The original
 installation evidence below describes September 7, not current account login.
 
+September 13 input-route update: the WeCom view now uses the original QEMU
+console directly. Only the WeChat secondary display uses guest TightVNC. See
+[the console route and remote-warning investigation](tiny11-console-input-and-remote-warning-2026-09-13.md).
+
 ## Current Result
 
 Implemented on 2026-09-07 without rebooting Windows, logging out WeCom, starting
@@ -23,20 +27,25 @@ and account permissions. They are not a security boundary between users.
 
 ## Geometry and Transport
 
-| Role | Windows rectangle | Host VNC reflector |
+| Role | Windows rectangle | Host VNC endpoint |
 | --- | --- | --- |
-| WeCom, original primary | 1280x800 at 0,0 | 127.0.0.1:5944 |
+| WeCom, original primary | 1280x800 at 0,0 | 127.0.0.1:5943, original QEMU console |
 | WeChat, additional monitor | 1280x800 at 1280,0 | 127.0.0.1:5945 |
 
 The QEMU standard VGA display is preserved. One signed Virtual Display Driver
-monitor extends it to the right. Guest TightVNC captures the combined desktop;
-QEMU's original VNC console does not need to support the indirect display.
+monitor extends it to the right. Guest TightVNC captures the secondary display
+through a clipped reflector. QEMU's original console serves the primary display
+directly; it does not need to support the indirect display.
 
 ```text
-Windows TightVNC, loopback 5900
+WeCom: QEMU native console, loopback 5943
+  -> localhost web service 6144/wecom
+  -> noVNC core, scaled to the browser viewport
+
+WeChat: Windows TightVNC, loopback 5900
   -> SSH 2290 tunnel, host loopback 15943
-  -> x11vnc -reflect with per-monitor -clip
-  -> one localhost web service 6144
+  -> x11vnc -reflect with secondary-monitor -clip
+  -> same localhost web service 6144/wechat
   -> noVNC core, scaled to the browser viewport
 ```
 
@@ -138,8 +147,10 @@ bash agentic_tools/wecom_agent/scripts/tiny11_displays.sh start
 systemctl --user status labcanvas-tiny11-displays.service
 ```
 
-Owned tmux session: `labcanvas-tiny11-displays`, with `tunnel`, `wecom`,
-`wechat`, and `views` windows. Startup reuses them instead of duplicating
+Owned tmux session: `labcanvas-tiny11-displays`, with `tunnel`, `wechat`, and
+`views` windows. The obsolete `wecom` reflector on 5944 is retired. Startup
+checks the executable and upstream/port before removing an old live reflector;
+an unexpected process is preserved. Startup reuses current panes instead of duplicating
 processes. The user service recovers missing panes every 30 seconds. It waits
 for the existing VM's SSH/VNC readiness; it does not start or reboot a VM.
 It uses the workstation storage guard before touching ProjectsLFS after boot.

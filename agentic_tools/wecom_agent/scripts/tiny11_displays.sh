@@ -24,11 +24,27 @@ ensure_window() {
     fi
 }
 
+retire_legacy_wecom_reflector() {
+    local pid command binary
+    local -a args
+    pid="$(tmux list-panes -t "$SESSION:wecom" -F '#{pane_pid}' 2>/dev/null)" || return 0
+    if window_alive wecom; then
+        mapfile -d '' -t args < "/proc/$pid/cmdline"
+        binary="${args[0]:-}"
+        command=" ${args[*]} "
+        if [[ "${binary##*/}" != x11vnc || "$command" != *" -reflect 127.0.0.1:15943 "* || "$command" != *" -rfbport 5944 "* ]]; then
+            printf 'Unexpected process in legacy WeCom pane; preserving it.\n' >&2
+            return 1
+        fi
+    fi
+    tmux kill-window -t "$SESSION:wecom"
+}
+
 case "${1:-status}" in
     supervise)
         trap 'bash "$0" stop; exit 0' TERM INT
         while true; do
-            for name in tunnel wecom wechat views; do
+            for name in tunnel wechat views; do
                 if ! window_alive "$name"; then bash "$0" start || true; break; fi
             done
             sleep 30 & wait $! || true
@@ -36,6 +52,10 @@ case "${1:-status}" in
         ;;
     start)
         mkdir -p "$OUT"
+        retire_legacy_wecom_reflector
+        # Serve the QEMU console even while Windows SSH/secondary VNC recovers.
+        # The web relay returns 503 and retries if an individual display is down.
+        ensure_window views "exec '$PYTHON' '$ROOT/agentic_tools/wecom_agent/scripts/tiny11_display_views.py'"
         # Never start/reboot another VM. The existing SSH endpoint must be ready.
         ssh -p 2290 -o BatchMode=yes -o ConnectTimeout=8 lachlan@127.0.0.1 whoami >/dev/null
         ensure_window tunnel 'exec ssh -N -p 2290 -o BatchMode=yes -o ExitOnForwardFailure=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -L 127.0.0.1:15943:127.0.0.1:5900 lachlan@127.0.0.1'
@@ -47,12 +67,7 @@ for n in range(30):
  except OSError: pass
  time.sleep(1)
 else: raise SystemExit("Guest VNC tunnel is not ready")'
-        for app in wecom wechat; do
-            x=0; port=5944
-            if [[ "$app" == wechat ]]; then x=1280; port=5945; fi
-            ensure_window "$app" "exec x11vnc -reflect 127.0.0.1:15943 -clip 1280x800+$x+0 -rfbport $port -localhost -no6 -nopw -forever -shared -o '$OUT/$app-reflect.log'"
-        done
-        ensure_window views "exec '$PYTHON' '$ROOT/agentic_tools/wecom_agent/scripts/tiny11_display_views.py'"
+        ensure_window wechat "exec x11vnc -reflect 127.0.0.1:15943 -clip 1280x800+1280+0 -rfbport 5945 -localhost -no6 -nopw -forever -shared -o '$OUT/wechat-reflect.log'"
         ;;
     stop)
         tmux kill-session -t "$SESSION" 2>/dev/null || true

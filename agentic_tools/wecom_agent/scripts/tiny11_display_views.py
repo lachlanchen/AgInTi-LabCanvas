@@ -16,7 +16,9 @@ except ImportError:
 ROOT = Path(__file__).resolve().parents[3]
 STATIC = Path(__file__).resolve().parents[1] / "web" / "displays"
 LOCK = ROOT / "agentic_tools/wecom_agent/.private/wecom_gui_bridge.lock"
-PORTS = {"wecom": 5944, "wechat": 5945}
+# The primary display uses QEMU's original framebuffer/input, not guest VNC.
+# Only the secondary indirect display needs the guest capture server.
+PORTS = {"wecom": 5943, "wechat": 5945}
 OWNER_KEY = web.AppKey('control_owner', str) if web else None
 
 

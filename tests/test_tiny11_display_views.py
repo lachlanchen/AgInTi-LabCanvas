@@ -36,6 +36,43 @@ class InputLeaseTests(unittest.TestCase):
 
 
 class DisplaySupervisorTests(unittest.TestCase):
+    def test_wecom_uses_original_console_not_guest_input_server(self):
+        self.assertEqual(views.PORTS, {'wecom': 5943, 'wechat': 5945})
+        source = (SCRIPTS / 'tiny11_displays.sh').read_text()
+        self.assertIn('for name in tunnel wechat views;', source)
+        self.assertNotIn('ensure_window wecom', source)
+        self.assertLess(source.index('ensure_window views'), source.index('ssh -p 2290'))
+
+    def test_retirement_preserves_unknown_legacy_pane(self):
+        source = (SCRIPTS / 'tiny11_displays.sh').read_text().split('case "${1:-status}" in')[0]
+        stub = '''
+tmux() {
+    case "$1" in
+        list-panes) if [[ "$*" == *pane_pid* ]]; then printf '%s' "$$"; else printf '0'; fi ;;
+        *) printf '%s\\n' "$*" ;;
+    esac
+}
+retire_legacy_wecom_reflector
+'''
+        result = subprocess.run(['bash', '-c', source + stub], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn('preserving', result.stderr)
+        self.assertNotIn('kill-', result.stdout)
+
+    def test_retirement_removes_only_dead_owned_legacy_pane(self):
+        source = (SCRIPTS / 'tiny11_displays.sh').read_text().split('case "${1:-status}" in')[0]
+        stub = '''
+tmux() {
+    case "$1" in
+        list-panes) printf '1' ;;
+        *) printf '%s\\n' "$*" ;;
+    esac
+}
+retire_legacy_wecom_reflector
+'''
+        result = subprocess.run(['bash', '-c', source + stub], capture_output=True, text=True, check=True)
+        self.assertEqual(result.stdout.strip(), 'kill-window -t labcanvas-tiny11-displays:wecom')
+
     def test_only_dead_or_missing_owned_windows_are_restarted(self):
         source = (SCRIPTS / 'tiny11_displays.sh').read_text().split('case "${1:-status}" in')[0]
         for state, expected in [('0', ''), ('1', 'respawn-window'), ('missing', 'new-window')]:

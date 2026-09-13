@@ -144,6 +144,16 @@ class Tiny11WeComTransportTests(unittest.TestCase):
         self.assertIn(mock.call(transport.GUEST_HELPER.with_name('NativeWindows.ps1'),
                                 client.remote_root + r'\NativeWindows.ps1'), upload.call_args_list)
 
+    def test_session_probe_is_read_only_and_does_not_claim_app_policy_success(self):
+        source = (ROOT / 'agentic_tools/wecom_agent/windows/Test-DesktopSession.ps1').read_text()
+        self.assertIn('WTSGetActiveConsoleSessionId', source)
+        self.assertIn('GetSystemMetrics(0x1000)', source)
+        self.assertIn('GetSystemMetrics(0x2001)', source)
+        self.assertIn('proves_wecom_warning_absent = $false', source)
+        self.assertIn("if ($session -eq 0)", source)
+        for mutation in ('SetCursorPos', 'SendInput', 'SendKeys', 'Stop-Process', 'Restart-Computer'):
+            self.assertNotIn(mutation, source)
+
 
 if __name__ == "__main__":
     unittest.main()
