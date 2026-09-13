@@ -65,6 +65,11 @@ approval loop was enabled.
 
 ## Data Path
 
+If Windows reports that it cannot open a browser, check the actual HTTP/HTTPS
+handler executable. Tiny11's removed Edge left broken `MSEdgeHTM` associations;
+see [the verified default-browser repair](tiny11-default-browser-repair-2026-09-13.md).
+Restoring Edge does not require restarting the VM or the chat clients.
+
 ```text
 native WeCom in Tiny11
   <-> interactive localhost-only PowerShell helper

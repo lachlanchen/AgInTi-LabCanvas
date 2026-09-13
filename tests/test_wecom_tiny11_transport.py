@@ -47,6 +47,22 @@ class Tiny11WeComTransportTests(unittest.TestCase):
         with self.assertRaisesRegex(transport.Tiny11TransportError, "token is missing"):
             transport.Tiny11Transport({"tiny11": {"ssh_host": "127.0.0.1"}})
 
+    def test_browser_repair_only_installs_missing_edge_with_explicit_switch(self):
+        source = (ROOT / 'agentic_tools/wecom_agent/windows/Repair-Tiny11Browser.ps1').read_text()
+        self.assertIn('if ($InstallMissingEdge -and', source)
+        self.assertIn("$_.prog_id -and $_.prog_id -ne 'MSEdgeHTM'", source)
+        self.assertIn('install --id Microsoft.Edge --exact --source winget --silent', source)
+        for forbidden in ('--ignore-security-hash', '--allow-reboot', 'Restart-Computer',
+                          'Stop-Process', 'Set-ItemProperty', 'Remove-ItemProperty'):
+            self.assertNotIn(forbidden, source)
+
+    def test_browser_probe_uses_shell_resolution_and_verifies_executable(self):
+        source = (ROOT / 'agentic_tools/wecom_agent/windows/Repair-Tiny11Browser.ps1').read_text()
+        self.assertIn('AssocQueryString(0x1000, 2, scheme, "open"', source)
+        self.assertIn("foreach ($scheme in @('http', 'https'))", source)
+        self.assertIn('Test-Path -LiteralPath $exe -PathType Leaf', source)
+        self.assertIn("$env:COMPUTERNAME -ne $ExpectedComputer", source)
+
     def test_stage_file_verifies_remote_size_and_sha256(self) -> None:
         client = transport.Tiny11Transport(config())
         with tempfile.TemporaryDirectory() as temporary:
