@@ -34,6 +34,30 @@ def config(**tiny11):
 
 
 class Tiny11WeComTransportTests(unittest.TestCase):
+    def test_web_runtime_repair_is_explicit_and_preserves_chat_clients(self):
+        source = (ROOT / 'agentic_tools/wecom_agent/windows/Repair-WeChatWebRuntime.ps1').read_text()
+        self.assertIn('[switch]$Apply', source)
+        self.assertIn('$Apply -and $renderers.Count -ge $MinimumRendererCount', source)
+        self.assertIn("$_.ParentProcessId -in $personal.ProcessId", source)
+        self.assertIn("\\Tencent\\xwechat\\xplugin\\plugins\\RadiumWMPF\\", source)
+        self.assertIn('$current.CreationDate -ne $root.CreationDate', source)
+        self.assertIn('taskkill.exe /PID $($root.ProcessId) /T /F', source)
+        self.assertIn("throw 'Old web runtime processes remain.'", source)
+        self.assertIn("throw 'Client process changed.'", source)
+        for forbidden in ('/IM', 'Restart-Computer', 'Remove-Item', 'Start-Process'):
+            self.assertNotIn(forbidden, source)
+
+    def test_native_player_focus_requires_app_path_session_and_live_ancestry(self):
+        source = (ROOT / 'agentic_tools/wecom_agent/windows/WeComBridge.ps1').read_text()
+        guard = source.split('function Test-NativeWebForeground {', 1)[1].split('function Focus-WeCom {', 1)[0]
+        self.assertIn("$child.Name -ne 'WeChatAppEx.exe'", guard)
+        self.assertIn('$child.ExecutablePath -notlike $pathPattern', guard)
+        self.assertIn('$parent.CreationDate -gt $child.CreationDate', guard)
+        self.assertIn('$parent.SessionId -ne $child.SessionId', guard)
+        self.assertIn('$parent.ProcessId -eq $Window.ProcessId', guard)
+        self.assertIn('$depth -lt 8', guard)
+        self.assertIn('-not (Test-NativeWebForeground $foregroundProcessId $window)', source)
+
     def test_each_request_scopes_one_app_with_legacy_default(self):
         self.assertEqual(transport.Tiny11Transport(config()).app, 'wecom')
         client = transport.Tiny11Transport(config(app='wechat'))

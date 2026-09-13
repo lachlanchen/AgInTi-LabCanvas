@@ -44,13 +44,22 @@ Verified during the 2026-09-13 evening cutover:
   historical replay was used. Only the current authorized scheduled outputs
   were recovered. Original Ubuntu/Android code, profiles and cursors remain.
 
-**Remaining media gap:** Windows-native attachment-cache export and automatic
-Channels copy-link recovery are not verified end to end. The exact Shares card
-opened and played in native Windows WeChat, but the original download was not
-recovered. The old worker incorrectly inspected Ubuntu's inactive QR screen.
-The worker now receives the selected Windows transport context, avoids legacy
-GUI probes, and distinguishes unavailable media tooling from a logged-out
-client. Do not report a successful download or transcribe a recording instead.
+**Media follow-up:** automatic Windows Channels Copy Link recovery, original
+download, transcription, and native video receipt verification were subsequently
+verified for one exact source. Two other cards exposed further history/menu/player
+recovery gaps under repair. See
+[Channels originals and retry reconciliation](windows-wechat-channels-originals-and-send-reconciliation.md)
+for the shared implementation and evidence requirements. General native
+attachment-cache export is a separate capability, not implied by this result.
+The inactive Ubuntu QR screen is never evidence about the Windows login.
+
+**2026-09-14 00:02 update:** the selected Windows WeChat client itself displayed
+"For account security, log in again." Native recovery was stopped. WeCom stayed
+logged in. The two unfinished Channels tasks remain unresolved; the successful
+video must not be resent. The exact cause of this account-security transition
+has not been established. Do not keep reopening cards or reset profiles to
+work around it. Revalidate the native adapter after authorized login before
+claiming all three source deliveries succeeded.
 
 Do not interpret a visible login, `helper.ok`, or a successful database copy as
 end-to-end delivery. Do not flip the private `enabled` flag based on this note.

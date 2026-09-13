@@ -10,6 +10,7 @@ import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest import mock
+from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'agentic_tools/wechat_gui_agent/scripts'))
@@ -19,6 +20,101 @@ snapshot = importlib.import_module('wechat_store_snapshot')
 
 
 class Tiny11WeChatTests(unittest.TestCase):
+    def test_scroll_to_tail_observes_a_stable_viewport(self):
+        client = object.__new__(bridge.Tiny11WeChatBridge)
+        client.history_surface = mock.Mock(return_value=(0, 0, 100, 100))
+        client.tiny11 = mock.Mock()
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'history.png'
+            Image.new('RGB', (100, 100), 'white').save(path)
+            client.capture_screen = mock.Mock(return_value=path)
+            with mock.patch.object(bridge.time, 'sleep'):
+                client.scroll_chat_to_bottom(mock.Mock())
+        self.assertEqual(client.tiny11.invoke.call_count, 2)
+        self.assertTrue(all(action['delta'] < 0 for action in client.tiny11.invoke.call_args.args[0]['actions']))
+
+    def test_native_remux_alias_recorded_without_resending(self):
+        client = object.__new__(bridge.Tiny11WeChatBridge)
+        client.state_db = Path('unused')
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'clip.mp4'; path.write_bytes(b'source')
+            client.validate_send_file = mock.Mock(return_value=path)
+            client.wait_receipt = mock.Mock(return_value={'verified': True, 'media_proof': {'rawmd5': 'a' * 32}})
+            client.ensure_chat = mock.Mock()
+            with mock.patch.object(bridge, 'delivery_done', return_value=False), \
+                    mock.patch.object(bridge, 'get_runtime', return_value='{}'), \
+                    mock.patch.object(bridge, 'remember_delivery'), mock.patch.object(bridge, 'record_event') as record:
+                client.send_files_locked('Shares', [path], task_id='same-task')
+            client.ensure_chat.assert_not_called()
+            identity = record.call_args.kwargs['metadata']['file_identity']
+            self.assertEqual(identity['md5_values'], ['a' * 32])
+            self.assertIn('sha256', identity)
+
+    def test_file_label_ellipsis_requires_exact_prefix_and_suffix(self):
+        self.assertTrue(bridge.composed_filename_matches('sample-episode-transcript.txt', 'sample..…script.txt'))
+        self.assertFalse(bridge.composed_filename_matches('different-episode-transcript.txt', 'sample..…script.txt'))
+        self.assertFalse(bridge.composed_filename_matches('sample-episode-transcript.mp4', 'sample..…script.txt'))
+
+    def test_single_label_ocr_after_block_ocr_failure(self):
+        client = object.__new__(bridge.Tiny11WeChatBridge)
+        client.runtime_dir = Path('/tmp')
+        client.content_left = mock.Mock(return_value=10)
+        client.crop = mock.Mock(return_value=Path('/tmp/label.png'))
+        client.ocr_scaled = mock.Mock(side_effect=['unreadable icon', 'sample..…script.txt'])
+        window = SimpleNamespace(y=0, height=1000)
+        self.assertTrue(client.composer_contains_filename(Path('screen.png'), window, 'sample-episode-transcript.txt', 'test'))
+        self.assertEqual(client.ocr_scaled.call_args.kwargs, {'scale': 2, 'psm': 7})
+
+    def test_file_chips_are_not_an_empty_draft_but_caret_is(self):
+        image = Image.new('RGB', (600, 75), 'white')
+        self.assertFalse(bridge.composer_has_visible_content(image))
+        image.paste((0, 180, 80), (300, 5, 302, 40))
+        self.assertFalse(bridge.composer_has_visible_content(image))
+        image.paste((120, 130, 150), (20, 20, 40, 40))
+        self.assertTrue(bridge.composer_has_visible_content(image))
+
+    def test_retried_owned_draft_is_not_pasted_again(self):
+        client = object.__new__(bridge.Tiny11WeChatBridge)
+        client.state_db = Path('unused')
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'clip.mp4'; path.write_bytes(b'source')
+            client.validate_send_file = mock.Mock(return_value=path)
+            client.ensure_chat = mock.Mock()
+            client.composer_is_empty = mock.Mock(return_value=False)
+            client.stage_send_file = mock.Mock(return_value=(path, path.parent))
+            client.wait_composed_file = mock.Mock(side_effect=RuntimeError('unverified draft'))
+            client.compose_staged_file_with_picker = mock.Mock()
+            client.composer_keys = mock.Mock()
+            client.prepare_native_receipt = mock.Mock()
+            with mock.patch.object(bridge, 'delivery_done', return_value=False), \
+                    mock.patch.object(bridge, 'get_runtime', side_effect=['', '{"started_at":1}']), \
+                    self.assertRaisesRegex(RuntimeError, 'unverified draft'):
+                client.send_files_locked('Shares', [path], task_id='same-task')
+            client.compose_staged_file_with_picker.assert_not_called()
+            client.composer_keys.assert_not_called()
+            client.prepare_native_receipt.assert_not_called()
+
+    def test_native_video_receipt_requires_matching_media_proof(self):
+        table = 'Msg_' + 'c' * 32
+        source = 'message/message_0.db:' + table
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder); file = root / 'original.mp4'; file.write_bytes(b'video')
+            path = root / 'message_999998.db'
+            row = {'source': source, 'table': table, 'local_id': 1, 'server_id': 88,
+                   'local_type': 43, 'sender': 'owner', 'create_time': 200, 'status': 2,
+                   'message_content': '<msg><videomsg rawmd5="abcdef" rawlength="5"/></msg>',
+                   'compress_content': None, 'WCDB_CT_message_content': 0}
+            bridge.ingest_export({'account_verified': True, 'tables': [table], 'rows': [row],
+                                  'high_watermarks': {source: 1}}, path)
+            receipt = {'table': table, 'sender': 'owner', 'started_at': 199, 'after': {path.name: 0}}
+            self.assertIsNone(bridge.find_receipt(receipt, file=file, db_path=path))
+            verify = mock.Mock(return_value=None)
+            self.assertIsNone(bridge.find_receipt(receipt, file=file, db_path=path, video_verifier=verify))
+            verify.return_value = {'method': 'verified_stream_hashes'}
+            proof = bridge.find_receipt(receipt, file=file, db_path=path, video_verifier=verify)
+            self.assertTrue(proof['verified'])
+            verify.assert_called_with(file, {'rawmd5': 'abcdef', 'rawlength': '5'}, 200)
+
     def test_real_sqlite_wal_keeps_overflow_pages_and_excludes_uncommitted_tail(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

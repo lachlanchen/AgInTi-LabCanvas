@@ -36,16 +36,91 @@ def load_worker():
 
 
 class WeChatTaskWorkerTests(unittest.TestCase):
+    def setUp(self):
+        # Unit tests must not adopt the workstation's live Windows transport.
+        patcher = mock.patch.dict(os.environ, {"WECHAT_TINY11_DISABLE": "1"})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_native_link_python_respects_explicit_environment(self):
+        worker = load_worker()
+        with mock.patch.dict(os.environ, {"WECHAT_SHIPINHAO_CAPTURE_PYTHON": "/chosen/python"}), \
+                mock.patch.object(worker.subprocess, "run") as run:
+            self.assertEqual(worker.shipinhao_native_link_python(), "/chosen/python")
+            run.assert_not_called()
+
+    def test_native_card_xml_recovered_from_exact_source_row(self):
+        worker = load_worker()
+        xml = '<finderFeed><objectId>123</objectId><desc>Exact episode</desc><nickname>Author</nickname></finderFeed>'
+        task = {'chat': 'Shares', 'request': 'Download this video',
+                'source': {'chat': 'Shares', 'message_db': 'native.db', 'local_id': 7},
+                'context': [{'message_db': 'native.db', 'local_id': 7, 'content': xml}]}
+        self.assertEqual(worker.shipinhao_profile_for_task(task)['object_id'], '123')
+        self.assertEqual(worker.shipinhao_source_text_for_task(task, {'object_id': '123'}), xml)
+        task['context'][0]['chat'] = 'Other'
+        self.assertEqual(worker.selected_shipinhao_context_text(task), '')
+
+    def test_followup_card_requires_unique_agent_selected_title_and_author(self):
+        worker = load_worker()
+        def xml(identity):
+            return f'<finderFeed><objectId>{identity}</objectId><desc>Exact episode</desc><nickname>Author</nickname></finderFeed>'
+        task = {'chat': 'Shares', 'request': 'Download this video',
+                'source': {'chat': 'Shares', 'message_db': 'native.db', 'local_id': 8},
+                'route_decision': {'route_kind': 'file_download_or_save', 'delivery_mode': 'chat_attachment',
+                                   'source_policy': 'current_plus_explicit_refs', 'reason': 'Download Author Exact episode'},
+                'context': [{'message_db': 'native.db', 'local_id': 7, 'content': xml('123')}]}
+        self.assertTrue(worker.should_prepare_shipinhao_media_transcript(task))
+        worker.enforce_current_task_route_safety(task)
+        self.assertEqual(task['route_decision']['reason'], 'Download Author Exact episode')
+        self.assertEqual(worker.shipinhao_profile_for_task(task)['object_id'], '123')
+        task['context'].append({'message_db': 'native.db', 'local_id': 6, 'content': xml('456')})
+        self.assertEqual(worker.selected_shipinhao_context_text(task), '')
+        task['context'].pop()
+        task['route_decision']['reason'] = 'Download the nearest video'
+        self.assertEqual(worker.selected_shipinhao_context_text(task), '')
+        task['context'][0]['message_db'] = 'another.db'
+        task['route_decision']['reason'] = 'Download Author Exact episode'
+        self.assertEqual(worker.selected_shipinhao_context_text(task), '')
+
+    def test_native_link_python_uses_existing_vision_environment(self):
+        worker = load_worker()
+        with mock.patch.dict(os.environ, {"WECHAT_SHIPINHAO_CAPTURE_PYTHON": ""}), \
+                mock.patch.object(worker.sys, "executable", "/lean/python"), \
+                mock.patch.object(worker.Path, "is_file", return_value=True), \
+                mock.patch.object(worker.subprocess, "run", side_effect=[
+                    subprocess.CompletedProcess([], 1), subprocess.CompletedProcess([], 0)]):
+            self.assertEqual(worker.shipinhao_native_link_python(), str(Path.home() / "miniconda3/bin/python"))
+
+    def test_followup_named_work_must_resolve_uniquely_with_author(self):
+        worker = load_worker()
+        xml = '<finderFeed><objectId>123</objectId><desc>Poem intro. 《洛神》 performance</desc><nickname>Author</nickname></finderFeed>'
+        task = {'chat': 'Shares', 'source': {'chat': 'Shares', 'message_db': 'native.db', 'local_id': 8},
+                'route_decision': {'source_policy': 'current_plus_explicit_refs', 'reason': 'Download Author 《洛神》'},
+                'context': [{'message_db': 'native.db', 'local_id': 7, 'content': xml}]}
+        self.assertEqual(worker.selected_shipinhao_context_text(task), xml)
+        task['context'].append({'message_db': 'native.db', 'local_id': 6, 'content': xml.replace('123', '456')})
+        self.assertEqual(worker.selected_shipinhao_context_text(task), '')
+        task['context'].pop()
+        task['route_decision']['reason'] = 'Download 《洛神》'
+        self.assertEqual(worker.selected_shipinhao_context_text(task), '')
+        task['reprocess_reason'] = 'Recover exact object 123'
+        self.assertEqual(worker.selected_shipinhao_context_text(task), xml)
+        task['reprocess_reason'] = 'Recover exact object 1234'
+        self.assertEqual(worker.selected_shipinhao_context_text(task), '')
+
     def test_windows_personal_media_never_probes_inactive_linux_or_phone(self):
         worker = load_worker()
         task = {"id": "native-test", "chat": "Shares"}
         with mock.patch("wechat_transport_selection.tiny11_enabled", return_value=True), \
+                mock.patch.object(worker, "run_automatic_shipinhao_tiny11_link", return_value={
+                    'status': 'share_link_recovered', 'transport': 'wechat_tiny11'}) as native, \
                 mock.patch.object(worker.subprocess, "run") as run:
             self.assertTrue(worker.uses_tiny11_wechat(task))
             self.assertFalse(worker.uses_tiny11_wechat({"chat": "wecom:group:labagent"}))
             result = worker.run_automatic_shipinhao_gui_capture(task, {"title": "exact card"})
             self.assertEqual(result["transport"], "wechat_tiny11")
-            self.assertEqual(result["failure_stage"], "share_link")
+            self.assertEqual(result["status"], "share_link_recovered")
+            native.assert_called_once_with(task, {"title": "exact card"})
             self.assertEqual(worker.materialize_exact_file_for_cache(task, Path("/tmp"), "report.pdf")["reason"],
                              "native_file_cache_transport_unavailable")
             run.assert_not_called()

@@ -65,6 +65,30 @@ function Get-WeComWindow {
         Sort-Object { $_.Width * $_.Height } -Descending | Select-Object -First 1
 }
 
+function Test-NativeWebForeground {
+    param([uint32]$ProcessId, $Window)
+    $child = Get-CimInstance Win32_Process -Filter "ProcessId=$ProcessId" -ErrorAction SilentlyContinue
+    $pathPattern = if ($script:TargetApp -eq 'wechat') {
+        '*\Tencent\xwechat\*\WeChatAppEx.exe'
+    } else { '*\Tencent\WXWork\*\WeChatAppEx.exe' }
+    if (-not $child -or $child.Name -ne 'WeChatAppEx.exe' -or
+        $child.ExecutablePath -notlike $pathPattern -or
+        $child.SessionId -ne [System.Diagnostics.Process]::GetCurrentProcess().SessionId) { return $false }
+    # Native player menus are separate top-level windows. Confirm their live
+    # process ancestry, not just a window title or a generic Chromium name.
+    $seen = @{}
+    for ($depth=0; $depth -lt 8; $depth++) {
+        if ($seen.ContainsKey($child.ProcessId)) { return $false }
+        $seen[$child.ProcessId] = $true
+        $parent = Get-CimInstance Win32_Process -Filter "ProcessId=$($child.ParentProcessId)" -ErrorAction SilentlyContinue
+        if (-not $parent -or $parent.CreationDate -gt $child.CreationDate -or
+            $parent.SessionId -ne $child.SessionId) { return $false }
+        if ($parent.ProcessId -eq $Window.ProcessId) { return $true }
+        $child = $parent
+    }
+    return $false
+}
+
 function Focus-WeCom {
     $window = Get-WeComWindow
     if ($null -eq $window) {
@@ -80,7 +104,8 @@ function Focus-WeCom {
     # polling nor an already-focused input sequence needs another focus event.
     if ($foreground -ne $window.Handle -and
         $foregroundProcessId -ne $window.ProcessId -and
-        [LabCanvasWin32]::GetAncestor($foreground, 3) -ne $window.Handle) {
+        [LabCanvasWin32]::GetAncestor($foreground, 3) -ne $window.Handle -and
+        -not (Test-NativeWebForeground $foregroundProcessId $window)) {
         [LabCanvasWin32]::SetForegroundWindow($window.Handle) | Out-Null
         Start-Sleep -Milliseconds 80
         if ([LabCanvasWin32]::GetForegroundWindow() -ne $window.Handle) {
@@ -297,11 +322,19 @@ try {
             $path = $context.Request.Url.AbsolutePath
             if ($context.Request.HttpMethod -eq "GET" -and $path -eq "/health") {
                 $window = Get-WeComWindow
+                $foreground = [LabCanvasWin32]::GetForegroundWindow()
+                [uint32]$foregroundProcessId = 0
+                [LabCanvasWin32]::GetWindowThreadProcessId($foreground, [ref]$foregroundProcessId) | Out-Null
                 $payload = [ordered]@{
                     ok = ($null -ne $window)
                     app = $script:TargetApp
                     session_id = [System.Diagnostics.Process]::GetCurrentProcess().SessionId
                     wecom_running = (@(Get-Process WXWork -ErrorAction SilentlyContinue).Count -gt 0)
+                    foreground = [ordered]@{
+                        handle = $foreground.ToInt64()
+                        process_id = $foregroundProcessId
+                        root_owner = [LabCanvasWin32]::GetAncestor($foreground, 3).ToInt64()
+                    }
                     window = if ($null -eq $window) { $null } else {
                         [ordered]@{
                             name = $window.Name

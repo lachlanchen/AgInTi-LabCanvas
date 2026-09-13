@@ -18,6 +18,8 @@ import sys
 import time
 import xml.etree.ElementTree as ET
 
+from PIL import Image
+
 ROOT = Path(__file__).resolve().parents[3]
 PRIVATE = ROOT / 'agentic_tools/wechat_gui_agent/.private'
 CONFIG = PRIVATE / 'wechat_tiny11.local.json'
@@ -59,11 +61,19 @@ def composed_filename_matches(filename, observed):
         end = line.find(suffix) if suffix else -1
         if end >= 0:
             line = line[:end + len(suffix)]
-        pieces = re.split(r'\.{3}|\u2026', line)
+        pieces = re.split(r'\.{2,}|[.\u2026]*\u2026[.\u2026]*', line)
         if (len(pieces) == 2 and min(map(len, pieces)) >= 4
                 and expected.startswith(pieces[0]) and expected.endswith(pieces[1])):
             return True
     return False
+
+
+def composer_has_visible_content(image):
+    # Ignore a thin insertion caret, but not attachment chips with no clipboard
+    # text. The caller crops inside the editor, excluding its toolbar/border.
+    image = image.convert('L')
+    return sum(sum(image.getpixel((x, y)) < 200 for y in range(image.height)) >= 3
+               for x in range(image.width)) >= 8
 
 
 def enabled():
@@ -100,6 +110,22 @@ class Tiny11WeChatBridge(Tiny11WeComGuiBridge):
     def history_surface(self, window):
         left, top, width, _ = self.conversation_surface(window)
         return left, top, width, window.y + window.height - 150 - top
+
+    def scroll_chat_to_bottom(self, window):
+        # Four wheel events do not reach the tail after browsing older cards.
+        # Observe a stable viewport instead of assuming a fixed scroll distance.
+        left, top, width, height = self.history_surface(window)
+        previous = None
+        for _ in range(8):
+            actions = [{'action': 'wheel', 'x': left + 100, 'y': top + height//2, 'delta': -720}
+                       for _ in range(24)]
+            self.tiny11.invoke({'action': 'macro', 'actions': actions})
+            time.sleep(.2)
+            with Image.open(self.capture_screen('history-tail-check')) as image:
+                signature = hashlib.sha256(image.crop((left, top, left + width - 20, top + height)).tobytes()).digest()
+            if signature == previous:
+                return
+            previous = signature
 
     def aliases(self, chat):
         target = self.config['targets'][chat]
@@ -214,7 +240,41 @@ class Tiny11WeChatBridge(Tiny11WeComGuiBridge):
         crop = self.crop(screenshot, (self.content_left(window) + 10,
                                      window.y + window.height - 165, 600, 130),
                          self.runtime_dir / ('wechat-file-composer-' + delivery_key + '.png'))
-        return composed_filename_matches(filename, self.ocr_scaled(crop, scale=4, psm=6))
+        if composed_filename_matches(filename, self.ocr_scaled(crop, scale=4, psm=6)):
+            return True
+        # File icons and toolbar glyphs confuse block OCR. Read the single
+        # chip label at a second scale while retaining exact prefix/suffix checks.
+        label = self.crop(crop, (20, 28, 162, 28),
+                          self.runtime_dir / ('wechat-file-label-' + delivery_key + '.png'))
+        return composed_filename_matches(filename, self.ocr_scaled(label, scale=2, psm=7))
+
+    def composer_is_empty(self, window, delivery_key):
+        if not super().composer_is_empty(window, delivery_key):
+            return False
+        screen = self.capture_screen('empty-composer-' + delivery_key)
+        left = self.content_left(window) + 18
+        with Image.open(screen) as image:
+            # The empty editor has a voice-input hint on its first line.
+            # Clipboard validation covers text; the lower chip/icon area
+            # detects non-text attachments without treating that hint as a draft.
+            content = image.crop((left, window.y + window.height - 120,
+                                  window.x + window.width - 24, window.y + window.height - 80))
+            return not composer_has_visible_content(content)
+
+    def wait_composed_file(self, window, path, key):
+        deadline = time.monotonic() + 8
+        while True:
+            composed = self.capture_screen('file-composed-' + key)
+            if self.composer_contains_filename(composed, window, path.name, key):
+                return
+            if time.monotonic() >= deadline:
+                raise RuntimeError('WECHAT_COMPOSE_VERIFY_FAILED: file not visible in native composer')
+            time.sleep(.3)
+
+    def verify_video_receipt(self, source, attrs, created_at):
+        from wechat_tiny11_media_receipt import verify_video
+        return verify_video(self.tiny11, source, attrs, created_at=created_at,
+                            cache_dir=self.runtime_dir / 'video-receipts')
 
     def prepare_native_receipt(self, chat):
         sync_once(self.config)
@@ -228,7 +288,8 @@ class Tiny11WeChatBridge(Tiny11WeComGuiBridge):
         deadline = time.monotonic() + timeout
         while True:
             sync_once(self.config)
-            proof = find_receipt(receipt, message=message, file=file)
+            proof = find_receipt(receipt, message=message, file=file,
+                                 video_verifier=self.verify_video_receipt)
             if proof or time.monotonic() >= deadline:
                 return proof
             time.sleep(1)
@@ -284,16 +345,18 @@ class Tiny11WeChatBridge(Tiny11WeComGuiBridge):
                     raise RuntimeError('WECHAT_GUI_SEND_UNCERTAIN: prior file submission requires reconciliation')
             else:
                 window = self.ensure_chat(chat, operation='file')
-                if not self.composer_is_empty(window, key):
+                draft = get_runtime(self.state_db, 'native-draft:' + key)
+                empty = self.composer_is_empty(window, key)
+                if not draft and not empty:
                     raise RuntimeError('WECHAT_COMPOSE_VERIFY_FAILED: refusing to overwrite an existing draft')
-                receipt = self.prepare_native_receipt(chat)
+                receipt = json.loads(draft) if draft else self.prepare_native_receipt(chat)
                 staged, folder = self.stage_send_file(path, key)
                 proof = None
                 try:
-                    self.compose_staged_file_with_picker(window, staged, folder, key)
-                    composed = self.capture_screen('file-composed-' + key)
-                    if not self.composer_contains_filename(composed, window, path.name, key):
-                        raise RuntimeError('WECHAT_COMPOSE_VERIFY_FAILED: file not visible in native composer')
+                    if empty:
+                        set_runtime(self.state_db, 'native-draft:' + key, json.dumps(receipt))
+                        self.compose_staged_file_with_picker(window, staged, folder, key)
+                    self.wait_composed_file(window, path, key)
                     set_runtime(self.state_db, 'native-intent:' + key, json.dumps(receipt))
                     record_event(chat_name=chat, action='file_send_intent', direction='outbound', status='sending',
                                  db_path=DEFAULT_DB, metadata={'file_identity': file_transport_identity(path), 'transport': 'wechat_tiny11'})
@@ -308,14 +371,18 @@ class Tiny11WeChatBridge(Tiny11WeComGuiBridge):
                     if proof:
                         self.cleanup_staged_file(staged_file=staged, staging_dir=folder)
             remember_delivery(self.state_db, key, chat, str(path))
+            identity = file_transport_identity(path)
+            native_md5 = (proof.get('media_proof') or {}).get('rawmd5')
+            if native_md5:
+                identity['md5_values'] = sorted(set(identity.get('md5_values', [])) | {native_md5})
             record_event(chat_name=chat, action='file_send', direction='outbound', status='sent',
-                         db_path=DEFAULT_DB, metadata={'file_identity': file_transport_identity(path),
+                         db_path=DEFAULT_DB, metadata={'file_identity': identity,
                                                        'transport': 'wechat_tiny11', 'receipt': proof})
             sent.append(str(path))
         return {'ok': True, 'sent_messages': [], 'sent_files': sent, 'errors': []}
 
 
-def find_receipt(receipt, *, message='', file=None, db_path=STORE):
+def find_receipt(receipt, *, message='', file=None, db_path=STORE, video_verifier=None):
     from wechat_direct_chatops import decode_content
 
     table = receipt['table']
@@ -325,17 +392,26 @@ def find_receipt(receipt, *, message='', file=None, db_path=STORE):
         if not conn.execute('SELECT 1 FROM sqlite_master WHERE name=?', (table,)).fetchone():
             return None
         rows = conn.execute(f'''SELECT m.local_id,m.server_id,m.local_type,m.message_content,
-                                       m.compress_content,m.WCDB_CT_message_content
+                                       m.compress_content,m.WCDB_CT_message_content,m.create_time
                                 FROM {table} m JOIN Name2Id n ON n.rowid=m.real_sender_id
                                 WHERE m.local_id>? AND m.create_time>=? AND n.user_name=?
                                 AND m.status IN (2,3) AND CAST(m.server_id AS TEXT) NOT IN ('','0')''',
                             (receipt['after'][db_path.name], receipt['started_at'], receipt['sender'])).fetchall()
-    for local_id, server_id, kind, content, compressed, content_type in rows:
+    for local_id, server_id, kind, content, compressed, content_type, created_at in rows:
         text = decode_content(content, compressed, content_type)
         prefix = receipt['sender'] + ':\n'
         if text.startswith(prefix):
             text = text[len(prefix):]
         matched = int(kind) == 1 and message and normalize_message(text) == normalize_message(message)
+        media_proof = None
+        if file and (int(kind) & 0xffffffff) == 43 and video_verifier:
+            try:
+                video = ET.fromstring(text[text.index('<'):]).find('.//videomsg')
+                if video is not None:
+                    media_proof = video_verifier(file, video.attrib, created_at)
+                    matched = bool(media_proof)
+            except (ValueError, ET.ParseError):
+                matched = False
         if file and (int(kind) & 0xffffffff) == 49:
             try:
                 xml = ET.fromstring(text[text.index('<'):])
@@ -344,7 +420,8 @@ def find_receipt(receipt, *, message='', file=None, db_path=STORE):
             except (ValueError, ET.ParseError):
                 matched = False
         if matched:
-            return {'verified': True, 'method': 'native_outbound_row', 'local_id': local_id, 'server_id': str(server_id)}
+            return {'verified': True, 'method': 'native_outbound_row', 'local_id': local_id,
+                    'server_id': str(server_id), **({'media_proof': media_proof} if media_proof else {})}
     return None
 
 

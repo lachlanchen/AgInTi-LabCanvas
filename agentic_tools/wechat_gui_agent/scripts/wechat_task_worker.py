@@ -63,6 +63,7 @@ from shipinhao_media_transcribe import (
     extract_sph_share_urls,
     extract_shipinhao_media_profile,
     load_verified_capture_manifest,
+    normalize_identity as normalize_shipinhao_identity,
 )
 from wechat_source_recovery import (
     extract_article_card_profile,
@@ -9441,7 +9442,7 @@ def enforce_current_task_route_safety(task: dict[str, Any]) -> bool:
                 "public_publish_allowed": False,
                 "external_action_allowed": True,
                 "source_policy": "current_plus_explicit_refs",
-                "reason": "exact Shipinhao source resolved from the current native card or share link; publication requires an explicit current action verb",
+                "reason": route.get("reason") or "exact Shipinhao source resolved from the current native card or share link; publication requires an explicit current action verb",
             }
         )
         task["route_decision"] = route
@@ -12716,13 +12717,53 @@ def native_shipinhao_profile(task: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def selected_shipinhao_context_text(task: dict[str, Any]) -> str:
+    """Recover XML for the source row or one card explicitly named by routing.
+
+    Windows previews can omit Finder XML from the rendered request. Do not
+    substitute the newest card or search arbitrary older chat history.
+    """
+    source = task.get("source") or {}
+    if source.get("chat") and source["chat"] != task.get("chat"):
+        return ""
+    route = task_route_decision(task)
+    selection_text = " ".join([*(str(route.get(k) or "") for k in ("reason", "ack")),
+                               str(task.get("reprocess_reason") or "")])
+    selection = normalize_shipinhao_identity(selection_text)
+    named_works = [normalize_shipinhao_identity(value)
+                   for value in re.findall(r"《([^》]+)》", selection_text)]
+    candidates = {}
+    for row in task.get("context") or []:
+        if not isinstance(row, dict) or (row.get("chat") and row["chat"] != task.get("chat")):
+            continue
+        if row.get("message_db") != source.get("message_db"):
+            continue
+        text = str(row.get("content") or "")
+        profile = extract_shipinhao_media_profile(text)
+        if not profile.get("object_id"):
+            continue
+        if row.get("local_id") == source.get("local_id"):
+            return text
+        if route.get("source_policy") != "current_plus_explicit_refs":
+            continue
+        if re.search(r"(?<!\d)" + re.escape(str(profile["object_id"])) + r"(?!\d)", selection_text):
+            candidates[profile["object_id"]] = text
+            continue
+        title = normalize_shipinhao_identity(profile.get("title"))
+        author = normalize_shipinhao_identity(profile.get("author"))
+        title_named = title and (title in selection or any(name and name in title for name in named_works))
+        if title_named and author and author in selection:
+            candidates[profile["object_id"]] = text
+    return next(iter(candidates.values())) if len(candidates) == 1 else ""
+
+
 def shipinhao_profile_for_task(task: dict[str, Any]) -> dict[str, Any]:
     # The whole current coalesced batch is authoritative. Its final row may be
     # a follow-up instruction while the exact Finder URL/card is in the row
     # immediately before it. Never expand this search into Recent history.
     focused = task_focus_text(task)
     current_batch = extract_current_request_for_policy(str(task.get("request") or ""))
-    for candidate in unique_strings([focused, current_batch]):
+    for candidate in unique_strings([focused, current_batch, selected_shipinhao_context_text(task)]):
         profile = extract_shipinhao_media_profile(candidate)
         if profile.get("detected") and profile.get("object_id"):
             return profile
@@ -12738,7 +12779,7 @@ def shipinhao_source_text_for_task(task: dict[str, Any], profile: dict[str, Any]
     recovery_text = source_recovery_task_text(task)
     source_text = focused or current_batch or recovery_text
     expected_object_id = str(profile.get("object_id") or "")
-    for candidate in unique_strings([current_batch, focused, recovery_text]):
+    for candidate in unique_strings([selected_shipinhao_context_text(task), current_batch, focused, recovery_text]):
         candidate_profile = extract_shipinhao_media_profile(candidate)
         if str(candidate_profile.get("object_id") or "") == expected_object_id:
             source_text = candidate
@@ -13571,8 +13612,7 @@ def native_shipinhao_capture_needed(result: dict[str, Any], profile: dict[str, A
 
 def run_automatic_shipinhao_gui_capture(task: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any]:
     if uses_tiny11_wechat(task):
-        return {"status": "failed", "transport": "wechat_tiny11",
-                "error_code": "native_share_link_transport_unavailable", "failure_stage": "share_link"}
+        return run_automatic_shipinhao_tiny11_link(task, profile)
     if android_native_source_task(task) and WECHAT_ANDROID_SOURCE_RECOVERY_SCRIPT.is_file():
         mobile = run_automatic_shipinhao_android_capture(task, profile)
         if str(mobile.get("status") or "") == "verified":
@@ -13632,6 +13672,54 @@ def run_automatic_shipinhao_gui_capture(task: dict[str, Any], profile: dict[str,
     if mobile_failure:
         payload["android_capture_fallback"] = mobile_failure
     return payload
+
+
+def run_automatic_shipinhao_tiny11_link(task: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any]:
+    output = worker_artifact_dir(task) / 'shipinhao_media_transcript' / 'windows-native-link'
+    output.mkdir(parents=True, exist_ok=True, mode=0o700)
+    source = output / 'exact-source-card.txt'
+    source.write_text(shipinhao_source_text_for_task(task, profile), encoding='utf-8')
+    source.chmod(0o600)
+    command = [shipinhao_native_link_python(),
+               str(ROOT / 'agentic_tools/wechat_gui_agent/scripts/shipinhao_tiny11_share_link.py'),
+               '--chat', str(task.get('chat') or ''), '--source-text-file', str(source),
+               '--output-dir', str(output)]
+    try:
+        proc = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, timeout=360, check=False)
+        result = json.loads(proc.stdout)
+        if not isinstance(result, dict):
+            raise ValueError('invalid_native_link_result')
+        result['returncode'] = proc.returncode
+        return result
+    except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+        return {'status': 'failed', 'transport': 'wechat_tiny11', 'failure_stage': 'share_link',
+                'error_code': type(exc).__name__}
+
+
+def shipinhao_native_link_python() -> str:
+    configured = os.environ.get("WECHAT_SHIPINHAO_CAPTURE_PYTHON", "").strip()
+    if configured:
+        return configured
+    # The service Python can be leaner than the existing GUI/media environment.
+    # Reuse an installed interpreter, never create an environment at task time.
+    candidates = unique_strings([
+        sys.executable,
+        str(Path.home() / "miniconda3/bin/python"),
+        shipinhao_transcribe_python(),
+    ])
+    for candidate in candidates:
+        if not Path(candidate).is_file():
+            continue
+        try:
+            probe = subprocess.run(
+                [candidate, "-c", "import cv2, PIL"],
+                capture_output=True, timeout=5, check=False,
+            )
+            if probe.returncode == 0:
+                return candidate
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+    return sys.executable
 
 
 def run_automatic_shipinhao_android_capture(
@@ -21657,7 +21745,9 @@ def build_worker_tool_context(task: dict[str, Any]) -> str:
             "are inactive fallbacks: do not inspect their login screens, ask for their QR codes, "
             "or operate them for this task. Use wechat_tiny11_bridge.py for exact chat navigation "
             "and delivery. Native Windows history, text and PDF delivery are enabled, but native "
-            "attachment-cache export and Channels copy-link recovery must be independently verified. "
+            "attachment-cache export must be independently verified. Channels cards use "
+            "shipinhao_tiny11_share_link.py to recover the native Copy Link URL without user input, "
+            "then the existing original-video resolver/downloader and GPU1 transcription routine. "
             "An unavailable media adapter is not evidence of logout or silent audio. Do not ask "
             "for login based on another transport's state. Use current exact links/cache and source "
             "recovery routines; if no verified original can be retrieved, report that limitation "
