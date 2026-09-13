@@ -4359,6 +4359,31 @@ class WeComAgentBridgeTests(unittest.TestCase):
 
         self.assertEqual(blocker, "device_environment_abnormal")
 
+    def test_gui_login_notification_is_not_a_qr_login_page(self) -> None:
+        module = load_gui_bridge()
+        bridge = object.__new__(module.WeComGuiBridge)
+        bridge.runtime_dir = Path('/tmp')
+        bridge.crop = mock.Mock(return_value=Path('/tmp/auth.png'))
+        bridge.ocr = mock.Mock(return_value=(
+            'WeCom Team\n登录操作通知\n你的企业微信扫码登录了以下设备\n'
+            '登录设备: Windows企业微信\n登录时间: 2026年09月13日11:49'
+        ))
+        self.assertEqual(bridge.detect_auth_blocker_from_screen(
+            module.Window('1', 0, 0, 1000, 752), Path('/tmp/screen.png')), '')
+
+    def test_gui_auth_blocker_retains_real_qr_login_instructions(self) -> None:
+        module = load_gui_bridge()
+        bridge = object.__new__(module.WeComGuiBridge)
+        bridge.runtime_dir = Path('/tmp')
+        bridge.crop = mock.Mock(return_value=Path('/tmp/auth.png'))
+        for text in ('请使用手机企业微信扫码登录', '二维码登录',
+                     '扫码登录企业微信', 'Scan the QR code to log in', 'Loading QR code'):
+            with self.subTest(text=text):
+                bridge.ocr = mock.Mock(return_value=text)
+                self.assertEqual(bridge.detect_auth_blocker_from_screen(
+                    module.Window('1', 0, 0, 1000, 752), Path('/tmp/screen.png')),
+                    'qr_login_required')
+
     def test_gui_auth_blocker_enters_durable_input_quarantine(self) -> None:
         module = load_gui_bridge()
         with tempfile.TemporaryDirectory() as temporary:

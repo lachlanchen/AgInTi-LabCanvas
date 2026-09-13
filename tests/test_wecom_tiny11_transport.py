@@ -122,6 +122,38 @@ class Tiny11WeComTransportTests(unittest.TestCase):
         self.assertNotIn('[System.Windows.Forms.SystemInformation]::VirtualScreen', source)
         self.assertIn('refusing cross-app capture', source)
 
+    def test_shared_desktop_capture_masks_everything_except_wecom(self) -> None:
+        source = (ROOT / 'agentic_tools/wecom_agent/windows/WeComBridge.ps1').read_text()
+        self.assertIn('$graphics.Clear([System.Drawing.Color]::Black)', source)
+        self.assertIn('[System.Drawing.Rectangle]::Intersect($bounds,$rect)', source)
+        self.assertIn('$region.IntersectsWith($otherRect)', source)
+        self.assertIn('No visible WeCom window; refusing desktop capture.', source)
+        self.assertNotIn('CopyFromScreen($bounds.Left, $bounds.Top, 0, 0, $bounds.Size)', source)
+
+    def test_shared_desktop_layout_is_explicit_and_keeps_dual_mode(self) -> None:
+        source = (ROOT / 'agentic_tools/wecom_agent/windows/Set-Tiny11AppScreens.ps1').read_text()
+        self.assertIn("[ValidateSet('Dual', 'Shared')][string]$Layout = 'Dual'", source)
+        self.assertIn("Processes = @('WXWork'); Side = 0", source)
+        self.assertIn("Processes = @('WeChat', 'Weixin'); Side = 1", source)
+        self.assertIn('$primary.Bounds.Width -lt 2000', source)
+        self.assertIn('if ($seen.ContainsKey($key)) { continue }', source)
+        self.assertNotIn('Stop-Process', source)
+        self.assertNotIn('Restart-Computer', source)
+
+    def test_window_placement_and_capture_exclude_wecom_shadow(self) -> None:
+        folder = ROOT / 'agentic_tools/wecom_agent/windows'
+        for name in ('WeComBridge.ps1', 'Set-Tiny11AppScreens.ps1'):
+            with self.subTest(name=name):
+                source = (folder / name).read_text()
+                self.assertIn("@('PerryShadowWnd', 'TitleBarWindow')", source)
+
+    def test_display_mode_probe_is_read_only_and_session_scoped(self) -> None:
+        source = (ROOT / 'agentic_tools/wecom_agent/windows/Get-DesktopModes.ps1').read_text()
+        self.assertIn('EnumDisplaySettings', source)
+        self.assertIn('SessionId -eq 0', source)
+        self.assertIn('Marshal]::SizeOf($mode)', source)
+        self.assertNotIn('ChangeDisplaySettings', source)
+
     def test_persistent_helpers_use_native_value_snapshots_not_uia_providers(self):
         folder = ROOT / 'agentic_tools/wecom_agent/windows'
         for name in ('WeComBridge.ps1', 'Set-Tiny11AppScreens.ps1'):

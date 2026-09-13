@@ -1087,15 +1087,23 @@ class WeComGuiBridge:
             (window.x, window.y, window.width, window.height),
             self.runtime_dir / "auth-state-check.png",
         )
-        observed = normalize_text(self.ocr(crop, psm=11)).casefold()
+        ocr_text = self.ocr(crop, psm=11)
+        observed = normalize_text(ocr_text).casefold()
         patterns = (
             ("device_environment_abnormal", ("deviceenvironmentisabnormal", "环境异常")),
             ("security_verification_required", ("securityverification", "安全验证")),
-            ("qr_login_required", ("scantheqrcode", "loadingqrcode", "扫码登录", "二维码登录")),
+            ("qr_login_required", ("scantheqrcode", "loadingqrcode")),
         )
         for label, needles in patterns:
             if any(normalize_text(needle).casefold() in observed for needle in needles):
                 return label
+        # A login instruction is not the same as a past-tense account notice
+        # inside chat history, e.g. "你的企业微信扫码登录了以下设备".
+        if any(
+            re.search(r"(?:扫码登录|二维码登录)(?:企业微信|微信)?[。！!：:]*$", normalize_text(line))
+            for line in ocr_text.splitlines()
+        ):
+            return "qr_login_required"
         return ""
 
     def open_from_visible_list(self, window: Window, chat: str) -> bool:

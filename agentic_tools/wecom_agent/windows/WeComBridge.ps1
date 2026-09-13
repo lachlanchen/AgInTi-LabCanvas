@@ -51,7 +51,8 @@ function Get-WeComWindow {
         return $null
     }
     return [LabCanvasDesktop.NativeWindows]::Snapshot([int[]]$processIds) |
-        Where-Object { $_.Width -ge 700 -and $_.Height -ge 500 } |
+        Where-Object { $_.Width -ge 700 -and $_.Height -ge 500 -and
+            $_.ClassName -notin @('PerryShadowWnd', 'TitleBarWindow') } |
         Sort-Object { $_.Width * $_.Height } -Descending | Select-Object -First 1
 }
 
@@ -171,19 +172,31 @@ function Write-JsonResponse {
 
 function Write-ScreenshotResponse {
     param($Response)
-    # WeCom owns the origin/primary monitor. Never include the adjacent WeChat
-    # screen in a research task's screenshots or OCR context.
+    # Preserve desktop coordinates while capturing only WeCom, including when
+    # both apps share one monitor. The owner's noVNC view remains unmasked.
     $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
     $window = Get-WeComWindow
     if ($bounds.X -ne 0 -or $bounds.Y -ne 0 -or ($null -ne $window -and
         -not $bounds.Contains([int]($window.X + $window.Width/2), [int]($window.Y + $window.Height/2)))) {
         throw 'WeCom is outside its origin monitor; refusing cross-app capture.'
     }
+    if ($null -eq $window) { throw 'No visible WeCom window; refusing desktop capture.' }
+    $rect = New-Object System.Drawing.Rectangle($window.X,$window.Y,$window.Width,$window.Height)
+    $region = [System.Drawing.Rectangle]::Intersect($bounds,$rect)
+    $wechatIds = @(Get-Process WeChat,Weixin -ErrorAction SilentlyContinue | ForEach-Object Id)
+    foreach ($other in [LabCanvasDesktop.NativeWindows]::Snapshot([int[]]$wechatIds)) {
+        $otherRect = New-Object System.Drawing.Rectangle($other.X,$other.Y,$other.Width,$other.Height)
+        if ($region.IntersectsWith($otherRect)) {
+            throw 'WeChat overlaps WeCom; refusing cross-app capture.'
+        }
+    }
     $bitmap = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
     $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
     $stream = New-Object System.IO.MemoryStream
     try {
-        $graphics.CopyFromScreen($bounds.Left, $bounds.Top, 0, 0, $bounds.Size)
+        $graphics.Clear([System.Drawing.Color]::Black)
+        $graphics.CopyFromScreen($region.Left, $region.Top,
+            ($region.Left-$bounds.Left), ($region.Top-$bounds.Top), $region.Size)
         $bitmap.Save($stream, [System.Drawing.Imaging.ImageFormat]::Png)
         $body = $stream.ToArray()
         $Response.StatusCode = 200

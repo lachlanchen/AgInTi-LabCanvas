@@ -149,6 +149,56 @@ configuration now disables the old `allow_verified_file_send_during_device_warni
 exception: there is no usable chat composer on that full-page challenge.
 Neither Windows app was explicitly restarted and no Android input was sent.
 
+### Shared Desktop Preparation, 2026-09-13
+
+The owner requested WeCom on the left and personal WeChat on the right of the
+same original console at `http://127.0.0.1:6143/`. Do not replace that endpoint
+with an RDP session, secretly redirect it to a different desktop, or enable
+Android polling as a layout workaround.
+
+The live QEMU standard VGA display currently exposes **only 1280x800** through
+Microsoft Basic Display Adapter. `Get-DesktopModes.ps1` reads the actual
+interactive-session modes with `EnumDisplaySettings`; changing browser zoom
+does not create more guest desktop pixels. A live placement test established
+that this WeCom build clamps its main window to **986 pixels minimum width**.
+Forcing a 636-pixel half produced overlap, not a usable shared layout. The test
+was undone, preserving the existing two-monitor app arrangement and logins.
+
+The reusable `Set-Tiny11AppScreens.ps1 -Layout Shared -Watch` mode is prepared,
+but **not enabled** on this narrow console. It requires at least 2000x800,
+places WeCom left and WeChat right with an eight-pixel gap, restores a new
+main window once, and preserves later manual positioning. `-Layout Dual`
+remains the current default and preserves the existing second-screen route.
+The existing `LabCanvas-App-Screens` scheduled task owns the single watcher.
+Do not create another watcher beside it. A wider boot display may require a
+Windows restart; obtain confirmation before risking the current app logins.
+
+Two real helper problems were found during this inspection:
+
+- WeCom exposes a larger `PerryShadowWnd` beside `WeWorkWindow`. Selecting the
+  largest window could manipulate or capture its shadow. Window selection and
+  placement now exclude the shadow and separate title-bar windows.
+- Normal account-login notifications contain past-tense text such as
+  `扫码登录了以下设备`. That is not a QR login prompt. Chinese QR detection now
+  checks instruction line endings; actual QR and device-verification screens
+  still pause automation. Existing quarantine expires through the normal
+  passive recovery path, never by deleting its state.
+
+The helper captures only the WeCom window rectangle, paints everything else
+black, and rejects overlap with a visible WeChat window. It keeps full primary
+image dimensions so existing OCR and click coordinates stay valid. The owner's
+noVNC console remains unmasked. These changes prepare a shared desktop without
+feeding one application's conversations to the other application's worker.
+
+Both native apps were visibly signed in during the layout inspection. This
+does **not** establish that personal Windows WeChat has a working LabCanvas
+receiver: the personal-chat monitors still use the Ubuntu transport. The
+shared layout and that transport migration are separate acceptance checks.
+
+Reference for the read-only display probe:
+[Microsoft EnumDisplaySettings](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-enumdisplaysettingsw)
+and [DEVMODEW](https://learn.microsoft.com/en-us/windows/win32/api/wingdi/ns-wingdi-devmodew).
+
 ## Acceptance Evidence
 
 The production route was tested with:
