@@ -4387,6 +4387,96 @@ class WeComAgentBridgeTests(unittest.TestCase):
             self.assertFalse(bridge._client_was_visible)
             self.assertEqual(bridge._active_scan_remaining, 0)
 
+    def test_gui_blocked_send_does_not_restart_auth_recovery(self) -> None:
+        module = load_gui_bridge()
+        with tempfile.TemporaryDirectory() as temporary:
+            state_db = Path(temporary) / "state.sqlite"
+            module.init_state_db(state_db)
+            bridge = object.__new__(module.WeComGuiBridge)
+            bridge.state_db = state_db
+            bridge.config = {
+                "auth_quarantine_seconds": 300,
+                "auth_recovery_stabilization_seconds": 60,
+            }
+            bridge.target_groups = ["LabAgent"]
+
+            with mock.patch.object(module.time, "time", return_value=100.0):
+                bridge.activate_auth_quarantine("qr_login_required")
+
+            for now in (399.0, 401.0, 430.0, 461.0):
+                with mock.patch.object(module.time, "time", return_value=now):
+                    recovery = bridge.advance_auth_recovery()
+                    if recovery is None:
+                        break
+                    with self.assertRaises(RuntimeError) as caught:
+                        bridge.require_gui_input_allowed()
+                    bridge.quarantine_from_exception(caught.exception)
+                    bridge.quarantine_from_send_result(
+                        {"errors": [{"error": str(caught.exception)}]}
+                    )
+                    self.assertEqual(
+                        module.get_runtime(state_db, "auth_blocker"), "qr_login_required"
+                    )
+                    self.assertEqual(
+                        module.runtime_float(state_db, "auth_quarantine_until_epoch"), 400.0
+                    )
+
+            self.assertIsNone(recovery)
+            self.assertEqual(module.get_runtime(state_db, "auth_blocker"), "")
+            self.assertEqual(bridge._active_scan_remaining, 1)
+
+    def test_gui_legacy_nested_cooldown_error_does_not_reset_stabilization(self) -> None:
+        module = load_gui_bridge()
+        with tempfile.TemporaryDirectory() as temporary:
+            state_db = Path(temporary) / "state.sqlite"
+            module.init_state_db(state_db)
+            bridge = object.__new__(module.WeComGuiBridge)
+            bridge.state_db = state_db
+            bridge.config = {}
+            bridge.target_groups = ["LabAgent"]
+            legacy = "qr_login_required (cooldown 0s) (cooldown 237s)"
+            module.set_runtime(state_db, "auth_blocker", legacy)
+            module.set_runtime(state_db, "auth_quarantine_until_epoch", "100")
+            module.set_runtime(state_db, "auth_recovery_candidate_since_epoch", "101")
+
+            with mock.patch.object(module.time, "time", return_value=120.0):
+                bridge.quarantine_from_exception(
+                    f"RuntimeError: WECOM_GUI_AUTH_REQUIRED: {legacy} (cooldown 0s)"
+                )
+            self.assertEqual(module.get_runtime(state_db, "auth_blocker"), legacy)
+            self.assertEqual(
+                module.get_runtime(state_db, "auth_recovery_candidate_since_epoch"), "101"
+            )
+            self.assertEqual(
+                module.get_runtime(state_db, "auth_quarantine_until_epoch"), "100"
+            )
+
+    def test_gui_fresh_observed_auth_challenge_renews_expired_quarantine(self) -> None:
+        module = load_gui_bridge()
+        with tempfile.TemporaryDirectory() as temporary:
+            state_db = Path(temporary) / "state.sqlite"
+            module.init_state_db(state_db)
+            bridge = object.__new__(module.WeComGuiBridge)
+            bridge.state_db = state_db
+            bridge.config = {"auth_quarantine_seconds": 300}
+            bridge.target_groups = ["LabAgent"]
+            module.set_runtime(state_db, "auth_quarantine_until_epoch", "100")
+            module.set_runtime(state_db, "auth_recovery_candidate_since_epoch", "101")
+
+            with mock.patch.object(module.time, "time", return_value=120.0):
+                bridge.quarantine_from_exception(
+                    RuntimeError("WECOM_GUI_AUTH_REQUIRED: security_verification_required")
+                )
+            self.assertEqual(
+                module.get_runtime(state_db, "auth_blocker"), "security_verification_required"
+            )
+            self.assertEqual(
+                module.runtime_float(state_db, "auth_quarantine_until_epoch"), 420.0
+            )
+            self.assertEqual(
+                module.get_runtime(state_db, "auth_recovery_candidate_since_epoch"), ""
+            )
+
     def test_gui_device_warning_file_fallback_is_opt_in(self) -> None:
         module = load_gui_bridge()
         bridge = object.__new__(module.WeComGuiBridge)

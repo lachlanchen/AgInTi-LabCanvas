@@ -413,10 +413,7 @@ class WeComGuiBridge:
             if isinstance(selected, str):
                 self.defer_failed_chat(selected)
                 set_runtime(self.state_db, f"chat_ready:{safe_slug(selected)}", "0")
-            if "WECOM_GUI_AUTH_REQUIRED:" in message:
-                self.activate_auth_quarantine(
-                    message.split("WECOM_GUI_AUTH_REQUIRED:", 1)[1].strip()[:200]
-                )
+            self.quarantine_from_exception(exc)
             return {"ok": False, "processed": 0, "error": message}
         finally:
             self._poll_lock.release()
@@ -778,7 +775,12 @@ class WeComGuiBridge:
         message = str(error)
         marker = "WECOM_GUI_AUTH_REQUIRED:"
         if marker in message:
-            self.activate_auth_quarantine(message.split(marker, 1)[1].strip()[:200])
+            blocker = message.split(marker, 1)[1].strip()
+            # A rejected send reports an existing pause, not a new observed
+            # challenge. Re-quarantining it would prevent login recovery.
+            if re.search(r"\(cooldown \d+s\)$", blocker):
+                return
+            self.activate_auth_quarantine(blocker[:200])
 
     def list_chats(self) -> dict[str, Any]:
         return {

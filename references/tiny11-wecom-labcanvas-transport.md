@@ -103,6 +103,43 @@ A send that fails before the composer is verified may be retried with the same
 task ID. A send that becomes uncertain after the Send action must first be
 reconciled from before/after history evidence; never blindly resend it.
 
+### Login Cooldown Recovery
+
+On 2026-09-13, successful login did not release the relay because rejected
+sends were being mistaken for new authentication challenges. The stored blocker
+accumulated repeated `(cooldown Ns)` suffixes, and retries restarted the cooldown
+or reset its stabilization timer. This was a bridge bug, not evidence that the
+logged-in client needed another login.
+
+`quarantine_from_exception` now distinguishes an existing-pause error from a
+fresh GUI-observed challenge. Both polling and sending use that same handler.
+Retrying a paused send preserves the original deadline and recovery timer.
+Fresh visible QR/security challenges still activate quarantine. The passive
+screen check, cooldown duration, stabilization interval, exact-chat checks,
+delivery ledger, and message behavior are unchanged.
+
+Deploy by restarting only the Python GUI relay with `wecom gui restart`.
+Do not restart the Windows apps, reset the private database, force-clear the
+security state, enable Android polling, or mass-replay deferred work. Observe
+the original deadline expiring, the clear-screen stabilization completing, and
+the exact target chat becoming ready. A healthy helper alone is not proof of
+inbound reception or artifact delivery.
+
+Regression coverage in `tests/test_wecom_agent_bridge.py` checks repeated
+exception/result retries across expiry, legacy nested cooldown errors, and
+fresh observed challenges. Run:
+
+```bash
+python -m unittest discover -s tests -p test_wecom_agent_bridge.py
+python -m unittest discover -s tests -p test_wecom_tiny11_transport.py
+npm test
+```
+
+Personal Windows WeChat login remains separate from this WeCom recovery.
+The existing personal-chat monitors still use the Ubuntu client/database; do
+not report those monitors healthy merely because Windows WeChat is logged in.
+Do not switch accounts or replace that transport as an incidental auth fix.
+
 ## Acceptance Evidence
 
 The production route was tested with:
