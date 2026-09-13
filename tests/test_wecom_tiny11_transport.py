@@ -34,6 +34,23 @@ def config(**tiny11):
 
 
 class Tiny11WeComTransportTests(unittest.TestCase):
+    def test_native_history_includes_tail_and_composer_excludes_history(self):
+        bridge = object.__new__(gui.Tiny11WeComGuiBridge)
+        bridge.runtime_dir = Path("/tmp/test-wecom-runtime")
+        bridge.crop = mock.Mock(return_value=Path("/tmp/crop.png"))
+        bridge.ocr_scaled = mock.Mock(return_value="")
+        for height in (800, 1392):
+            with self.subTest(height=height):
+                window = base.Window("1", 30, 50, 1276, height)
+                left, top, width, span = bridge.history_surface(window)
+                self.assertEqual(top + span, window.y + height - 160)
+                bridge.read_chat_history_text(Path("screen.png"), window, "tail")
+                self.assertEqual(bridge.crop.call_args.args[1], (left, top, width, span))
+                bridge.composer_contains_filename(Path("screen.png"), window, "report.pdf", "key")
+                composer = bridge.crop.call_args.args[1]
+                self.assertGreater(composer[1], top + span)
+                self.assertLessEqual(composer[1] + composer[3], window.y + height)
+
     def test_transport_is_localhost_only(self) -> None:
         client = transport.Tiny11Transport(config())
 

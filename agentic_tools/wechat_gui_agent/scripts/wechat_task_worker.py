@@ -119,6 +119,7 @@ CLAIMED_STATUS = "in_progress"
 SEND_DEFERRED_LOCKED_STATUS = "send_deferred_locked"
 SEND_DEFERRED_ARTIFACT_STATUS = "send_deferred_artifact"
 SEND_RETRYING_STATUS = "send_retrying"
+SEND_UNCERTAIN_STATUS = "send_uncertain"
 GENERATED_VIDEO_WAITING_STATUS = "generation_waiting"
 GENERATED_VIDEO_STALE_PAUSED_STATUS = "generation_stale_paused"
 GENERATED_VIDEO_POSTSTAGE_PENDING_STATUS = "generation_poststage_pending"
@@ -370,6 +371,7 @@ def main() -> int:
         help="For a reprocessed research task, deliver completed exact-task artifacts without another agent turn.",
     )
     parser.add_argument("--flush-deferred", action="store_true", help="Try one deferred locked send without running new worker tasks.")
+    parser.add_argument("--hold-uncertain-sends", action="store_true", help="Preserve ambiguous post-Send tasks for review without sending anything.")
     parser.add_argument("--repair-missing-artifacts", action="store_true", help="Requeue completed tasks whose required media files were not sent.")
     parser.add_argument(
         "--recover-expired-transport",
@@ -404,6 +406,10 @@ def main() -> int:
         }
         append_jsonl(args.queue, task)
         print(json.dumps(task, ensure_ascii=False, indent=2))
+        return 0
+
+    if args.hold_uncertain_sends:
+        print(json.dumps(hold_uncertain_sends(args.queue), ensure_ascii=False))
         return 0
 
     if args.resend:
@@ -1878,6 +1884,10 @@ def refresh_existing_video_publish_deferred_result(task: dict[str, Any], result:
 
 
 def apply_send_outcome(task: dict[str, Any], result: dict[str, Any], errors: list[str]) -> None:
+    if send_errors_indicate_gui_postcommit_uncertain(errors):
+        task["send_errors"] = errors
+        hold_uncertain_delivery(task)
+        return
     if grant_result_is_nonterminal(task, result):
         attempts = int(task.get("grant_validation_attempts") or 0) + 1
         maximum = max(1, int(os.environ.get("WECHAT_WORKER_GRANT_VALIDATION_RETRIES", "3")))
@@ -3836,6 +3846,8 @@ def send_result_once_wecom(result: dict[str, Any], target_chat: str, task: dict[
     ledger = query_wecom_delivery_status(endpoint, token, status_payload, task)
     if wecom_delivery_components_complete(task, files_to_send, combined_message, ledger):
         return
+    if task_delivery_is_uncertain(task) or (ledger and ledger.get("uncertain_files")):
+        raise RuntimeError("WECOM_GUI_SEND_UNCERTAIN: verification required; refusing to resend")
     message_to_send = combined_message
     if ledger and combined_message in (ledger.get("sent_messages") or []):
         message_to_send = ""
@@ -8007,6 +8019,10 @@ def claim_next_deferred_send(path: Path, chat_filter: str | None = None) -> dict
             if chat_filter and str(task.get("chat") or "") != chat_filter:
                 continue
             status = str(task.get("status") or "")
+            if status in {"send_failed", SEND_DEFERRED_LOCKED_STATUS, SEND_DEFERRED_ARTIFACT_STATUS, SEND_RETRYING_STATUS} and task_delivery_is_uncertain(task):
+                hold_uncertain_delivery(task)
+                changed = True
+                continue
             if status in {"send_failed", SEND_DEFERRED_LOCKED_STATUS, SEND_DEFERRED_ARTIFACT_STATUS, SEND_RETRYING_STATUS}:
                 superseding = newer_task_superseding_deferred_confirmation(task, tasks)
                 if superseding is not None:
@@ -8081,6 +8097,43 @@ def claim_next_deferred_send(path: Path, chat_filter: str | None = None) -> dict
         if changed:
             write_tasks(path, tasks)
         return None
+
+
+def task_delivery_is_uncertain(task: dict[str, Any]) -> bool:
+    return (
+        task.get("status") == SEND_UNCERTAIN_STATUS
+        or task.get("send_deferred_reason") == "gui_postcommit_uncertain"
+        or send_errors_indicate_gui_postcommit_uncertain(task.get("send_errors") or [])
+    )
+
+
+def hold_uncertain_sends(path: Path) -> dict[str, Any]:
+    held: list[str] = []
+    lock_path = path.with_suffix(path.suffix + ".lock")
+    with lock_path.open("a", encoding="utf-8") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        tasks = read_tasks(path)
+        for task in tasks:
+            if task.get("status") not in {
+                "send_failed", "send_expired", SEND_DEFERRED_LOCKED_STATUS,
+                SEND_DEFERRED_ARTIFACT_STATUS, SEND_RETRYING_STATUS,
+            } or not task_delivery_is_uncertain(task):
+                continue
+            hold_uncertain_delivery(task)
+            task["execution_generation"] = task_execution_generation(task) + 1
+            held.append(str(task.get("id") or ""))
+        if held:
+            write_tasks(path, tasks)
+    return {"ok": True, "held_count": len(held), "held_task_ids": held, "sent": False}
+
+
+def hold_uncertain_delivery(task: dict[str, Any]) -> None:
+    """A missing receipt after Send permits reconciliation, not another write."""
+    task["status"] = SEND_UNCERTAIN_STATUS
+    task["send_deferred_reason"] = "gui_postcommit_uncertain"
+    task.setdefault("send_review_required_at", datetime.now().isoformat(timespec="seconds"))
+    task.pop("send_retry_claimed_at", None)
+    compact_send_failure_diagnostics(task)
 
 
 def compact_send_failure_diagnostics(task: dict[str, Any]) -> bool:
@@ -8360,6 +8413,10 @@ def recover_recent_expired_transport_deliveries(
                 continue
             if str(task.get("status") or "") != "send_expired":
                 continue
+            if task_delivery_is_uncertain(task):
+                hold_uncertain_delivery(task)
+                skipped.append({"id": task.get("id"), "reason": "postcommit_verification_required"})
+                continue
             if task_transport_name(task) != normalized_transport:
                 continue
             if str(task.get("expired_from_status") or "") not in {
@@ -8619,6 +8676,8 @@ def stale_send_retrying(task: dict[str, Any], now: datetime) -> bool:
 
 
 def failed_send_retryable(task: dict[str, Any], now: datetime) -> bool:
+    if task_delivery_is_uncertain(task):
+        return False
     errors = [str(item) for item in task.get("send_errors") or []]
     if not send_errors_indicate_deferable(errors) and not verified_publish_send_completion(task):
         return False

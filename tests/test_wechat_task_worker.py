@@ -14966,6 +14966,47 @@ stderr: noisy internal trace
             worker.send_deferred_reason_from_errors(errors),
             "gui_postcommit_uncertain",
         )
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            task = {"id": "report", "chat": "wecom:test", "daily_research": {},
+                    "result": {"message": "Report", "files": ["report.pdf"]}}
+            worker.apply_send_outcome(task, task["result"], errors)
+            self.assertEqual(task["status"], worker.SEND_UNCERTAIN_STATUS)
+            worker.write_tasks(queue, [task])
+            for _ in range(3):
+                self.assertIsNone(worker.claim_next_deferred_send(queue))
+            self.assertEqual(worker.read_tasks(queue)[0]["result"], task["result"])
+
+    def test_legacy_postcommit_retries_are_held_even_without_daily_deadline(self) -> None:
+        worker = load_worker()
+        for status in ("send_failed", "send_deferred_locked", "send_deferred_artifact", "send_retrying"):
+            with self.subTest(status=status), tempfile.TemporaryDirectory() as tmp:
+                queue = Path(tmp) / "queue.jsonl"
+                task = {"id": "daily", "status": status, "daily_research": {},
+                        "send_retry_count": 105, "send_deferred_reason": "gui_postcommit_uncertain",
+                        "result": {"message": "Report", "files": ["report.pdf"]}}
+                worker.write_tasks(queue, [task])
+                self.assertIsNone(worker.claim_next_deferred_send(queue))
+                held = worker.read_tasks(queue)[0]
+                self.assertEqual(held["status"], worker.SEND_UNCERTAIN_STATUS)
+                self.assertEqual(held["send_retry_count"], 105)
+                self.assertFalse(worker.failed_send_retryable(held, datetime.now()))
+
+    def test_uncertain_hold_is_idempotent_and_fences_inflight_worker(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            task = {"id": "daily", "status": "send_retrying", "execution_generation": 4,
+                    "send_errors": ["WECOM_GUI_SEND_UNCERTAIN: history check failed"],
+                    "result": {"files": ["report.pdf"]}}
+            worker.write_tasks(queue, [task, {"id": "human-request", "status": "pending"}])
+            self.assertEqual(worker.hold_uncertain_sends(queue)["held_count"], 1)
+            self.assertEqual(worker.hold_uncertain_sends(queue)["held_count"], 0)
+            self.assertFalse(worker.rewrite_task(queue, {**task, "status": "send_deferred_locked"}))
+            rows = worker.read_tasks(queue)
+            self.assertEqual(rows[0]["status"], worker.SEND_UNCERTAIN_STATUS)
+            self.assertEqual(rows[0]["result"], task["result"])
+            self.assertEqual(rows[1]["status"], "pending")
 
     def test_wechat_native_sender_failures_retain_reply_without_inline_retry(self) -> None:
         worker = load_worker()

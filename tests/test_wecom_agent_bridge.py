@@ -3938,6 +3938,60 @@ class WeComAgentBridgeTests(unittest.TestCase):
         bridge.composer_keys.assert_called_once_with(window, "alt+s")
         remember.assert_called_once()
 
+    def test_gui_uncertain_file_is_never_replayed_after_restart_or_rename(self) -> None:
+        module = load_gui_bridge()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "report.pdf"
+            source.write_bytes(b"report bytes")
+            state_db = root / "state.sqlite"
+            module.init_state_db(state_db)
+            window = module.Window("1", 0, 0, 1000, 800)
+            bridge = object.__new__(module.WeComGuiBridge)
+            bridge.state_db = state_db
+            bridge.pause = 0
+            bridge.target_groups = ["LabAgent"]
+            bridge.validate_send_file = mock.Mock(side_effect=lambda path: path)
+            bridge.pace_gui_send = mock.Mock()
+            bridge.ensure_chat = mock.Mock(return_value=window)
+            bridge.find_window = mock.Mock(return_value=window)
+            bridge.capture_screen = mock.Mock(return_value=root / "screen.png")
+            bridge.read_chat_history_text = mock.Mock(return_value="")
+            bridge.composer_contains_filename = mock.Mock(return_value=True)
+            bridge.stage_send_file = mock.Mock(return_value=(source, root / "staging"))
+            bridge.cleanup_staged_file = mock.Mock()
+            bridge.wait_for_file_in_history = mock.Mock(side_effect=RuntimeError(
+                "WECOM_GUI_SEND_UNCERTAIN: truncated history"))
+
+            def commit(*args):
+                self.assertTrue(module.file_send_attempted(
+                    state_db, module.file_delivery_key("LabAgent", "task", source), "LabAgent"))
+
+            bridge.composer_keys = mock.Mock(side_effect=commit)
+            first = bridge.send_files_locked("LabAgent", [source], task_id="task")
+            self.assertFalse(first["ok"])
+            bridge.composer_keys.assert_called_once()
+            renamed = root / "renamed.pdf"
+            renamed.write_bytes(source.read_bytes())
+            resumed = object.__new__(module.WeComGuiBridge)
+            resumed.state_db = state_db
+            resumed.target_groups = ["LabAgent"]
+            resumed.validate_send_file = mock.Mock(side_effect=lambda path: path)
+            resumed.pace_gui_send = mock.Mock()
+            resumed.composer_keys = mock.Mock()
+            for _ in range(3):
+                result = resumed.send_files_locked("LabAgent", [renamed], task_id="task")
+                self.assertIn("SEND_UNCERTAIN", result["errors"][0]["error"])
+            resumed.pace_gui_send.assert_not_called()
+            resumed.composer_keys.assert_not_called()
+            status = resumed.delivery_status("LabAgent", "", [renamed], task_id="task")
+            self.assertFalse(status["complete"])
+            self.assertEqual(status["uncertain_files"], [str(renamed)])
+            self.assertNotEqual(module.file_delivery_key("Other", "task", source),
+                                module.file_delivery_key("LabAgent", "task", source))
+            self.assertNotEqual(module.file_delivery_key("LabAgent", "new-task", source),
+                                module.file_delivery_key("LabAgent", "task", source))
+
     def test_gui_delivery_status_reconciles_exact_text_and_file_components(self) -> None:
         module = load_gui_bridge()
         with tempfile.TemporaryDirectory() as temporary:

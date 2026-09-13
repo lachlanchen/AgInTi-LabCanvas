@@ -126,15 +126,22 @@ class Tiny11WeComGuiBridge(WeComGuiBridge):
         right = max(left + 300, window.x + window.width - 170)
         return left, window.y + 78, right - left, max(300, window.height - 88)
 
+    def history_surface(self, window: Window) -> tuple[int, int, int, int]:
+        left, top, width, _height = self.conversation_surface(window)
+        # Native WeCom at the dedicated console's 100% DPI has a fixed-height
+        # composer/footer. A percentage crop loses the newest rows in tall windows.
+        bottom = window.y + window.height - 160
+        return left, top, width, max(180, bottom - top)
+
     def extract_inbound_records(
         self,
         screenshot: Path,
         window: Window,
         chat: str,
     ) -> tuple[list[dict[str, str]], Path]:
-        surface_left, surface_top, surface_width, surface_height = self.conversation_surface(window)
+        surface_left, surface_top, surface_width, surface_height = self.history_surface(window)
         top = surface_top + 8
-        height = max(180, int(surface_height * 0.70))
+        height = max(180, surface_height - 8)
         crop_path = self.runtime_dir / f"messages-{safe_label(chat)}.png"
         crop = self.crop(
             screenshot,
@@ -154,24 +161,23 @@ class Tiny11WeComGuiBridge(WeComGuiBridge):
         filename: str,
         delivery_key: str,
     ) -> bool:
-        left, _top, width, height = self.conversation_surface(window)
+        left, _top, width, _height = self.conversation_surface(window)
         crop = self.crop(
             screenshot,
             (
                 left,
-                window.y + int(window.height * 0.72),
+                window.y + window.height - 124,
                 width,
-                max(100, int(window.height * 0.26)),
+                90,
             ),
             self.runtime_dir / f"file-composer-{delivery_key}.png",
         )
         return filename_matches_ocr(filename, self.ocr_scaled(crop, scale=3, psm=11))
 
     def read_chat_history_text(self, screenshot: Path, window: Window, label: str) -> str:
-        left, top, width, height = self.conversation_surface(window)
         crop = self.crop(
             screenshot,
-            (left, top, width, max(180, int(height * 0.72))),
+            self.history_surface(window),
             self.runtime_dir / f"file-history-{safe_label(label)}.png",
         )
         return self.ocr_scaled(crop, scale=3, psm=11)

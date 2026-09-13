@@ -833,14 +833,15 @@ class WeComGuiBridge:
 
         sent_files: list[str] = []
         pending_files: list[str] = []
+        uncertain_files: list[str] = []
         for index, source in enumerate(paths):
             path = self.validate_send_file(source)
-            stat = path.stat()
-            delivery_key = short_hash(
-                f"{chat}:{task_id}:file:{index}:{path}:{stat.st_size}:{stat.st_mtime_ns}"
-            )
-            target = sent_files if delivery_done(self.state_db, delivery_key, chat) else pending_files
+            delivery_key = file_delivery_key(chat, task_id, path)
+            verified = self.file_delivery_verified(chat, task_id, index, path, delivery_key)
+            target = sent_files if verified else pending_files
             target.append(str(path))
+            if not verified and file_send_attempted(self.state_db, delivery_key, chat):
+                uncertain_files.append(str(path))
 
         complete = not pending_messages and not pending_files
         return {
@@ -853,7 +854,21 @@ class WeComGuiBridge:
             "sent_files": sent_files,
             "sent_file_count": len(sent_files),
             "pending_files": pending_files,
+            "uncertain_files": uncertain_files,
         }
+
+    def file_delivery_verified(
+        self, chat: str, task_id: str, index: int, path: Path, key: str,
+    ) -> bool:
+        if delivery_done(self.state_db, key, chat):
+            return True
+        # Retain receipts made before content-based keys were introduced.
+        stat = path.stat()
+        legacy_key = short_hash(f"{chat}:{task_id}:file:{index}:{path}:{stat.st_size}:{stat.st_mtime_ns}")
+        if delivery_done(self.state_db, legacy_key, chat):
+            remember_delivery(self.state_db, key, chat, str(path))
+            return True
+        return False
 
     def send_text_locked(self, chat: str, text: str, *, task_id: str) -> dict[str, Any]:
         chunks = chunk_text(text, 1800)
@@ -923,11 +938,12 @@ class WeComGuiBridge:
             staged: Path | None = None
             try:
                 path = self.validate_send_file(source)
-                stat = path.stat()
-                delivery_key = short_hash(f"{chat}:{task_id}:file:{index}:{path}:{stat.st_size}:{stat.st_mtime_ns}")
-                if delivery_done(self.state_db, delivery_key, chat):
+                delivery_key = file_delivery_key(chat, task_id, path)
+                if self.file_delivery_verified(chat, task_id, index, path, delivery_key):
                     sent_files.append(str(path))
                     continue
+                if file_send_attempted(self.state_db, delivery_key, chat):
+                    raise RuntimeError("WECOM_GUI_SEND_UNCERTAIN: prior Send requires verification; no resend")
                 self.pace_gui_send("file")
                 self.ensure_chat(chat, operation="file")
                 window = self.find_window()
@@ -956,6 +972,9 @@ class WeComGuiBridge:
                         raise RuntimeError(
                             "WECOM_GUI_COMPOSE_UNVERIFIED: WeCom did not compose the exact staged artifact"
                         )
+                # Commit intent before the irreversible input. A timeout, OCR
+                # miss, or process death after this point must never replay it.
+                remember_file_send_attempt(self.state_db, delivery_key, chat, path)
                 self.composer_keys(window, "alt+s")
                 sent_screen = self.wait_for_file_in_history(
                     window,
@@ -2417,6 +2436,11 @@ def init_state_db(path: Path) -> None:
             "ON inbound_messages(chat_name, sequence)"
         )
         conn.execute("CREATE TABLE IF NOT EXISTS runtime (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS file_send_attempts ("
+            "delivery_key TEXT PRIMARY KEY, chat_name TEXT NOT NULL, "
+            "source_path TEXT NOT NULL, attempted_at TEXT NOT NULL)"
+        )
 
 
 def record_inbound_messages(
@@ -2513,6 +2537,29 @@ def save_snapshot(path: Path, chat: str, messages: list[str], image_hash: str) -
         conn.execute(
             "INSERT OR REPLACE INTO snapshots(chat_name, inbound_json, image_hash, updated_at) VALUES (?, ?, ?, ?)",
             (chat, json.dumps(messages, ensure_ascii=False), image_hash, now_iso()),
+        )
+
+
+def file_delivery_key(chat: str, task_id: str, path: Path) -> str:
+    # A rename, re-stage, list-index change, or mtime change is not a new send.
+    return "file-v2-" + hashlib.sha256(
+        json.dumps([chat, task_id, sha256_file(path)], ensure_ascii=False).encode("utf-8")
+    ).hexdigest()[:32]
+
+
+def file_send_attempted(path: Path, key: str, chat: str) -> bool:
+    with sqlite3.connect(path) as conn:
+        return conn.execute(
+            "SELECT 1 FROM file_send_attempts WHERE delivery_key = ? AND chat_name = ?",
+            (key, chat),
+        ).fetchone() is not None
+
+
+def remember_file_send_attempt(path: Path, key: str, chat: str, source: Path) -> None:
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            "INSERT INTO file_send_attempts(delivery_key, chat_name, source_path, attempted_at) VALUES (?, ?, ?, ?)",
+            (key, chat, str(source), now_iso()),
         )
 
 

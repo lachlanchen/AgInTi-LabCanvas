@@ -65,6 +65,10 @@ approval loop was enabled.
 
 ## Data Path
 
+Repeated PDFs after reconnect are not normal catch-up. See the
+[file retry loop repair](wecom-file-retry-loop-repair-2026-09-13.md) for durable
+pre-Send attempts, non-retryable uncertainty, and native history crop checks.
+
 If Windows reports that it cannot open a browser, check the actual HTTP/HTTPS
 handler executable. Tiny11's removed Edge left broken `MSEdgeHTM` associations;
 see [the verified default-browser repair](tiny11-default-browser-repair-2026-09-13.md).
