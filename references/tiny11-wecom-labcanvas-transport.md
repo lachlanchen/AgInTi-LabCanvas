@@ -140,6 +140,15 @@ The existing personal-chat monitors still use the Ubuntu client/database; do
 not report those monitors healthy merely because Windows WeChat is logged in.
 Do not switch accounts or replace that transport as an incidental auth fix.
 
+Live verification: the old stored blocker expired and cleared normally after
+the relay reload. Both app views rendered at 1280x800 in passive view-only mode.
+WeCom subsequently displayed a genuine full-page device-environment verification
+challenge, so live message/artifact delivery was not verified. Do not present
+the cooldown fix as a fix for Tencent's security warning. The local Tiny11
+configuration now disables the old `allow_verified_file_send_during_device_warning`
+exception: there is no usable chat composer on that full-page challenge.
+Neither Windows app was explicitly restarted and no Android input was sent.
+
 ## Acceptance Evidence
 
 The production route was tested with:
