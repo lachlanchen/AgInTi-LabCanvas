@@ -61,6 +61,32 @@ placement and the right WeChat window retain their existing behavior. The
 five-case Windows selector test performs no GUI input; a live popup remained
 beside its avatar after multiple watcher ticks.
 
+### Follow-Up Input Audit
+
+The idle loop already uses passive screenshots and local signatures rather
+than clicking unchanged chat windows. Authentication warnings pause active
+polling and sends, with bounded cooldown and stable-screen recovery. Keep
+those protections and the existing send pacing; do not suppress the warning
+or trade away message intake merely to reduce visible activity.
+
+One further unnecessary input was found: `ensure_chat` called menu cleanup
+even when no bridge context-menu operation preceded it. Tiny11 now tracks
+its own right-click attempts (including translated input macros), and only
+performs cleanup when such an attempt may have left a menu open. A timeout
+keeps that cleanup pending; successful cleanup clears it. The neutral click
+uses native title-bar height (`y + 38`), not 8% of window height, which could
+land in chat history on the 1392-pixel-tall window. Ordinary already-open chat
+checks produce no input. This does not authorize dismissing user-owned or
+security dialogs, and is not evidence that Tencent's detection is disabled.
+
+Live verification used the existing GUI lock and replaced input dispatch with
+an assertion that refuses every input action. `ensure_chat("LabAgent")` passed
+against the logged-in 1276x1392 native window using screenshots and title
+verification only. This was an internal diagnostic; no chat message or file
+delivery was requested or sent. Regression coverage preserves cleanup after
+uncertain right-clicks and failures, and verifies that authentication warnings
+prevent even pending cleanup in the chat-selection path.
+
 ### Earlier Investigation
 
 The user observed a WeCom remote-control notice after adding separate browser

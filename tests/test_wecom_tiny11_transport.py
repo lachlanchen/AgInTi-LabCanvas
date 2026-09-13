@@ -110,6 +110,61 @@ class Tiny11WeComTransportTests(unittest.TestCase):
             "actions": [{"action": "wheel", "x": 891, "y": 923, "delta": -720}] * 4,
         })
 
+    def test_already_open_chat_check_does_not_click_to_dismiss_an_absent_menu(self):
+        bridge = object.__new__(gui.Tiny11WeComGuiBridge)
+        bridge.target_groups = ["LabAgent"]
+        window = base.Window("shared", 0, 0, 1276, 1392)
+        bridge.find_window = mock.Mock(return_value=window)
+        bridge.detect_auth_blocker = mock.Mock(return_value="")
+        bridge.current_title_matches = mock.Mock(return_value=True)
+        bridge.tiny11 = mock.Mock()
+
+        self.assertEqual(bridge.ensure_chat("LabAgent"), window)
+        bridge.tiny11.invoke.assert_not_called()
+
+    def test_menu_cleanup_only_follows_our_right_click_and_uses_title_bar(self):
+        for macro in (False, True):
+            with self.subTest(macro=macro):
+                bridge = object.__new__(gui.Tiny11WeComGuiBridge)
+                bridge.tiny11 = mock.Mock()
+                window = base.Window("shared", 100, 200, 1276, 1392)
+                if macro:
+                    bridge.run_xdotool(["mousemove", "500", "400", "click", "3"])
+                else:
+                    bridge.right_click(500, 400)
+                self.assertTrue(bridge._context_menu_cleanup_pending)
+                bridge.tiny11.invoke.reset_mock()
+                with mock.patch.object(gui.time, "sleep"):
+                    bridge.dismiss_transient_overlays(window)
+                    bridge.dismiss_transient_overlays(window)
+                bridge.tiny11.invoke.assert_called_once_with({
+                    "action": "click", "x": 840, "y": 238,
+                })
+                self.assertFalse(bridge._context_menu_cleanup_pending)
+
+    def test_uncertain_menu_action_and_failed_cleanup_preserve_pending_state(self):
+        bridge = object.__new__(gui.Tiny11WeComGuiBridge)
+        bridge.tiny11 = mock.Mock()
+        bridge.tiny11.invoke.side_effect = transport.Tiny11TransportError("timeout")
+        with self.assertRaises(transport.Tiny11TransportError):
+            bridge.right_click(500, 400)
+        self.assertTrue(bridge._context_menu_cleanup_pending)
+        with self.assertRaises(transport.Tiny11TransportError):
+            bridge.dismiss_transient_overlays(base.Window("shared", 0, 0, 1276, 1392))
+        self.assertTrue(bridge._context_menu_cleanup_pending)
+
+    def test_auth_warning_prevents_pending_menu_cleanup_when_ensuring_chat(self):
+        bridge = object.__new__(gui.Tiny11WeComGuiBridge)
+        bridge.target_groups = ["LabAgent"]
+        bridge._context_menu_cleanup_pending = True
+        bridge.find_window = mock.Mock(return_value=base.Window("shared", 0, 0, 1276, 1392))
+        bridge.detect_auth_blocker = mock.Mock(return_value="device_environment_abnormal")
+        bridge.tiny11 = mock.Mock()
+        with self.assertRaisesRegex(RuntimeError, "WECOM_GUI_AUTH_REQUIRED"):
+            bridge.ensure_chat("LabAgent")
+        bridge.tiny11.invoke.assert_not_called()
+        self.assertTrue(bridge._context_menu_cleanup_pending)
+
     def test_filename_verifier_tolerates_one_repeated_digit_lost_by_ocr(self) -> None:
         self.assertTrue(
             base.filename_matches_ocr(

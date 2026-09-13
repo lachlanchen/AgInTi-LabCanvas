@@ -28,6 +28,7 @@ class Tiny11WeComGuiBridge(WeComGuiBridge):
         super().__init__(config, config_path=config_path)
         self.tiny11 = Tiny11Transport(config)
         self.remote_staged_files: dict[str, str] = {}
+        self._context_menu_cleanup_pending = False
 
     def status(self) -> dict[str, Any]:
         payload = super().status()
@@ -185,6 +186,8 @@ class Tiny11WeComGuiBridge(WeComGuiBridge):
         self.tiny11.invoke({"action": "click", "x": int(x), "y": int(y)})
 
     def right_click(self, x: int, y: int) -> None:
+        # A timed-out input may still have opened the menu in the guest.
+        self._context_menu_cleanup_pending = True
         self.tiny11.invoke({"action": "right_click", "x": int(x), "y": int(y)})
 
     def key(self, keys: str) -> None:
@@ -234,7 +237,12 @@ class Tiny11WeComGuiBridge(WeComGuiBridge):
         self.tiny11.invoke({"action": "macro", "actions": actions})
 
     def dismiss_transient_overlays(self, window: Window) -> None:
-        self.click(window.x + int(window.width * 0.58), window.y + int(window.height * 0.08))
+        if not getattr(self, "_context_menu_cleanup_pending", False):
+            return
+        # Native title bars have fixed height. A percentage can hit a message
+        # when the window is tall; do not clean up menus we did not open.
+        self.click(window.x + int(window.width * 0.58), window.y + 38)
+        self._context_menu_cleanup_pending = False
         time.sleep(0.05)
 
     def close_stale_native_overlays(self) -> None:
@@ -252,6 +260,8 @@ class Tiny11WeComGuiBridge(WeComGuiBridge):
         try:
             actions = xdotool_actions(args)
             if actions:
+                if any(action.get("action") == "right_click" for action in actions):
+                    self._context_menu_cleanup_pending = True
                 self.tiny11.invoke({"action": "macro", "actions": actions})
             return subprocess.CompletedProcess(args, 0, "", "")
         except (RuntimeError, Tiny11TransportError) as exc:
