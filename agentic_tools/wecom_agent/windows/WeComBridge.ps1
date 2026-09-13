@@ -18,7 +18,10 @@ public static class LabCanvasWin32 {
     public static extern bool SetForegroundWindow(IntPtr hWnd);
 
     [DllImport("user32.dll")]
-    public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+    public static extern IntPtr GetForegroundWindow();
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetAncestor(IntPtr hWnd, uint flags);
 
     [DllImport("user32.dll")]
     public static extern bool SetCursorPos(int x, int y);
@@ -64,9 +67,17 @@ function Focus-WeCom {
     # Preserve the current size. Exact-chat OCR and the following click must
     # use the same frame; resizing between those two steps invalidates the
     # calculated coordinates.
-    [LabCanvasWin32]::ShowWindow($window.Handle, 5) | Out-Null
-    [LabCanvasWin32]::SetForegroundWindow($window.Handle) | Out-Null
-    Start-Sleep -Milliseconds 80
+    $foreground = [LabCanvasWin32]::GetForegroundWindow()
+    # GA_ROOTOWNER keeps WeCom's file picker or owned dialog active. Neither
+    # polling nor an already-focused input sequence needs another focus event.
+    if ($foreground -ne $window.Handle -and
+        [LabCanvasWin32]::GetAncestor($foreground, 3) -ne $window.Handle) {
+        [LabCanvasWin32]::SetForegroundWindow($window.Handle) | Out-Null
+        Start-Sleep -Milliseconds 80
+        if ([LabCanvasWin32]::GetForegroundWindow() -ne $window.Handle) {
+            throw 'WeCom could not receive focus; refusing input into another app.'
+        }
+    }
     return $window
 }
 

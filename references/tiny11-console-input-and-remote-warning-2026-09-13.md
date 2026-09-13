@@ -1,5 +1,21 @@
 # Windows App Views and the WeCom Remote-Control Notice
 
+## Current Status
+
+The later authorized VM reboot replaced the split views with one shared
+2560x1440 desktop at <http://127.0.0.1:6143/>. WeCom is left, WeChat right.
+Guest TightVNC is stopped/Manual, the auxiliary MttVDD display is disabled,
+and the split-view service/reflectors are stopped and disabled. No device
+identity or app security logic was patched. See the completed procedure and
+login limitations in [the transport handoff](tiny11-wecom-labcanvas-transport.md#shared-desktop-2026-09-13).
+
+The sections below record the earlier two-monitor investigation. Its 6144
+URLs and active TightVNC description are historical, not the current route.
+Removing unnecessary control layers and redundant focus events does not prove
+the WeCom warning is resolved. After reboot, WeCom requires login; authenticated
+message and file delivery must be checked separately. The owner accepts Ubuntu
+WeChat plus mobile WeCom as the fallback if the Windows warning keeps recurring.
+
 ## Evidence and Limits
 
 The user observed a WeCom remote-control notice after adding separate browser

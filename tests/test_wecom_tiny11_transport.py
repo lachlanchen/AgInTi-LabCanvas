@@ -112,9 +112,20 @@ class Tiny11WeComTransportTests(unittest.TestCase):
             ROOT / "agentic_tools" / "wecom_agent" / "windows" / "WeComBridge.ps1"
         ).read_text(encoding="utf-8")
 
-        self.assertIn("ShowWindow($window.Handle, 5)", source)
+        self.assertNotIn("ShowWindow($window.Handle", source)
         self.assertIn('http://127.0.0.1:$Port/', source)
         self.assertNotIn('http://+:$Port/', source)
+
+    def test_focused_wecom_and_owned_dialogs_do_not_get_refocused(self) -> None:
+        source = (ROOT / 'agentic_tools/wecom_agent/windows/WeComBridge.ps1').read_text()
+        focus = source.split('function Focus-WeCom {', 1)[1].split('function Invoke-Key {', 1)[0]
+        self.assertIn('$foreground = [LabCanvasWin32]::GetForegroundWindow()', focus)
+        self.assertIn('$foreground -ne $window.Handle -and', focus)
+        self.assertIn('GetAncestor($foreground, 3) -ne $window.Handle', focus)
+        self.assertIn('refusing input into another app', focus)
+        screenshot = source.split('function Write-ScreenshotResponse {', 1)[1].split('$listener =', 1)[0]
+        self.assertNotIn('Focus-WeCom', screenshot)
+        self.assertNotIn('SetForegroundWindow', screenshot)
 
     def test_windows_screenshots_do_not_include_adjacent_wechat_monitor(self) -> None:
         source = (ROOT / 'agentic_tools/wecom_agent/windows/WeComBridge.ps1').read_text()
@@ -171,10 +182,15 @@ class Tiny11WeComTransportTests(unittest.TestCase):
             transport, 'PRIVATE', Path(directory)
         ), mock.patch.object(client, 'ensure_vm'), mock.patch.object(
             client, 'powershell'
-        ), mock.patch.object(client, 'scp_to_guest') as upload:
+        ) as powershell, mock.patch.object(client, 'scp_to_guest') as upload:
             client.install()
         self.assertIn(mock.call(transport.GUEST_HELPER.with_name('NativeWindows.ps1'),
                                 client.remote_root + r'\NativeWindows.ps1'), upload.call_args_list)
+        registration = powershell.call_args.args[0]
+        self.assertIn('$userSid=$identity.User.Value', registration)
+        self.assertIn('-UserId $userSid -LogonType Interactive', registration)
+        self.assertIn('-AtLogOn -User $userSid', registration)
+        self.assertNotIn('-UserId $identity.Name', registration)
 
     def test_session_probe_is_read_only_and_does_not_claim_app_policy_success(self):
         source = (ROOT / 'agentic_tools/wecom_agent/windows/Test-DesktopSession.ps1').read_text()

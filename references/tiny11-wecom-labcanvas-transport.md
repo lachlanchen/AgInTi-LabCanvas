@@ -149,14 +149,14 @@ configuration now disables the old `allow_verified_file_send_during_device_warni
 exception: there is no usable chat composer on that full-page challenge.
 Neither Windows app was explicitly restarted and no Android input was sent.
 
-### Shared Desktop Preparation, 2026-09-13
+### Shared Desktop, 2026-09-13
 
 The owner requested WeCom on the left and personal WeChat on the right of the
 same original console at `http://127.0.0.1:6143/`. Do not replace that endpoint
 with an RDP session, secretly redirect it to a different desktop, or enable
 Android polling as a layout workaround.
 
-The live QEMU standard VGA display currently exposes **only 1280x800** through
+The initial QEMU standard VGA display exposed **only 1280x800** through
 Microsoft Basic Display Adapter. `Get-DesktopModes.ps1` reads the actual
 interactive-session modes with `EnumDisplaySettings`; changing browser zoom
 does not create more guest desktop pixels. A live placement test established
@@ -164,14 +164,57 @@ that this WeCom build clamps its main window to **986 pixels minimum width**.
 Forcing a 636-pixel half produced overlap, not a usable shared layout. The test
 was undone, preserving the existing two-monitor app arrangement and logins.
 
-The reusable `Set-Tiny11AppScreens.ps1 -Layout Shared -Watch` mode is prepared,
-but **not enabled** on this narrow console. It requires at least 2000x800,
+The reusable `Set-Tiny11AppScreens.ps1 -Layout Shared -Watch` mode requires at least 2000x800,
 places WeCom left and WeChat right with an eight-pixel gap, restores a new
 main window once, and preserves later manual positioning. `-Layout Dual`
-remains the current default and preserves the existing second-screen route.
+remains an explicit compatibility mode; the installed task now selects Shared.
 The existing `LabCanvas-App-Screens` scheduled task owns the single watcher.
 Do not create another watcher beside it. A wider boot display may require a
 Windows restart; obtain confirmation before risking the current app logins.
+
+The owner authorized a VM-only reboot. The completed shared-console setup is:
+
+1. Back up the VM's `OVMF_VARS.fd` privately, preserving its original file mode.
+2. Stop the owned split-view service, guest TightVNC service, and the exact
+   auxiliary `Root\MttVDD` device. Keep the signed driver installed for rollback.
+   Do not disable unrelated display adapters or remote-access services.
+3. Reboot Windows normally. Escape enters OVMF; Device Manager > OVMF Platform
+   Configuration > Change Preferred Resolution selects **2560x1440**. Commit
+   Changes and Exit, then Reset from the firmware front page. No QEMU device,
+   Windows display-driver package, app binary, or login profile was replaced.
+4. IMPORTANT: the larger QEMU framebuffer alone is not sufficient. Windows
+   retained a logical **1280x800** desktop after that boot. In Windows Display
+   Settings select **2560x1440** and Keep changes. Check both the console canvas
+   and Windows `Screen.Bounds`; browser scaling cannot fix this mismatch.
+5. Update the existing `LabCanvas-App-Screens` task to `-Layout Shared
+   -LaunchWeChat -Watch`, with its existing interactive user and triggers. The
+   old task referenced a previous computer name and failed SID resolution.
+   Repair its principal and logon-trigger `UserId` using the same local account's
+   SID, not a stale `COMPUTER\user` string. Do not change the account or password.
+6. Keep `labcanvas-tiny11-displays.service` disabled. Ports 6144, 15943, 5944,
+   and 5945 are retired in this mode. The original QEMU VNC 5943/noVNC 6143
+   remains the only VM view. Guest `tvnserver` is stopped with Manual startup.
+7. Resume `labcanvas-wecom-autostart.service`. Authentication blockers and
+   delivery records remain intact; never mass-replay old work on reboot.
+
+The helper installer now also resolves the current account SID when registering
+its interactive principal and logon trigger, instead of copying an old qualified
+account name. Windows may normalize IDs back to names in exported task XML;
+after any future hostname change, re-register the owned tasks and verify their
+triggers rather than assuming the old XML is portable. `Focus-WeCom` does nothing when WeCom or an
+owned dialog already has focus. On a real app switch it checks the result and
+refuses to type if Windows denied focus. Read-only screenshot polling never
+activates or restores the app. This fixes redundant focus events and avoids
+pulling focus away from a native file dialog; it is not a security-check bypass.
+
+Live outcome: Windows reports one 2560x1440 primary monitor and both native
+apps are centered in their separate halves. The shared watcher is running and
+will fit the main windows after login. WeCom shows QR login and WeChat shows
+its existing-account Log In button; **authenticated messaging is not verified**.
+The session probe found one active console and zero RDS/shadowing flags, which
+does not establish that WeCom's private security checks will accept the client.
+Ubuntu WeChat and mobile WeCom remain available as the owner's fallback;
+their code/profiles were preserved and Android polling was not enabled.
 
 Two real helper problems were found during this inspection:
 
@@ -194,6 +237,15 @@ Both native apps were visibly signed in during the layout inspection. This
 does **not** establish that personal Windows WeChat has a working LabCanvas
 receiver: the personal-chat monitors still use the Ubuntu transport. The
 shared layout and that transport migration are separate acceptance checks.
+
+That sign-in observation preceded the later warning and authorized reboot;
+use the latest live outcome above, not the earlier observation, for readiness.
+
+Focused Windows regression test (no real GUI input): stage
+`tests/windows/test_wecom_focus.ps1` in the private guest inbox, then run it with
+`powershell.exe -NoProfile -ExecutionPolicy Bypass -File <test-path>`. It extracts
+the deployed focus function and tests already-focused, owned-dialog, other-app,
+and focus-denied cases against a fake native API, without starting the listener.
 
 Reference for the read-only display probe:
 [Microsoft EnumDisplaySettings](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-enumdisplaysettingsw)

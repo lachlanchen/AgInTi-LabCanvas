@@ -170,9 +170,10 @@ class Tiny11Transport:
         script = f"""$ErrorActionPreference='Stop'
 $taskName={ps_quote(self.task_name)}
 $identity=[System.Security.Principal.WindowsIdentity]::GetCurrent()
+$userSid=$identity.User.Value
 $action=New-ScheduledTaskAction -Execute 'powershell.exe' -Argument {ps_quote(f'-NoLogo -NoProfile -NonInteractive -STA -WindowStyle Hidden -ExecutionPolicy Bypass -File "{remote_helper}" -Port {self.helper_port} -TokenPath "{remote_token}"')}
-$principal=New-ScheduledTaskPrincipal -UserId $identity.Name -LogonType Interactive -RunLevel Highest
-$trigger=New-ScheduledTaskTrigger -AtLogOn -User $identity.Name
+$principal=New-ScheduledTaskPrincipal -UserId $userSid -LogonType Interactive -RunLevel Highest
+$trigger=New-ScheduledTaskTrigger -AtLogOn -User $userSid
 $settings=New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
 if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {{
     Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
