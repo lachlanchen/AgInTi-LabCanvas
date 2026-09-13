@@ -2,10 +2,39 @@
 
 from pathlib import Path
 from contextlib import closing
+import json
 import shutil
 import sqlite3
 import struct
 import time
+
+
+def cached_reader(reader, *, db_dir, account, keys_file, workdir):
+    """Use one account's provisioned keys, never runtime extraction/fallback."""
+    class CachedReader(reader.WeChatDB):
+        def _load_or_extract_keys(self, master_key=None):
+            try:
+                cached = json.loads(Path(self.keys_file).read_text(encoding='utf-8-sig'))
+            except (OSError, ValueError):
+                raise RuntimeError('WeChat key cache unavailable; explicit provisioning required') from None
+            if not isinstance(cached, dict):
+                raise RuntimeError('Invalid WeChat key cache; explicit provisioning required')
+            self._keys = {}
+            for rel, _path, _size in self._db_files:
+                try:
+                    key = bytes.fromhex(cached.get(rel, ''))
+                except (ValueError, TypeError):
+                    continue
+                if len(key) != 32:
+                    continue
+                self._keys[rel] = key
+                if not self._key_works(rel):
+                    del self._keys[rel]
+            self.unkeyed = [rel for rel, _, _ in self._db_files if rel not in self._keys]
+            if not self._keys:
+                raise RuntimeError('No valid cached WeChat keys; explicit provisioning required')
+
+    return CachedReader(db_dir=db_dir, account=account, keys_file=keys_file, workdir=workdir)
 
 
 def checksum(data, state=(0, 0), endian='<'):
@@ -65,6 +94,8 @@ def source_stamp(path):
 
 
 def open_snapshot(db, rel, reader):
+    if rel not in db._keys:
+        raise RuntimeError('Required WeChat key is not cached; explicit provisioning required')
     source = Path(db._db_path(rel))
     wal = Path(str(source) + '-wal')
     root = Path(db.workdir) / 'validated'

@@ -1765,6 +1765,8 @@ def perform_repairs(
     cooldown_seconds: float,
     max_sender_seconds: float,
 ) -> list[dict[str, Any]]:
+    from wechat_transport_selection import tiny11_enabled
+
     now = utc_now()
     issue_codes = {item["code"] for item in snapshot.get("issues", [])}
     repairs: list[dict[str, Any]] = []
@@ -1850,6 +1852,7 @@ def perform_repairs(
         )
     if (
         "wechat_gui_delivery_stalled" in issue_codes
+        and not tiny11_enabled()
         and repair_due(
             "wechat_gui_delivery_stalled",
             state,
@@ -2023,6 +2026,12 @@ that remained after normal scripted recovery. Diagnose and repair the live
 runtime in {ROOT}. Reuse the repository's existing supervisors, health probes,
 queue recovery commands, and tests. Inspect only bounded operational logs needed
 for these issue codes. Do not read or quote chat content.
+
+When personal WeChat uses Tiny11, a missing/hidden window, login requirement,
+cached-store failure or SSH/network failure never authorizes restarting either
+official chat client, opening the Ubuntu fallback, switching accounts or
+extracting process-memory keys. Preserve the authenticated clients and profiles;
+repair only the proven failed transport/helper, or report the exact blocker.
 
 Allowed actions are local and reversible: inspect status/logs, restart an exact
 dead or stalled tmux window, resume a durable task, clear an orphaned process

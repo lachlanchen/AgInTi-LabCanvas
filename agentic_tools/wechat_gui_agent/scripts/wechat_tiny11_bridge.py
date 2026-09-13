@@ -523,7 +523,13 @@ def _sync_once(config=None):
     bindings = {row['table'] for row in payload.get('bindings', [])}
     missing = [chat for chat, target in config['targets'].items()
                if native_chat_binding(target)['table'] not in bindings]
+    # A decrypted cache can remain readable after logout. This probe only
+    # observes the selected native window; it never focuses/restores a client.
+    client = transport.health()
+    client_ready = client.get('ok') is True and client.get('app') == 'wechat'
     state = {'ok': True, 'last_sync_epoch': time.time(), 'inserted': inserted,
+             'client_ready': client_ready,
+             'reader_mode': summary.get('reader_mode', 'unknown'),
              'tables': len(payload['tables']), 'expected_tables': len(config['message_tables']),
              'all_tables_available': set(config['message_tables']) <= set(payload['tables']),
              'binding_missing_chats': missing,

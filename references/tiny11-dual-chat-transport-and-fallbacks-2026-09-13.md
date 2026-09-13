@@ -64,6 +64,54 @@ claiming all three source deliveries succeeded.
 Do not interpret a visible login, `helper.ok`, or a successful database copy as
 end-to-end delivery. Do not flip the private `enabled` flag based on this note.
 
+## Session Preservation After Relogin (2026-09-14)
+
+The owner logged personal WeChat back in. The live main process remained the
+same and its normal conversation window was verified. Preserve both authenticated
+clients, profiles, account selections and existing source/delivery cursors.
+No account-security guarantee is possible; the cause of the earlier logout is
+still unproven. Do not spoof device identity or bypass a security challenge.
+
+The audit found a concrete unnecessary operation in the pinned third-party
+reader: `WeChatDB.__init__` calls `_load_or_extract_keys`, whose valid-cache path
+still calls `extract_master_key` to populate `cfg_dword`. Missing keys can also
+trigger memory scans and cross-account discovery. Reconstructing that reader
+on every poll therefore was not purely cached database reading.
+
+The normal `Export-WeChatStore.py` now uses `cached_reader` from
+`wechat_store_snapshot.py`. It overrides only the constructor's key-loading
+step, reads the exact account's provisioned key file, validates keys against
+the database, and never calls the extraction/account-fallback path. It does not
+need the image-specific `cfg_dword`. Missing or stale required keys fail with
+an explicit provisioning error instead of probing the running client. Even an
+existing decrypted snapshot cannot bypass a missing key. The inspected reader
+version remains pinned; re-review its constructor/decryption methods on upgrade.
+The separate operator `Inspect-WeChatStore.py` is not a polling routine and
+must not become an automatic recovery action.
+
+Each successful sync also records `client_ready` from the selected helper's
+read-only `/health` probe, plus `reader_mode=cached_keys_only`. Fresh local
+database files alone no longer imply a usable live window. Missing/minimized
+windows and helper/network errors report transport-unavailable, not a guessed
+QR requirement. Existing sender auth/title checks remain authoritative before
+input. No health probe focuses, restores or restarts either client.
+
+The transport guard will not run the old Ubuntu `restart-client` repair while
+Tiny11 is selected. Its repair-agent prompt also prohibits client restarts,
+automatic process-key extraction, switching accounts or opening the inactive
+fallback in response to Windows/helper/login/network failures.
+
+Deployment copies only the two guest Python sources under the existing export
+lock, retaining previous source backups. Reload only the idle `tiny11-store`
+poller through its existing supervisor, never Windows/WeChat/WeCom. Verify an
+immediate real sync reports `ok=true`, `client_ready=true` and the cached reader
+mode; verify unchanged native client PIDs. This was checked after deployment.
+It is not evidence that every pending task or schedule was delivered.
+
+For tests, use `npm test` (sets the source path and disables the live Windows
+transport). Run intentional read-only live probes separately. Tests should not
+inherit this workstation's enabled private transport configuration.
+
 ## Shared Windows Helper
 
 `agentic_tools/wecom_agent/windows/WeComBridge.ps1` accepts an authenticated

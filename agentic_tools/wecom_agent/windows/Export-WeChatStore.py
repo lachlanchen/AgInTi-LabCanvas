@@ -12,7 +12,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
-from wechat_store_snapshot import open_snapshot
+from wechat_store_snapshot import cached_reader, open_snapshot
 
 
 def export(request_path, output_path):
@@ -22,9 +22,9 @@ def export(request_path, output_path):
     reader = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(reader)
     account_dir = Path(config["db_dir"]).parent
-    db = reader.WeChatDB(db_dir=str(account_dir.parent), account=account_dir.name,
-                        keys_file=str(ROOT / "reader-keys.private.json"),
-                        workdir=str(ROOT / "cache"))
+    db = cached_reader(reader, db_dir=str(account_dir.parent), account=account_dir.name,
+                       keys_file=str(ROOT / "reader-keys.private.json"),
+                       workdir=str(ROOT / "cache"))
     if db.account != account_dir.name or db.wxid != request["self_wxid"]:
         raise RuntimeError("WeChat account identity mismatch")
     result = {"account_verified": True, "rows": [], "high_watermarks": {}, "tables": []}
@@ -84,7 +84,8 @@ def export(request_path, output_path):
     temp = target.with_suffix('.tmp')
     temp.write_text(json.dumps(result, ensure_ascii=False), encoding='utf-8')
     temp.replace(target)
-    return {"ok": True, "rows": len(result['rows']), "tables": len(result['tables'])}
+    return {"ok": True, "rows": len(result['rows']), "tables": len(result['tables']),
+            "reader_mode": "cached_keys_only"}
 
 
 if __name__ == '__main__':

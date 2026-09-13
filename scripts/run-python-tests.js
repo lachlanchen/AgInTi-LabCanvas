@@ -8,6 +8,8 @@ const root = path.resolve(__dirname, "..");
 const env = {
   ...process.env,
   PYTHONPATH: [path.join(root, "src"), process.env.PYTHONPATH].filter(Boolean).join(path.delimiter),
+  // Unit tests must not select the workstation's real private Windows account.
+  WECHAT_TINY11_DISABLE: "1",
   WECHAT_WORKER_DISABLE_CODEX_IMAGE_READ:
     process.env.WECHAT_WORKER_DISABLE_CODEX_IMAGE_READ || "1",
 };
