@@ -511,6 +511,13 @@ def build_shipinhao_recovery_packet(text: str) -> dict[str, Any]:
 
 
 def task_source_text(task: dict[str, Any]) -> str:
+    from wechat_quote_reference import task_has_explicit_quote, task_quote_reference
+
+    quote = task_quote_reference(task)
+    if quote is not None:
+        return quote["request"] + "\n" + quote["content"]
+    if task_has_explicit_quote(task):
+        return ""
     request = str(task.get("request") or "")
     focus = extract_current_request(request)
     reference_section = extract_reference_section(request)

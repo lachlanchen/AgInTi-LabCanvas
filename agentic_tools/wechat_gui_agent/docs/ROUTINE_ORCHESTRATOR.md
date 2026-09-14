@@ -24,6 +24,12 @@ same user intent plus a routine contract. Follow-up WeChat messages in the same
 chat append as task interruptions, so the reused worker session can revise the
 plan or continue the routine instead of starting a disconnected hardcoded task.
 
+Quoted messages keep their own sender, server ID, and embedded source payload.
+An explicit quote must never be replaced by the newest same-chat artifact.
+Keep consecutive quotes distinct in the message ledger, even when the agent
+answers them together. See [quoted source identity](../../../references/wechat-quoted-source-identity-2026-09-14.md)
+for the failure analysis, parser, worker guards, and recovery checks.
+
 ## Routine Registry
 
 The registry lives in:

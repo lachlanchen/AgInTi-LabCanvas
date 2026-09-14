@@ -103,6 +103,9 @@ class WeChatCareerDailyAgentTests(unittest.TestCase):
 
     def test_retry_organizer_action_reuses_explicit_date(self):
         module = load_wechat_career_daily_agent()
+        private = tempfile.TemporaryDirectory()
+        self.addCleanup(private.cleanup)
+        module.PRIVATE = Path(private.name)
         captured = {}
         original_argv = sys.argv[:]
         original_run = module.run_organizer

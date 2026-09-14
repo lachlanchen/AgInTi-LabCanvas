@@ -121,13 +121,14 @@ class WeChatAgentBackendTests(unittest.TestCase):
 
     def test_low_quota_preference_is_strict_cache_only_and_keeps_five_percent(self) -> None:
         backend = load_backend()
-        unchanged = backend.quota_aware_codex_preference(
-            backend="codex",
-            model="gpt-5.6-sol",
-            reasoning_effort="medium",
-            role="worker",
-            backend_config={},
-        )
+        with mock.patch.object(backend, "current_codex_quota_status", return_value={"ok": False}):
+            unchanged = backend.quota_aware_codex_preference(
+                backend="codex",
+                model="gpt-5.6-sol",
+                reasoning_effort="medium",
+                role="worker",
+                backend_config={},
+            )
         self.assertEqual(unchanged, ("gpt-5.6-sol", "medium", None))
         with mock.patch.object(
             backend,

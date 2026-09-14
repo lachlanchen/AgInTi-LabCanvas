@@ -6064,6 +6064,18 @@ def source_reference_rows(
 
     for item in focus_rows or [row]:
         add(item)
+    from wechat_quote_reference import parse_quote_reference
+
+    quotes = [parse_quote_reference(item.get("content")) for item in (focus_rows or [row])]
+    quotes = [quote for quote in quotes if quote is not None]
+    if quotes:
+        # The embedded payload remains usable outside the recent-history window.
+        server_ids = {quote["server_id"] for quote in quotes if quote["server_id"]}
+        for item in context_rows:
+            if str(item.get("server_id") or "") in server_ids:
+                add(item)
+        rows.sort(key=lambda item: int(item.get("local_id") or 0))
+        return rows
     if not include_recent_media:
         rows.sort(key=lambda item: int(item.get("local_id") or 0))
         return rows
@@ -6497,20 +6509,14 @@ def strip_group_sender_prefix(text: str) -> str:
 
 
 def format_quote_reply_text(text: str) -> str:
-    root = parse_wechat_xml(text)
-    if root is None:
+    from wechat_quote_reference import parse_quote_reference
+
+    reference = parse_quote_reference(text)
+    if reference is None:
         return "[quote/reply message; payload not decoded]"
-    appmsg = root.find(".//appmsg")
-    if appmsg is None:
-        return collapse_text(text)[:500] or "[quote/reply message]"
-    title = collapse_text(appmsg.findtext("title") or "")
-    refer = appmsg.find("refermsg")
-    if refer is None:
-        return title or "[quote/reply message]"
-    display_name = collapse_text(refer.findtext("displayname") or refer.findtext("fromusr") or "quoted message")
-    refer_type = collapse_text(refer.findtext("type") or "")
-    refer_content = html.unescape(refer.findtext("content") or "")
-    quoted = summarize_refer_content(refer_type, refer_content)
+    title = reference["request"].strip()
+    display_name = collapse_text(reference["sender_display"] or reference["sender"] or "quoted message")
+    quoted = summarize_refer_content(reference["type"], reference["content"], max_len=6000)
     reply = title or "[quote/reply]"
     if quoted:
         return f"{reply}\n[quoted {display_name}: {quoted}]"
@@ -6662,6 +6668,9 @@ def summarize_refer_content(refer_type: str, content: str, *, max_len: int = 220
         if appmsg is None:
             return "[card]"
         inner_type = collapse_text(appmsg.findtext("type") or "")
+        if inner_type in {"51", "76"}:
+            # Finder's outer title is often only an unsupported-version notice.
+            return format_app_message_text(content, max_len=max_len)
         title = truncate_text(collapse_text(appmsg.findtext("title") or ""), max_len)
         labels = {"5": "link", "6": "file", "19": "chat record", "57": "quote/reply"}
         label = labels.get(inner_type, "card")
