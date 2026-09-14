@@ -10,7 +10,7 @@ import fcntl
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import re
 import sqlite3
 import subprocess
@@ -264,12 +264,26 @@ class Tiny11WeChatBridge(Tiny11WeComGuiBridge):
     def wait_composed_file(self, window, path, key):
         deadline = time.monotonic() + 8
         while True:
-            composed = self.capture_screen('file-composed-' + key)
-            if self.composer_contains_filename(composed, window, path.name, key):
+            if self.composer_file_matches(window, path, key):
                 return
             if time.monotonic() >= deadline:
-                raise RuntimeError('WECHAT_COMPOSE_VERIFY_FAILED: file not visible in native composer')
+                raise RuntimeError('WECHAT_COMPOSE_VERIFY_FAILED: native draft file did not match staged file')
             time.sleep(.3)
+
+    def composer_file_matches(self, window, staged, key):
+        expected = self.remote_staged_files.get(str(staged.resolve()))
+        if not expected:
+            raise RuntimeError('WECHAT_COMPOSE_VERIFY_FAILED: file was not staged through verified SFTP')
+        # Clear the staging clipboard first: only a fresh copy from the native
+        # editor proves the draft contains exactly our file, not another chip.
+        self.set_clipboard('__LABCANVAS_FILE_PROBE_' + key + '__')
+        self.composer_keys(window, 'ctrl+a', 'ctrl+c')
+        observed = self.tiny11.invoke({'action': 'get_file_clipboard'})
+        if isinstance(observed, str):
+            observed = [observed]
+        return (isinstance(observed, list) and len(observed) == 1
+                and isinstance(observed[0], str)
+                and PureWindowsPath(observed[0]) == PureWindowsPath(expected))
 
     def verify_video_receipt(self, source, attrs, created_at):
         from wechat_tiny11_media_receipt import verify_video
@@ -356,7 +370,7 @@ class Tiny11WeChatBridge(Tiny11WeComGuiBridge):
                     if empty:
                         set_runtime(self.state_db, 'native-draft:' + key, json.dumps(receipt))
                         self.compose_staged_file_with_picker(window, staged, folder, key)
-                    self.wait_composed_file(window, path, key)
+                    self.wait_composed_file(window, staged, key)
                     set_runtime(self.state_db, 'native-intent:' + key, json.dumps(receipt))
                     record_event(chat_name=chat, action='file_send_intent', direction='outbound', status='sending',
                                  db_path=DEFAULT_DB, metadata={'file_identity': file_transport_identity(path), 'transport': 'wechat_tiny11'})

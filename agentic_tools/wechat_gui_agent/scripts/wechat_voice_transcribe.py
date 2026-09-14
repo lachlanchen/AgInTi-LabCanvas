@@ -331,11 +331,29 @@ def transcribe_wav_openai_whisper(
     except Exception as exc:
         raise RuntimeError(f"missing usable whisper package in the selected Python environment: {exc}") from exc
 
-    whisper_model = whisper.load_model(model, device=device)
-    kwargs: dict[str, Any] = {"fp16": device not in {"cpu", ""}}
-    if language:
-        kwargs["language"] = language
-    result = whisper_model.transcribe(str(wav_path), **kwargs)
+    def run(selected_device: str) -> dict[str, Any]:
+        whisper_model = whisper.load_model(model, device=selected_device)
+        kwargs: dict[str, Any] = {"fp16": selected_device not in {"cpu", ""}}
+        if language:
+            kwargs["language"] = language
+        return whisper_model.transcribe(str(wav_path), **kwargs)
+
+    cpu_fallback = False
+    try:
+        result = run(device)
+    except RuntimeError as exc:
+        if not str(device).startswith("cuda") or "out of memory" not in str(exc).lower():
+            raise
+        cpu_fallback = True
+    if cpu_fallback:
+        # Leave the failed call's traceback before freeing this process's CUDA
+        # allocations. Never kill another job or switch to an unassigned GPU.
+        import gc
+        import torch
+
+        gc.collect()
+        torch.cuda.empty_cache()
+        result = run("cpu")
     raw_segments = result.get("segments") or []
     segments = []
     parts = []
@@ -354,6 +372,8 @@ def transcribe_wav_openai_whisper(
     duration = max((float(segment.get("end") or 0) for segment in raw_segments), default=None)
     return {
         "backend": "whisper",
+        "device": "cpu" if cpu_fallback else device,
+        "device_fallback_reason": "cuda_out_of_memory" if cpu_fallback else "",
         "text": " ".join(parts).strip(),
         "language": result.get("language") or "",
         "language_probability": None,

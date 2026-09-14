@@ -20,6 +20,50 @@ snapshot = importlib.import_module('wechat_store_snapshot')
 
 
 class Tiny11WeChatTests(unittest.TestCase):
+    def test_native_draft_file_roundtrip_requires_exact_single_staged_path(self):
+        client = object.__new__(bridge.Tiny11WeChatBridge)
+        staged = Path('/tmp/staged/untruncated-source-name.mp4')
+        expected = 'C:/LabCanvas/WeChatDelivery/inbox/exact-task/untruncated-source-name.mp4'
+        client.remote_staged_files = {str(staged.resolve()): expected}
+        events = []
+        client.set_clipboard = mock.Mock(side_effect=lambda _: events.append('clear'))
+        client.composer_keys = mock.Mock(side_effect=lambda *args: events.append('copy'))
+        client.tiny11 = mock.Mock()
+        def read(action):
+            events.append('read')
+            return expected.replace('/', '\\').upper()
+        client.tiny11.invoke.side_effect = read
+        window = mock.Mock()
+        self.assertTrue(client.composer_file_matches(window, staged, 'key'))
+        self.assertEqual(events, ['clear', 'copy', 'read'])
+        client.composer_keys.assert_called_once_with(window, 'ctrl+a', 'ctrl+c')
+        client.tiny11.invoke.assert_called_once_with({'action': 'get_file_clipboard'})
+        client.tiny11.invoke.side_effect = None
+        for observed in (None, '', [], [expected, expected],
+                         [expected.replace('exact-task', 'another-task')],
+                         ['untruncated-source-name.mp4'], {'files': [expected]}):
+            with self.subTest(observed=observed):
+                client.tiny11.invoke.return_value = observed
+                self.assertFalse(client.composer_file_matches(window, staged, 'key'))
+
+    def test_unstaged_file_cannot_pass_composer_check(self):
+        client = object.__new__(bridge.Tiny11WeChatBridge)
+        client.remote_staged_files = {}
+        client.set_clipboard = mock.Mock()
+        with self.assertRaisesRegex(RuntimeError, 'verified SFTP'):
+            client.composer_file_matches(mock.Mock(), Path('/tmp/unstaged.mp4'), 'key')
+        client.set_clipboard.assert_not_called()
+
+    def test_wait_composed_file_uses_native_identity_not_ocr(self):
+        client = object.__new__(bridge.Tiny11WeChatBridge)
+        client.composer_file_matches = mock.Mock(return_value=True)
+        client.composer_contains_filename = mock.Mock()
+        window = mock.Mock()
+        staged = Path('/tmp/staged/source.mp4')
+        client.wait_composed_file(window, staged, 'key')
+        client.composer_file_matches.assert_called_once_with(window, staged, 'key')
+        client.composer_contains_filename.assert_not_called()
+
     def test_scroll_to_tail_observes_a_stable_viewport(self):
         client = object.__new__(bridge.Tiny11WeChatBridge)
         client.history_surface = mock.Mock(return_value=(0, 0, 100, 100))

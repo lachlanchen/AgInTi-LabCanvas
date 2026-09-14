@@ -62,3 +62,38 @@ Use the existing worker `reprocess` operation for specifically affected tasks.
 Do not replay the whole queue or resend previously correct unrelated videos.
 Verify the recovered source object and outgoing file receipt separately;
 correct source selection alone does not prove download or delivery success.
+
+During live recovery, native Windows copy-link and title/account verification
+succeeded for the previously misidentified card. Its assigned GPU then ran out
+of memory. `wechat_voice_transcribe.py` now retries an OpenAI Whisper CUDA OOM
+once on CPU with the same model and language after releasing this process's
+failed CUDA allocations. Non-memory errors still propagate. It never switches
+to another GPU or stops another project's workload. Regression tests cover
+same-model CPU retry, non-resource errors, and bounded CPU failure.
+
+## Native File Delivery
+
+The first recovered original reached the Windows WeChat composer, but its
+Chinese filename was shortened with an ellipsis. OCR misread the remaining
+characters and falsely rejected the draft. This was not a login failure.
+
+`wechat_tiny11_bridge.py` now checks the native attachment clipboard instead:
+
+1. Stage the exact artifact over SFTP and verify its byte length and SHA-256.
+2. Preserve the same task-scoped draft record across retries.
+3. Clear the staging clipboard with a probe marker, then copy the composer.
+4. Require exactly one `FileDrop` path equal to the verified staging path,
+   including its task-specific directory. A matching basename is insufficient.
+5. Persist the send intent before Enter and verify the native outgoing row,
+   including media identity for a video, before recording delivery success.
+
+The small read-only `get_file_clipboard` action in `WeComBridge.ps1` exposes
+this native value. It does not inspect process memory or change account state.
+An existing unverified draft is not overwritten, and an uncertain submitted
+send is reconciled rather than pasted again. Keep paths and clipboard contents
+private; no transport diagnostics belong in the chat response.
+
+Reload only the helper task after updating it, under the existing shared GUI
+lock. Leave both official clients running. The live draft-path check passed
+without changing the personal WeChat process. Run the stored-result `--resend`
+operation for the exact failed task after repair, not another worker generation.

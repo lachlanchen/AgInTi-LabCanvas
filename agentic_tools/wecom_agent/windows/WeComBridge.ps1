@@ -207,6 +207,9 @@ function Invoke-BridgeAction {
         "get_clipboard" {
             return Invoke-ClipboardOperation { [System.Windows.Forms.Clipboard]::GetText() }
         }
+        "get_file_clipboard" {
+            return @(Invoke-ClipboardOperation { [System.Windows.Forms.Clipboard]::GetFileDropList() })
+        }
         "set_file_clipboard" {
             $files = New-Object System.Collections.Specialized.StringCollection
             foreach ($path in @($Action.paths)) {
