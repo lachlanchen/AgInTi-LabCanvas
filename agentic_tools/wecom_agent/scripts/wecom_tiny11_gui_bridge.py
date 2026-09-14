@@ -19,6 +19,8 @@ from wecom_gui_bridge import (
     filename_matches_ocr,
     initialize_config,
     load_config,
+    now_iso,
+    set_runtime,
 )
 from wecom_tiny11_transport import Tiny11Transport, Tiny11TransportError
 
@@ -40,18 +42,23 @@ class Tiny11WeComGuiBridge(WeComGuiBridge):
                     "ok": bool(helper.get("ok")),
                     "session_id": helper.get("session_id"),
                     "wecom_running": bool(helper.get("wecom_running")),
+                    "input_blocker": str(helper.get("input_blocker") or ""),
                 },
             }
         )
         payload["capabilities"]["artifact_transport"] = "verified_sftp"
         if payload.get("chat_ready"):
             payload["last_error"] = ""
+        if helper.get("input_blocker"):
+            payload.update(chat_ready=False, closed_loop_state="system_dialog_blocked",
+                           last_error="LABCANVAS_GUI_SYSTEM_DIALOG_BLOCKED: " + str(helper["input_blocker"]))
         return payload
 
     def health(self) -> dict[str, Any]:
         status = self.status()
         return {
-            "ok": bool(status.get("ok")) and bool(status.get("tiny11_helper", {}).get("ok")),
+            "ok": (bool(status.get("ok")) and bool(status.get("tiny11_helper", {}).get("ok"))
+                   and not status.get("tiny11_helper", {}).get("input_blocker")),
             "api_version": status.get("api_version"),
             "client_visible": status.get("client_visible"),
             "chat_ready": status.get("chat_ready"),
@@ -60,6 +67,14 @@ class Tiny11WeComGuiBridge(WeComGuiBridge):
             "capabilities": status.get("capabilities"),
             "tiny11_helper": status.get("tiny11_helper"),
         }
+
+    def poll_cycle(self) -> dict[str, Any]:
+        helper = self.tiny11.health()
+        if helper.get("input_blocker"):
+            set_runtime(self.state_db, "last_poll_at", now_iso())
+            return {"ok": True, "processed": 0, "skipped": "system_dialog_blocked",
+                    "input_blocker": str(helper["input_blocker"])}
+        return super().poll_cycle()
 
     def find_window(self, *, required: bool = True) -> Window | None:
         helper = self.tiny11.health()

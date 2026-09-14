@@ -2661,6 +2661,8 @@ def send_errors_indicate_gui_busy(errors: list[str]) -> bool:
         "wechat_send_busy" in text
         or "wecom_android_busy" in text
         or "serialized gui sender is already sending" in text
+        or ("labcanvas_gui_system_dialog_blocked" in text
+            and not send_errors_indicate_gui_postcommit_uncertain(errors))
     )
 
 

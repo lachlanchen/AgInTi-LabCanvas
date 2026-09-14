@@ -89,6 +89,18 @@ function Test-NativeWebForeground {
     return $false
 }
 
+function Get-SystemInputBlocker {
+    param([uint32]$ProcessId)
+    if ($ProcessId -eq 0) { return 'input_desktop_unavailable' }
+    $process = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
+    if ($null -eq $process -or $process.ProcessName -notin @(
+        'PickerHost', 'consent', 'LogonUI', 'CredentialUIBroker'
+    )) { return '' }
+    $expected = Join-Path $env:WINDIR ('System32\' + $process.ProcessName + '.exe')
+    if ($process.Path -ieq $expected) { return 'windows_system_dialog' }
+    return ''
+}
+
 function Focus-WeCom {
     $window = Get-WeComWindow
     if ($null -eq $window) {
@@ -100,6 +112,10 @@ function Focus-WeCom {
     $foreground = [LabCanvasWin32]::GetForegroundWindow()
     [uint32]$foregroundProcessId = 0
     [LabCanvasWin32]::GetWindowThreadProcessId($foreground, [ref]$foregroundProcessId) | Out-Null
+    # A system security/file-permission dialog is not a chat-app popup. Do not
+    # steal focus or send input behind it, and never approve it automatically.
+    $inputBlocker = Get-SystemInputBlocker $foregroundProcessId
+    if ($inputBlocker) { throw ('LABCANVAS_GUI_SYSTEM_DIALOG_BLOCKED: ' + $inputBlocker) }
     # GA_ROOTOWNER keeps WeCom's file picker or owned dialog active. Neither
     # polling nor an already-focused input sequence needs another focus event.
     if ($foreground -ne $window.Handle -and
@@ -328,8 +344,11 @@ try {
                 $foreground = [LabCanvasWin32]::GetForegroundWindow()
                 [uint32]$foregroundProcessId = 0
                 [LabCanvasWin32]::GetWindowThreadProcessId($foreground, [ref]$foregroundProcessId) | Out-Null
+                $inputBlocker = Get-SystemInputBlocker $foregroundProcessId
                 $payload = [ordered]@{
                     ok = ($null -ne $window)
+                    input_ready = ($null -ne $window -and -not $inputBlocker)
+                    input_blocker = $inputBlocker
                     app = $script:TargetApp
                     session_id = [System.Diagnostics.Process]::GetCurrentProcess().SessionId
                     wecom_running = (@(Get-Process WXWork -ErrorAction SilentlyContinue).Count -gt 0)

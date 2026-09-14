@@ -34,6 +34,38 @@ def config(**tiny11):
 
 
 class Tiny11WeComTransportTests(unittest.TestCase):
+    def test_system_dialog_blocks_input_before_focus_and_remains_visible_in_health(self):
+        source = (ROOT / 'agentic_tools/wecom_agent/windows/WeComBridge.ps1').read_text()
+        focus = source.split('function Focus-WeCom {', 1)[1].split('function Invoke-Key {', 1)[0]
+        self.assertLess(focus.index('Get-SystemInputBlocker'), focus.index('SetForegroundWindow'))
+        self.assertIn('LABCANVAS_GUI_SYSTEM_DIALOG_BLOCKED', focus)
+        self.assertIn("$process.Path -ieq $expected", source)
+        self.assertIn('input_blocker = $inputBlocker', source)
+
+    def test_system_dialog_health_overrides_cached_chat_ready(self):
+        bridge = object.__new__(gui.Tiny11WeComGuiBridge)
+        bridge.tiny11 = mock.Mock()
+        bridge.tiny11.health.return_value = {'ok': True, 'input_blocker': 'windows_system_dialog'}
+        with mock.patch.object(base.WeComGuiBridge, 'status', return_value={
+            'ok': True, 'chat_ready': True, 'closed_loop_state': 'ready', 'capabilities': {}}):
+            state = bridge.status()
+            self.assertFalse(state['chat_ready'])
+            self.assertEqual(state['closed_loop_state'], 'system_dialog_blocked')
+            self.assertFalse(bridge.health()['ok'])
+
+    def test_system_dialog_poll_pauses_without_input_and_recovers_normally(self):
+        bridge = object.__new__(gui.Tiny11WeComGuiBridge)
+        bridge.state_db = Path('unused')
+        bridge.tiny11 = mock.Mock()
+        bridge.tiny11.health.return_value = {'ok': True, 'input_blocker': 'windows_system_dialog'}
+        with mock.patch.object(gui, 'set_runtime'), \
+                mock.patch.object(base.WeComGuiBridge, 'poll_cycle', return_value={'ok': True}) as poll:
+            self.assertEqual(bridge.poll_cycle()['skipped'], 'system_dialog_blocked')
+            poll.assert_not_called()
+            bridge.tiny11.health.return_value = {'ok': True, 'input_blocker': ''}
+            self.assertTrue(bridge.poll_cycle()['ok'])
+            poll.assert_called_once()
+
     def test_web_runtime_repair_is_explicit_and_preserves_chat_clients(self):
         source = (ROOT / 'agentic_tools/wecom_agent/windows/Repair-WeChatWebRuntime.ps1').read_text()
         self.assertIn('[switch]$Apply', source)

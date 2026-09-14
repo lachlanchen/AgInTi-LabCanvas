@@ -18,6 +18,36 @@ WeChat plus mobile WeCom as the fallback if the Windows warning keeps recurring.
 
 ## Evidence and Limits
 
+### Follow-Up, 2026-09-14
+
+The owner reported another remote-operation notice. The currently visible
+desktop initially had a separate Windows Firewall permission dialog for
+Tencent `wxworkweb`, hosted by the genuine Windows `PickerHost.exe`. The
+relay's cached chat-ready state did not distinguish this blocking system
+dialog from an operable chat. The dialog disappeared before the guarded
+diagnostic cancellation attempt, so the agent performed no cancellation and
+did not approve network access. WeCom Team then showed a login at 21:15 HKT;
+LabAgent was visibly logged in and the relay reported ready. The exact new
+remote-warning text and detection signal were not captured. Do not infer that
+the firewall prompt caused the remote warning or that the warning is fixed.
+
+The shared Windows input helper now refuses input/focus changes when a trusted
+System32 permission/security host (`PickerHost`, `consent`, `LogonUI`, or
+`CredentialUIBroker`) owns the foreground. Health keeps transport liveness
+separate from `input_ready`/`input_blocker`. WeCom polling pauses without clicks
+while this blocker exists and resumes through normal polling after it clears.
+Pre-send attempts remain in the existing bounded busy retry path; uncertain
+post-send attempts still require receipt reconciliation. No dialog is silently
+accepted, no firewall is disabled, and no app binary, device identity, login
+profile, or security verification logic is modified.
+
+`windows/Test-SystemInputBlocker.ps1` tests the guard without starting another
+helper or interacting with either client. Python tests cover cached-readiness
+override, passive pause/recovery, safe send deferral, and uncertain-send priority.
+Deploy only the updated helper and idle relay/worker processes under their
+existing locks. This change improves safe recovery from a system modal; it is
+not a remote-detection bypass or proof of a cure for Tencent's warning.
+
 ### Confirmed Native Notice, 2026-09-13
 
 After the owner logged in again, the MIX 2S WeCom Team notice identified
