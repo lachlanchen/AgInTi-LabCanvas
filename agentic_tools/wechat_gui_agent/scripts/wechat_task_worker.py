@@ -2317,7 +2317,7 @@ def required_delivery_file_paths(
             candidates.append(path.expanduser().resolve())
     selected = research_summary_delivery_files(task, list(dict.fromkeys(candidates)))
     selected = wecom_research_delivery_files(task, selected)
-    return list(dict.fromkeys(verified_delivery_alias(path, task) for path in selected))
+    return unique_delivery_files([verified_delivery_alias(path, task) for path in selected], task)
 
 
 def required_file_delivery_complete(task: dict[str, Any] | None, result: dict[str, Any]) -> bool:
@@ -3134,6 +3134,7 @@ def send_result_once(
     files_to_send, files_to_note = partition_result_files_for_wechat(result.get("files") or [])
     files_to_send = research_summary_delivery_files(task, files_to_send)
     files_to_send = [ensure_meaningful_delivery_path(path, task) for path in files_to_send]
+    files_to_send = unique_delivery_files(files_to_send, task)
     if task is not None and files_to_send and not result_allows_chat_artifact_delivery(task, result):
         task["suppressed_chat_files"] = unique_strings(
             [
@@ -3826,6 +3827,7 @@ def send_result_once_wecom(result: dict[str, Any], target_chat: str, task: dict[
     selected_files = wecom_research_delivery_files(task, files_to_send)
     suppressed_sources = [path for path in files_to_send if path not in selected_files]
     files_to_send = [ensure_meaningful_delivery_path(path, task) for path in selected_files]
+    files_to_send = unique_delivery_files(files_to_send, task)
     if suppressed_sources:
         task["wecom_saved_source_files"] = [str(path.expanduser().resolve()) for path in suppressed_sources]
     if files_to_send and not result_allows_chat_artifact_delivery(task, result):
@@ -23880,6 +23882,40 @@ DELIVERY_ROLE_BY_SUFFIX = {
     ".xlsx": "workbook",
     ".zip": "archive",
 }
+
+
+def unique_delivery_files(files: list[Path], task: dict[str, Any] | None) -> list[Path]:
+    """One send for byte-identical aliases, without collapsing edited artifacts."""
+    kept: list[Path] = []
+    by_size: dict[tuple[str, int], list[Path]] = {}
+    digests: dict[Path, str] = {}
+    for path in dict.fromkeys(files):
+        try:
+            key = (path.suffix.casefold(), path.stat().st_size)
+            same = None
+            for prior in by_size.get(key, []):
+                if path.samefile(prior):
+                    same = prior
+                    break
+                for candidate in (path, prior):
+                    if candidate not in digests:
+                        digests[candidate] = sha256_file(candidate)
+                if digests[path] == digests[prior]:
+                    same = prior
+                    break
+            if same is not None:
+                if task is not None:
+                    alias = {"source": str(path.resolve()), "delivery": str(same.resolve())}
+                    aliases = task.setdefault("delivery_artifact_aliases", [])
+                    if alias not in aliases:
+                        aliases.append(alias)
+                continue
+            by_size.setdefault(key, []).append(path)
+        except OSError:
+            # Let the normal sender report a missing/unreadable file.
+            pass
+        kept.append(path)
+    return kept
 
 
 def verified_delivery_alias(path: Path, task: dict[str, Any] | None) -> Path:

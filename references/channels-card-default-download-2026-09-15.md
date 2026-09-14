@@ -79,3 +79,21 @@ fixing the cause, then monitor the existing supervised worker. Preserve the
 task ID and private source evidence. Confirm original-media probing,
 transcription, and native delivery receipts before calling delivery complete.
 Do not reset or replay unrelated queues.
+
+## Live result and duplicate-file follow-up
+
+The normal worker recovered the previously failing 35.339-second card in
+Shares without a user-pasted link. It verified the resolved identity, downloaded
+the original MP4, transcribed six speech segments, researched the longer source,
+and delivered the result with native file receipts. No public publication or
+screen recording occurred. The private task retains the source and manifests.
+
+That test also exposed duplicate delivery candidates: routine artifacts,
+meaningful-name aliases, and the agent's own renamed copies were merged by path
+instead of content. `unique_delivery_files` now coalesces byte-identical files
+of the same type at both transport send boundaries and in required-delivery
+checks. It records verified aliases so one receipt satisfies those paths.
+Changed transcripts, different file types, and genuinely edited videos remain
+distinct; this is not fuzzy semantic deduplication. Missing files still reach
+the normal failure handling. The completed task was inspected without sending
+it again to verify that all identical MP4 aliases reduce to one delivery.
