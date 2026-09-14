@@ -140,6 +140,11 @@ class WeComShipinhaoCardTests(unittest.TestCase):
             preflight = ingest.wecom_transport_preflight(event)
 
         self.assertIn("canonical authoritative source", request)
+        self.assertIn("card itself is a download request by default", request)
+        self.assertIn("A second download instruction or a user-pasted URL is not required", request)
+        self.assertIn("Preserve explicit current instructions", request)
+        self.assertIn("Never publicly publish", request)
+        self.assertIn("without waiting", preflight["wecom_media"]["agent_next_action"])
         self.assertIn("distinguish a paper from a podcast", request)
         self.assertIn("label it as related", request)
         self.assertIn("Never substitute a merely topic-similar paper", request)

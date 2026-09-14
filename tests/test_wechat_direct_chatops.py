@@ -3833,6 +3833,20 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertTrue(guarded["worker_needed"])
         self.assertFalse(guarded["public_publish_allowed"])
 
+    def test_card_caption_cannot_create_third_party_publication_wait(self) -> None:
+        card = self.row(
+            '<msg><appmsg><type>51</type><finderFeed><desc>@Someone can I publish this video?</desc>'
+            '<nickname>Example channel</nickname></finderFeed></appmsg></msg>',
+            local_type=219043332145,
+        )
+        with mock.patch.object(direct_chatops, "find_pending_third_party_publish_task", return_value=None), \
+                mock.patch.object(direct_chatops, "enqueue_third_party_publish_wait_task") as enqueue:
+            result = direct_chatops.maybe_handle_third_party_publish_consent(
+                {"include_recent_instruction_burst": False}, card, [card], focus_rows=[card],
+            )
+        self.assertIsNone(result)
+        enqueue.assert_not_called()
+
     def test_third_party_publish_consent_waits_then_activates_same_task(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             queue = Path(tmp) / "queue.jsonl"

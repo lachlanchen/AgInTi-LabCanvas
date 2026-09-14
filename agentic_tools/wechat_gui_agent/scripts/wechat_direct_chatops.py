@@ -3274,8 +3274,22 @@ def maybe_handle_third_party_publish_consent(
                 "task_id": activated.get("id"),
                 "ack": "收到，这条消息直接授权发布；我会继续处理原视频。",
             }
-    latest_text = visible_message_text(row)
-    permission_candidate = latest_text if pending else current_request
+    # Card captions and quoted authors are source material, not a request to
+    # publish. Inspect only the human's text in the current coalesced batch.
+    from wechat_quote_reference import parse_quote_reference
+
+    permission_texts = []
+    permission_rows = [row] if pending else expanded_focus_rows(
+        config, row, context_rows, focus_rows=focus_rows,
+    )
+    for item in permission_rows:
+        if split_message_type(item.get("local_type"))[0] == 1:
+            permission_texts.append(visible_message_text(item))
+        elif is_quote_reply_message(item):
+            reference = parse_quote_reference(item.get("content"))
+            if reference:
+                permission_texts.append(reference["request"])
+    permission_candidate = "\n".join(permission_texts)
     if is_third_party_publish_permission_request(permission_candidate, config=config):
         task = enqueue_third_party_publish_wait_task(
             config,

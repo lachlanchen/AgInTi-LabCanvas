@@ -534,6 +534,9 @@ def event_request(event: dict[str, Any]) -> str:
                 "",
                 "Source handling contract:",
                 "- This is an exact same-chat WeCom Shipinhao/Finder card preview.",
+                "- The card itself is a download request by default: recover its native share link, download the verified original, transcribe on configured GPU 1, and return the video and transcript with one concise summary. A second download instruction or a user-pasted URL is not required.",
+                "- Use the active WeCom transport to open this exact card and Copy Link when its embedded URL is missing or expired. Reuse the shared Shipinhao resolver/downloader with the recovered URL; do not search another chat or operate an inactive WeChat/Android login.",
+                "- Preserve explicit current instructions such as save-only or no transcription. Never publicly publish, screen-record a replacement, or treat a missing URL as silent audio. If recovery really fails, report the failed stage once rather than defaulting to asking for a link.",
                 "- Inspect the preview with vision and identify its visible title, account, publisher, and scholarly identifiers before searching.",
                 "- Locate the canonical authoritative source and summarize what the card actually supports.",
                 "- If it refers to scholarship, distinguish a paper from a podcast, news story, editorial, commentary, or video about a paper.",
@@ -1432,6 +1435,9 @@ def wecom_transport_preflight(event: dict[str, Any]) -> dict[str, Any]:
     agent_next_action = "Open and use these exact source-scoped files before answering."
     if str(event.get("msgtype") or "").strip() == "shipinhao_card":
         agent_next_action = (
+            "Recover this exact same-chat card's native share link using the active transport, "
+            "download the verified original, and return video plus transcription without waiting "
+            "for a second request or a user-provided URL. Never publicly publish. "
             "Inspect this exact source-scoped Shipinhao card preview with vision, "
             "identify the canonical source, and recover a verified lawful paper PDF "
             "only when the card actually identifies scholarly work."

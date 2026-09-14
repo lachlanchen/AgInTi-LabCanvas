@@ -288,6 +288,36 @@ class ShipinhaoGuiAudioCaptureTests(unittest.TestCase):
         self.assertAlmostEqual(candidates[0]["center_x"], 95.0, delta=3.0)
         self.assertAlmostEqual(candidates[0]["center_y"], 160.0, delta=3.0)
 
+    def test_cover_refines_between_coarse_scales_without_matching_outbound(self) -> None:
+        try:
+            import cv2
+            import numpy as np
+        except ImportError:
+            self.skipTest("OpenCV is not installed")
+        module = load_module()
+        rng = np.random.default_rng(83)
+        # Include broad shapes and fine texture, like a native card cover.
+        cover = cv2.GaussianBlur(rng.integers(0, 256, (540, 720), dtype=np.uint8), (11, 11), 3)
+        displayed = cv2.resize(cover, (247, 185), interpolation=cv2.INTER_AREA)
+        region = {"left": 100, "top": 50, "width": 1000, "height": 650}
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cv2.imwrite(str(root / "cover.png"), cover)
+            for inbound in (True, False):
+                screen = np.full((800, 1200), 235, dtype=np.uint8)
+                left = 160 if inbound else 800
+                screen[180:365, left:left + 247] = displayed
+                cv2.imwrite(str(root / "screen.png"), screen)
+                candidates = module.exact_cover_candidates(
+                    root / "screen.png", root / "cover.png", region=region, min_confidence=.8,
+                )
+                if inbound:
+                    self.assertEqual(len(candidates), 1)
+                    self.assertEqual(candidates[0]["width"], 247)
+                    self.assertGreater(candidates[0]["match_confidence"], .99)
+                else:
+                    self.assertEqual(candidates, [])
+
     def test_latest_message_button_is_detected_without_ocr(self) -> None:
         try:
             import cv2

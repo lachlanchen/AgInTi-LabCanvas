@@ -21808,7 +21808,7 @@ def build_worker_tool_context(task: dict[str, Any]) -> str:
 {transport_note}
 - Use `{artifact_dir}` as the preferred working/output folder for new artifacts.
 - Match every input file/media path to this task's exact `chat`, `source.local_id`, `source.server_id`, explicit source/reference rows in `request`, or source-scoped context text. Do not borrow files from another group/direct chat or from unrelated previous worker tasks.
-- If the exact requested media is missing, stop with a source-limited message asking the user to resend/provide it instead of using a nearby file.
+- A Shipinhao/Finder card is sufficient input for native share-link recovery, original download, and transcript delivery unless the current user narrows that request. Do not ask for a pasted URL or a second download command before trying the existing exact-card routine on the active source transport. Missing or expired embedded URLs are recovery inputs, not a reason to skip that routine. If recovery fails, report the actual stage once; never substitute nearby media or recordings. For other missing attachments, request a resend only after exact-source recovery is exhausted.
 {matched_routine_note}
 {media_resolution_note}
 - For editable paper-figure grids plus AgInTi image-generation payloads/live images, run:

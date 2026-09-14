@@ -1006,11 +1006,16 @@ def exact_cover_candidates(
     if search.size == 0:
         return []
     best: dict[str, Any] = {}
-    for scale in np.linspace(0.20, 0.90, 36):
-        width = max(24, int(round(cover.shape[1] * float(scale))))
-        height = max(24, int(round(cover.shape[0] * float(scale))))
+    tested_widths: set[int] = set()
+
+    def inspect_width(width: int) -> None:
+        nonlocal best
+        height = max(24, int(round(cover.shape[0] * width / cover.shape[1])))
+        if width in tested_widths:
+            return
+        tested_widths.add(width)
         if width >= search.shape[1] or height >= search.shape[0]:
-            continue
+            return
         resized = cv2.resize(cover, (width, height), interpolation=cv2.INTER_AREA)
         match = cv2.matchTemplate(search, resized, cv2.TM_CCOEFF_NORMED)
         _, confidence, _, location = cv2.minMaxLoc(match)
@@ -1026,6 +1031,16 @@ def exact_cover_candidates(
                 "match_confidence": float(confidence),
                 "score": 5000 + int(float(confidence) * 1000),
             }
+
+    for scale in np.linspace(0.20, 0.90, 36):
+        inspect_width(max(24, int(round(cover.shape[1] * float(scale)))))
+    # A 2% coarse step can miss a native thumbnail by several pixels. Refine
+    # around the best scale without relaxing the identity confidence gate.
+    if best:
+        center = int(best["width"])
+        radius = max(2, int(np.ceil(cover.shape[1] * 0.02)))
+        for width in range(max(24, center - radius), center + radius + 1):
+            inspect_width(width)
     return [best] if float(best.get("match_confidence") or 0.0) >= min_confidence else []
 
 

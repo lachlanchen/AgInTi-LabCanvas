@@ -30,6 +30,12 @@ Keep consecutive quotes distinct in the message ledger, even when the agent
 answers them together. See [quoted source identity](../../../references/wechat-quoted-source-identity-2026-09-14.md)
 for the failure analysis, parser, worker guards, and recovery checks.
 
+Channels cards default to exact native link recovery, original download, and
+transcript delivery; a second download request or pasted URL is not required.
+Source captions cannot authorize publishing or create consent waits. See
+[card-default recovery](../../../references/channels-card-default-download-2026-09-15.md)
+for the thumbnail-scale failure, transport boundaries, and verification steps.
+
 ## Routine Registry
 
 The registry lives in:
