@@ -88,13 +88,15 @@ run to Nutstore byte-for-byte.
 
 ## Shapr3D intake reminder
 
-A `.shapr` archive on Linux is a zip whose `workspace` SQLite mostly stores
-imported Parasolid bodies. OCCT cannot read Parasolid, so a new Shapr design
-must arrive with a STEP export (or already exist under `cad/extracted/`) before
-elements can be adjusted, validated, and rendered here. Use
-`cad/tools/shapr_workspace_probe.py` or the skill's
-`inspect_shapr_step_sources.py` to read names, operation history, and body
-counts from the archive itself.
+Read a `.shapr` archive directly first. Its `workspace` SQLite exposes body and
+folder names, sketch planes and curves in millimetres, the ordered operation
+history with decoded distances and angles, imported-body transforms, and
+Parasolid/schema versions. Decode it with
+`../LazySkills/skills/parametric-cad-design/scripts/shapr_native_decoder.py`
+(or `cad/tools/shapr_workspace_probe.py` for the older summary). Sketch-driven
+native parts can be rebuilt parametrically from that decode alone. Only the
+solid bodies are opaque Parasolid blobs, so for imported or face-edited bodies
+ask for the STEP export as a complement to the archive, not as a precondition.
 
 ## Cross-agent handoff
 

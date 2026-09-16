@@ -142,9 +142,13 @@ def operation_nodes(conn: sqlite3.Connection) -> list[OperationNode]:
         payload = child_payloads[int(node_id)]
         if node_type != 2 or not isinstance(payload, list):
             continue
-        title = str(payload[1]) if len(payload) > 1 else ""
-        operation = str(payload[2]) if len(payload) > 2 else ""
-        children = [int(x) for x in payload[3]] if len(payload) > 3 else []
+        # Newer schemas store [version, version, title, operation, children];
+        # older ones omit the duplicated version. Read from the end so both work.
+        if len(payload) < 3 or not isinstance(payload[-1], list):
+            continue
+        title = str(payload[-3])
+        operation = str(payload[-2])
+        children = [int(x) for x in payload[-1] if isinstance(x, int)]
         body_ids: list[int] = []
         name_ids: list[int] = []
         positions: list[list[float]] = []
@@ -170,20 +174,30 @@ def operation_nodes(conn: sqlite3.Connection) -> list[OperationNode]:
 
 def imported_bodies(conn: sqlite3.Connection) -> list[ImportedBody]:
     bodies: list[ImportedBody] = []
-    rows = conn.execute(
-        "select ImportedBodyID, BodyData from HistoryImportedBodies order by ImportedBodyID"
-    ).fetchall()
+    rows = conn.execute(_imported_body_sql(conn)).fetchall()
     for body_id, data in rows:
         header = "".join(chr(b) if 32 <= b < 127 else "." for b in data[:96])
         bodies.append(ImportedBody(body_id=int(body_id), bytes=len(data), header=header))
     return bodies
 
 
+def _imported_body_sql(conn: sqlite3.Connection) -> str:
+    """Schema 246000+ moved BodyData into HistoryImportedPrototypes."""
+    has_proto = conn.execute(
+        "select 1 from sqlite_master where type='table' and name='HistoryImportedPrototypes'"
+    ).fetchone()
+    if has_proto:
+        return (
+            "select b.ImportedBodyID, p.BodyData from HistoryImportedBodies b "
+            "join HistoryImportedPrototypes p on p.ImportedPrototypeID = b.ImportedPrototypeID "
+            "order by b.ImportedBodyID"
+        )
+    return "select ImportedBodyID, BodyData from HistoryImportedBodies order by ImportedBodyID"
+
+
 def extract_parasolid_bodies(conn: sqlite3.Connection, out_dir: Path) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
-    for body_id, data in conn.execute(
-        "select ImportedBodyID, BodyData from HistoryImportedBodies order by ImportedBodyID"
-    ):
+    for body_id, data in conn.execute(_imported_body_sql(conn)):
         (out_dir / f"body_{int(body_id):05d}.x_b").write_bytes(data)
 
 
@@ -204,7 +218,7 @@ def write_markdown(
     largest = sorted(bodies, key=lambda b: b.bytes, reverse=True)[:20]
 
     lines = [
-        "# Nature.shapr Workspace Probe",
+        f"# {source.name} Workspace Probe",
         "",
         f"Source: `{source}`",
         "",
