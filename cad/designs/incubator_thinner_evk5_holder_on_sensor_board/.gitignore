@@ -1,0 +1,8 @@
+__pycache__/
+runs/
+artifacts/render_meshes/
+artifacts/renders/scene.blend
+artifacts/*.step
+artifacts/*.stl
+artifacts/*.3mf
+USE_THIS_*.step

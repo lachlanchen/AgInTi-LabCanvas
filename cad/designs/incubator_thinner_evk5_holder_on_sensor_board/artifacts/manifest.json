@@ -1,0 +1,272 @@
+{
+  "design": "incubator_thinner_evk5_holder_on_sensor_board",
+  "generated_utc": "20260916T092610Z",
+  "source_step": {
+    "path": "/home/lachlan/Downloads/incubator+thinner.step",
+    "sha256": "e80d1c8cd5285858b9d78a85e67648c4cee600332e673b5ca9704e0fbac414bf",
+    "bytes": 4727564
+  },
+  "source_shapr": {
+    "path": "/home/lachlan/Nutstore Files/Projects/shapr3d/BACKUP/BATCHEXPORT/Incubator thinner.shapr",
+    "sha256": "a65dfe887278703f743e7808f34c773644ac59cb4bdaa4f56ad9c53a49824f3d"
+  },
+  "rule": "translate every solid under assembly node 'EVK 5 holder' so its XY bbox centre lies on the sensor-plate centre (= grating centre = light path) and its lowest face lies on the sensor-plate top face; nothing else changes",
+  "translation_mm": {
+    "dx": 0.0,
+    "dy": 220.0,
+    "dz": 129.0
+  },
+  "optical_axis_xy_mm": {
+    "from_sensor_plate_centre": [
+      141.250001337,
+      143.073333752
+    ],
+    "from_grating_centre": [
+      141.250000251,
+      143.073337784
+    ],
+    "from_grating_window_centre": [
+      141.25,
+      143.073
+    ]
+  },
+  "grating_window": {
+    "x_faces": [
+      116.25,
+      126.25,
+      128.5,
+      154.0,
+      156.25,
+      166.25
+    ],
+    "y_faces": [
+      118.073,
+      128.073,
+      130.323,
+      155.823,
+      158.073,
+      168.073
+    ],
+    "innermost_square_mm": [
+      116.25,
+      118.073,
+      166.25,
+      168.073
+    ],
+    "centre": [
+      141.25,
+      143.073
+    ]
+  },
+  "holder_group": {
+    "solids": 5,
+    "parts": [
+      "light dam wall +Y",
+      "light dam wall -Y",
+      "light dam side -X",
+      "light dam side +X",
+      "EVK 5 holder base (camera pocket)"
+    ],
+    "bbox_before": {
+      "xmin": 102.750001337,
+      "ymin": -109.176666248,
+      "zmin": 0.30159543899999974,
+      "xmax": 179.750001337,
+      "ymax": -44.676666248,
+      "zmax": 17.301595439
+    },
+    "bbox_after": {
+      "xmin": 102.750001337,
+      "ymin": 110.823333752,
+      "zmin": 129.301595439,
+      "xmax": 179.750001337,
+      "ymax": 175.323333752,
+      "zmax": 146.301595439
+    },
+    "volume_mm3": 22263.690101970573
+  },
+  "sensor_plate": {
+    "bbox": {
+      "xmin": 41.250001336999986,
+      "ymin": 93.073333752,
+      "zmin": 126.301595439,
+      "xmax": 241.250001337,
+      "ymax": 193.073333752,
+      "zmax": 129.301595439
+    },
+    "top_z": 129.301595439
+  },
+  "grating": {
+    "bbox": {
+      "xmin": 91.250000251,
+      "ymin": 93.073337784,
+      "zmin": 197.301595439,
+      "xmax": 191.250000251,
+      "ymax": 193.073337784,
+      "zmax": 203.301595439
+    },
+    "bottom_z": 197.301595439
+  },
+  "clearances_mm": {
+    "holder_top_to_grating_bottom": 51.0,
+    "holder_to_plate_edge_x": 61.5,
+    "holder_to_plate_edge_y": 17.75
+  },
+  "upper_shelf_openings": [
+    {
+      "shelf_z": [
+        183.301595439,
+        187.301595439
+      ],
+      "opening_bbox": [
+        91.249997593,
+        93.07333768400001,
+        191.25000291,
+        193.07333788399998
+      ],
+      "holder_inside_opening_xy": true
+    }
+  ],
+  "base_contact_area_mm2": 911.0655047642576,
+  "interference": [],
+  "checks": {
+    "plate_and_grating_share_axis": true,
+    "grating_window_centred_on_axis": true,
+    "holder_centre_on_axis_after_move": true,
+    "holder_base_on_plate_top": true,
+    "holder_footprint_inside_plate": true,
+    "holder_below_grating": true,
+    "no_interference_with_unchanged_parts": true,
+    "base_contact_area_positive": true,
+    "holder_solid_count_unchanged": true,
+    "holder_volume_unchanged": true,
+    "holder_inside_upper_shelf_window_xy": true
+  },
+  "all_checks_pass": true,
+  "observations": [
+    "The sensor plate top (z=129.302) sits 17.000 mm above the lower shelf top; the holder group is 17.000 mm tall. Recorded only; not acted on.",
+    "The export contains no 'EVK 5' camera body; only the holder assembly node was exported."
+  ],
+  "files": {
+    "assembly_moved": "artifacts/incubator_thinner_evk5_holder_on_sensor_board_assembly_moved.step",
+    "holder_moved": "artifacts/evk5_holder_group_moved.step",
+    "holder_original": "artifacts/evk5_holder_group_original_position.step",
+    "context": "artifacts/incubator_context_unchanged.step",
+    "axis_reference": "artifacts/light_path_axis_reference.step",
+    "holder_moved_stl": "artifacts/evk5_holder_group_moved.stl",
+    "holder_moved_3mf": "artifacts/evk5_holder_group_moved.3mf"
+  },
+  "use_this": "USE_THIS_incubator_thinner_evk5_holder_on_sensor_board_assembly_moved.step",
+  "render_meshes": {
+    "holder_moved": "artifacts/render_meshes/holder_moved.stl",
+    "holder_original": "artifacts/render_meshes/holder_original.stl",
+    "sensor_plate": "artifacts/render_meshes/sensor_plate.stl",
+    "grating": "artifacts/render_meshes/grating.stl",
+    "walls": "artifacts/render_meshes/walls.stl",
+    "lower_shelf": "artifacts/render_meshes/lower_shelf.stl",
+    "upper_shelf": "artifacts/render_meshes/upper_shelf.stl",
+    "stage": "artifacts/render_meshes/stage.stl",
+    "rest": "artifacts/render_meshes/rest.stl",
+    "axis": "artifacts/render_meshes/axis.stl"
+  },
+  "step_roundtrip": {
+    "assembly_moved": {
+      "solids": 21,
+      "invalid_solid_indices": [
+        5
+      ],
+      "bbox": {
+        "xmin": -22.749999832,
+        "ymin": 20.573332571,
+        "zmin": 90.301595439,
+        "xmax": 291.750000335,
+        "ymax": 275.573332711,
+        "zmax": 350.301595439
+      }
+    },
+    "holder_moved": {
+      "solids": 5,
+      "invalid_solid_indices": [],
+      "bbox": {
+        "xmin": 102.750001337,
+        "ymin": 110.823333752,
+        "zmin": 129.301595439,
+        "xmax": 179.750001337,
+        "ymax": 175.323333752,
+        "zmax": 146.301595439
+      }
+    },
+    "holder_original": {
+      "solids": 5,
+      "invalid_solid_indices": [],
+      "bbox": {
+        "xmin": 102.750001337,
+        "ymin": -109.176666248,
+        "zmin": 0.30159543899999974,
+        "xmax": 179.750001337,
+        "ymax": -44.676666248,
+        "zmax": 17.301595439
+      }
+    },
+    "context": {
+      "solids": 16,
+      "invalid_solid_indices": [
+        5
+      ],
+      "bbox": {
+        "xmin": -22.749999832,
+        "ymin": 20.573332571,
+        "zmin": 90.301595439,
+        "xmax": 291.750000335,
+        "ymax": 275.573332711,
+        "zmax": 350.301595439
+      }
+    },
+    "axis_reference": {
+      "solids": 1,
+      "invalid_solid_indices": [],
+      "bbox": {
+        "xmin": 140.750001337,
+        "ymin": 142.573333752,
+        "zmin": 119.301595439,
+        "xmax": 141.750001337,
+        "ymax": 143.573333752,
+        "zmax": 213.301595439
+      }
+    }
+  },
+  "unchanged_parts": [
+    {
+      "group": "NHI in incubator",
+      "parts": [
+        "Diffraction grating",
+        "Sensor"
+      ]
+    },
+    {
+      "group": "FSK30 E200-BC-B35.STEP",
+      "parts": [
+        "\u96f6\u4ef639^FSL30-BC-B35",
+        "\u96f6\u4ef638^FSL30-BC-B35",
+        "\u540e\u677fFSL30",
+        "\u96f6\u4ef641^FSL30-BC-B35",
+        "\u96f6\u4ef640^FSL30-BC-B35"
+      ]
+    },
+    {
+      "group": "Incubator enclosure",
+      "parts": [
+        "vertical rail",
+        "vertical rail",
+        "lower shelf",
+        "upper shelf with window",
+        "right wall",
+        "left wall",
+        "back wall",
+        "floor plate",
+        "lid plate"
+      ]
+    }
+  ],
+  "source_validity_note": "STEP round-trip flags one source solid (FSK30 stage part, 796 faces) as invalid in OCCT; it comes from the vendor import in the original export and is copied through unchanged."
+}
