@@ -30,6 +30,7 @@ PAL = {
     "stage": (0.20, 0.21, 0.23, 1.0),
     "rest": (0.30, 0.31, 0.33, 1.0),
     "slider": (0.13, 0.14, 0.16, 1.0),
+    "led_holder": (0.85, 0.33, 0.06, 1.0),
     "lumileds_pcb": (0.05, 0.28, 0.12, 1.0),
     "lumileds_pcb_parts": (0.75, 0.75, 0.72, 1.0),
     "lumileds_led": (1.0, 0.95, 0.70, 1.0),
@@ -211,10 +212,10 @@ def main() -> None:
     setup(args.samples, args.scale)
     objs = {k: import_stl(meshes / f"{k}.stl", k, v) for k, v in PAL.items()}
     objs = {k: v for k, v in objs.items() if v}
-    for k in ("slider", "lumileds_pcb", "lumileds_pcb_parts", "lumileds_led"):
+    for k in ("slider", "led_holder", "lumileds_pcb", "lumileds_pcb_parts", "lumileds_led"):
         if k in objs:
             objs[k].hide_render = True
-    lo, hi = bounds([v for k, v in objs.items() if k not in ("slider", "lumileds_pcb", "lumileds_pcb_parts", "lumileds_led")])
+    lo, hi = bounds([v for k, v in objs.items() if k not in ("slider", "led_holder", "lumileds_pcb", "lumileds_pcb_parts", "lumileds_led")])
     lid_top = hi.z
     axis = add_axis(ax_xy[0], ax_xy[1], holder_bb["zmax"] - 8.0, lid_top + 25.0)
     beam = add_light_cone(ax_xy[0], ax_xy[1], grating_top + 60.0, holder_bb["zmax"] + 0.5, 4.0, 6.0)
@@ -229,9 +230,11 @@ def main() -> None:
     prop = manifest.get("figure_proposal", {})
     slider_c = Vector((ax_xy[0], ax_xy[1], (prop.get("rail_bottom_z", 300) + prop.get("carriage_bottom_z", 290)) / 2)) if prop else None
     led_c = Vector((ax_xy[0], ax_xy[1], prop.get("board_component_face_z", 283))) if prop else None
+    holder_led_c = Vector((ax_xy[0] + 18.0, ax_xy[1] - 18.0, sum(prop.get("holder_z", [282, 290])) / 2)) if prop else None
     anchors = {"holder": holder_c,
                "slider": slider_c if slider_c else holder_c,
                "lumileds_pcb": led_c if led_c else holder_c,
+               "led_holder": holder_led_c if holder_led_c else holder_c,
                "holder_top": Vector((holder_c.x + 12.0, holder_c.y - 14.0, holder_bb["zmax"])),
                "grating": grating_c,
                "grating_edge": Vector((gb["xmin"] + 8.0, gb["ymin"] + 8.0, gb["zmax"])),
@@ -252,7 +255,7 @@ def main() -> None:
     bpy.data.objects.remove(cam)
 
     # Fig A2: same view, clean: no rails, no axis line, with the proposed stage slider + Lumileds PCB
-    for k in ("slider", "lumileds_pcb", "lumileds_pcb_parts", "lumileds_led"):
+    for k in ("slider", "led_holder", "lumileds_pcb", "lumileds_pcb_parts", "lumileds_led"):
         if k in objs:
             objs[k].hide_render = False
     if "rest" in objs:
@@ -265,7 +268,26 @@ def main() -> None:
     axis.hide_render = False
     if "rest" in objs:
         objs["rest"].hide_render = False
-    for k in ("slider", "lumileds_pcb", "lumileds_pcb_parts", "lumileds_led"):
+    for k in ("slider", "led_holder", "lumileds_pcb", "lumileds_pcb_parts", "lumileds_led"):
+        if k in objs:
+            objs[k].hide_render = True
+
+    # Fig F: front elevation (orthographic from -Y): slider, LED holder, grating window, EVK 5 holder on one vertical line
+    for k in ("slider", "led_holder", "lumileds_pcb", "lumileds_pcb_parts", "lumileds_led"):
+        if k in objs:
+            objs[k].hide_render = False
+    if "rest" in objs:
+        objs["rest"].hide_render = True
+    axis.hide_render = True
+    zc = (plate_top + prop.get("rail_bottom_z", 300)) / 2
+    cam = camera(Vector((ax_xy[0], ax_xy[1] - 1500, zc)), Vector((ax_xy[0], ax_xy[1], zc)), ortho=(hi.x - lo.x) * 1.08)
+    render(out / "figF_front_elevation_alignment.png")
+    anchors_json(out / "figF_front_elevation_alignment_labels.json", cam, anchors)
+    bpy.data.objects.remove(cam)
+    axis.hide_render = False
+    if "rest" in objs:
+        objs["rest"].hide_render = False
+    for k in ("slider", "led_holder", "lumileds_pcb", "lumileds_pcb_parts", "lumileds_led"):
         if k in objs:
             objs[k].hide_render = True
 

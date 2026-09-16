@@ -25,12 +25,14 @@ LABELS = {
     "incubator": "Incubator",
     "slider": "Linear stage slider (proposed)",
     "lumileds_pcb": "Lumileds LED PCB (proposed)",
+    "led_holder": "LED holder (proposed)",
 }
 # per figure: which labels, and where to put the text (fraction of width/height, from top-left)
 # value: (text x fraction, text y fraction[, anchor key]) ; anchor defaults to the label key
 FIGS = {
     "figA_incubator_overview": {"holder": (0.82, 0.80, "holder_top"), "grating": (0.82, 0.55, "grating_edge"), "sensor_board": (0.16, 0.86, "sensor_board_left"), "light_path": (0.64, 0.12, "light_path_high"), "incubator": (0.12, 0.30)},
-    "figA2_incubator_overview_clean_slider": {"holder": (0.82, 0.80, "holder_top"), "grating": (0.82, 0.55, "grating_edge"), "sensor_board": (0.16, 0.86, "sensor_board_left"), "slider": (0.80, 0.14), "lumileds_pcb": (0.80, 0.26), "incubator": (0.12, 0.30)},
+    "figA2_incubator_overview_clean_slider": {"holder": (0.82, 0.80, "holder_top"), "grating": (0.82, 0.55, "grating_edge"), "sensor_board": (0.16, 0.86, "sensor_board_left"), "slider": (0.80, 0.12), "led_holder": (0.82, 0.24), "lumileds_pcb": (0.82, 0.34), "incubator": (0.12, 0.30)},
+    "figF_front_elevation_alignment": {"slider": (0.80, 0.10), "led_holder": (0.80, 0.20), "grating": (0.20, 0.50, "grating_edge"), "holder": (0.80, 0.72, "holder_top"), "sensor_board": (0.18, 0.80, "sensor_board_left")},
     "figB_optical_stack": {"holder": (0.80, 0.80, "holder_top"), "grating": (0.20, 0.22, "grating_edge"), "sensor_board": (0.14, 0.72, "sensor_board_left"), "light_path": (0.64, 0.08, "light_path_low"), "upper_shelf_window": (0.84, 0.38, "upper_shelf_window_right")},
     "figC_holder_under_grating_closeup": {"holder": (0.80, 0.84, "holder_top"), "grating": (0.18, 0.18, "grating_edge"), "sensor_board": (0.14, 0.86, "sensor_board_left"), "light_path": (0.64, 0.07, "light_path_low")},
     "figD_top_view_centred": {"holder": (0.80, 0.86, "holder_top"), "sensor_board": (0.16, 0.12, "sensor_board_left"), "light_path": (0.64, 0.10, "light_path_low")},

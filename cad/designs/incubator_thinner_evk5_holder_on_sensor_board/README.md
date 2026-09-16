@@ -30,14 +30,20 @@ Date: 2026-09-16
   are the `LABELS` and `FIGS` tables in the compose script.
 - `figA2_incubator_overview_clean_slider`: the overview without the two
   vertical rails (`Body 170`, `Body 170 (1)`) and without the light-path line,
-  plus a proposed slider carriage under the FSL30 stage rail carrying the
-  Lumileds LED board (`pcb/lumileds-no-resistor`, KiCad STEP, LED proxy
-  3 x 3 x 1.4 mm because the footprint has no 3D model) with the LED centred on
-  the light path. That layer is illustration only: it lives in
+  plus a proposed slider carriage under the FSL30 stage rail, the repo's
+  Lumileds cage holder (`cad/designs/lumileds_pcb_aligned_sink_cage_holder`)
+  screwed under the carriage, and the Lumileds board
+  (`pcb/lumileds-no-resistor`, KiCad STEP) seated in the holder's rear sink with
+  its LED facing down on the light path (LED proxy 3 x 3 x 1.4 mm because the
+  footprint has no 3D model). That layer is illustration only: it lives in
   `artifacts/proposal/stage_slider_with_lumileds_pcb_proposal.step`, is not
-  merged into `USE_THIS_*.step`, and its numbers (carriage 60 x 35 x 10 mm under
-  the rail, 5 mm standoffs, LED 78.6 mm above the grating, no collisions) are in
-  `manifest.json` under `figure_proposal`.
+  merged into `USE_THIS_*.step`, and its numbers (carriage 60 x 35 x 10 mm, LED
+  77.2 mm above the grating, no collision with the model, one 37 mm3 overlap
+  between the horizontal pin-header body and the holder rim that a real build
+  would relieve) are in `manifest.json` under `figure_proposal`.
+- `figF_front_elevation_alignment`: orthographic front elevation showing the
+  slider, LED holder, grating window and EVK5 holder on one vertical line, which
+  proves the slider is at the light-path X (box centre), not at the rail end.
 
 ## What Was Asked
 

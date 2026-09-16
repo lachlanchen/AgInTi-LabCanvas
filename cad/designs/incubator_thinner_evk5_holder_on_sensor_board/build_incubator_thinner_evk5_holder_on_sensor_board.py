@@ -55,6 +55,7 @@ DEFAULT_SOURCE = Path("/home/lachlan/Downloads/incubator+thinner.step")
 SOURCE_SHAPR = Path("/home/lachlan/Nutstore Files/Projects/shapr3d/BACKUP/BATCHEXPORT/Incubator thinner.shapr")
 NUTSTORE_ROOT = Path("/home/lachlan/Nutstore Files/Projects/LabCanvas")
 LUMILEDS_PCB_STEP = ROOT / "pcb/lumileds-no-resistor/artifacts/lumileds-no-resistor.step"
+LUMILEDS_HOLDER_STEP = ROOT / "cad/designs/lumileds_pcb_aligned_sink_cage_holder/USE_THIS_lumileds_pcb_aligned_sink_cage_holder.step"
 STAGE_NODE = "FSK30 E200-BC-B35.STEP"
 SLIDER_LENGTH_MM = 60.0     # along the rail (X)
 SLIDER_THICKNESS_MM = 10.0  # hangs below the rail's bottom face
@@ -319,9 +320,12 @@ def step_summary(path: Path) -> dict[str, Any]:
 # ----------------------------------------------------------------------------- figure proposal
 
 def build_stage_slider_proposal(rail: cq.Solid, axis_xy: tuple[float, float]) -> dict[str, Any]:
-    """Slider carriage under the FSL30 rail carrying the Lumileds LED board, LED facing down on the light path.
+    """Slider carriage under the FSL30 rail, the repo's Lumileds cage holder screwed to it, the Lumileds board
+    seated in the holder's rear sink with its LED facing down on the light path.
 
-    This is an added illustration layer for the paper figure, not part of the user's source model.
+    Added illustration layer for the paper figure; not part of the user's source model.
+    Holder placement follows cad/designs/lumileds_pcb_aligned_sink_cage_holder (PCB in the rear sink,
+    component side outward, header pins through the relief slot).
     """
     rb = bbox(rail)
     rail_cy = (rb["ymin"] + rb["ymax"]) / 2.0
@@ -331,34 +335,37 @@ def build_stage_slider_proposal(rail: cq.Solid, axis_xy: tuple[float, float]) ->
     carriage = (cq.Workplane("XY").box(SLIDER_LENGTH_MM, rail_w, SLIDER_THICKNESS_MM, centered=(True, True, False))
                 .edges("|Z").chamfer(2.0).translate(cq.Vector(x, y, z_rail_bottom - SLIDER_THICKNESS_MM)))
     z_carriage_bottom = z_rail_bottom - SLIDER_THICKNESS_MM
-    standoffs = []
-    for sx in (-6.0, 6.0):
-        for sy in (-6.0, 6.0):
-            standoffs.append(cq.Workplane("XY").circle(STANDOFF_DIAMETER_MM / 2).extrude(STANDOFF_HEIGHT_MM)
-                             .translate(cq.Vector(x + sx, y + sy, z_carriage_bottom - STANDOFF_HEIGHT_MM)).val())
+    # holder: local z=+4 is the plain front face (against the carriage), local z=-4 is the rear face with the PCB sink
+    holder_src = cq.importers.importStep(str(LUMILEDS_HOLDER_STEP)).solids().vals()[0]
+    hb = bbox(holder_src)
+    holder = holder_src.translate(cq.Vector(x - (hb["xmin"] + hb["xmax"]) / 2, y - (hb["ymin"] + hb["ymax"]) / 2, z_carriage_bottom - hb["zmax"]))
+    hbw = bbox(holder)
+    sink_floor_z = hbw["zmin"] + 1.65   # 24.4 mm sink, 1.65 mm deep, cut into the rear (bottom) face
+    # board: KiCad export, back face at local z=0, component side +z; flip so the component side faces down
     pcb_src = cq.importers.importStep(str(LUMILEDS_PCB_STEP))
     solids = pcb_src.solids().vals()
     board = max(solids, key=lambda s: s.Volume())
     bb = bbox(board)
     cx, cy, cz = (bb["xmin"] + bb["xmax"]) / 2, (bb["ymin"] + bb["ymax"]) / 2, bb["zmin"]
     thickness = bb["zmax"] - bb["zmin"]
-    z_board_top = z_carriage_bottom - STANDOFF_HEIGHT_MM  # back face of the flipped board touches the standoffs
     def place(sol: cq.Solid) -> cq.Solid:
-        flipped = sol.rotate(cq.Vector(cx, cy, cz), cq.Vector(cx + 1, cy, cz), 180.0)  # component side now faces -Z, back face at z=cz
-        return flipped.translate(cq.Vector(x - cx, y - cy, z_board_top - cz))
+        flipped = sol.rotate(cq.Vector(cx, cy, cz), cq.Vector(cx + 1, cy, cz), 180.0)   # back face stays at z=cz, components now below it
+        return flipped.translate(cq.Vector(x - cx, y - cy, sink_floor_z - cz))
     board_p = place(board)
     parts_p = [place(sol) for sol in solids if sol is not board]
+    component_face_z = sink_floor_z - thickness
     led = (cq.Workplane("XY").box(*LED_PROXY_MM, centered=(True, True, False))
-           .translate(cq.Vector(x, y, z_board_top - thickness - LED_PROXY_MM[2])).val())
-    items = [("stage slider carriage (proposed)", carriage.val())] + [(f"standoff {i + 1} (proposed)", so) for i, so in enumerate(standoffs)] \
-        + [("Lumileds LED PCB (KiCad lumileds-no-resistor)", board_p)] + [(f"PCB part {i + 1}", p) for i, p in enumerate(parts_p)] \
+           .translate(cq.Vector(x, y, component_face_z - LED_PROXY_MM[2])).val())
+    items = [("stage slider carriage (proposed)", carriage.val()), ("Lumileds cage holder (cad/designs/lumileds_pcb_aligned_sink_cage_holder)", holder),
+             ("Lumileds LED PCB (KiCad lumileds-no-resistor)", board_p)] + [(f"PCB part {i + 1}", p) for i, p in enumerate(parts_p)] \
         + [("LED proxy LXCL-MN08 (3x3x1.4)", led)]
     return {
         "items": items,
-        "meshes": {"slider": [carriage.val()] + standoffs, "lumileds_pcb": [board_p], "lumileds_pcb_parts": parts_p, "lumileds_led": [led]},
+        "meshes": {"slider": [carriage.val()], "led_holder": [holder], "lumileds_pcb": [board_p], "lumileds_pcb_parts": parts_p, "lumileds_led": [led]},
         "numbers": {"rail_bottom_z": z_rail_bottom, "rail_centre_y": rail_cy, "rail_width_mm": rail_w, "carriage_bottom_z": z_carriage_bottom,
-                    "board_back_face_z": z_board_top, "board_component_face_z": z_board_top - thickness, "led_bottom_z": z_board_top - thickness - LED_PROXY_MM[2],
-                    "led_centre_xy": [x, y], "board_source": str(LUMILEDS_PCB_STEP)},
+                    "holder_z": [hbw["zmin"], hbw["zmax"]], "holder_source": str(LUMILEDS_HOLDER_STEP),
+                    "board_back_face_z": sink_floor_z, "board_component_face_z": component_face_z,
+                    "led_bottom_z": component_face_z - LED_PROXY_MM[2], "led_centre_xy": [x, y], "board_source": str(LUMILEDS_PCB_STEP)},
     }
 
 
@@ -531,6 +538,14 @@ def build(source: Path, sync: bool) -> dict[str, Any]:
                 if inter.isValid() and inter.Volume() > TOL:
                     prop_collisions.append({"proposal": name, "other_solid": i, "volume_mm3": inter.Volume()})
     proposal["numbers"]["collisions_with_model"] = prop_collisions
+    internal = []
+    holder_sol = proposal["meshes"]["led_holder"][0]
+    for name in ("lumileds_pcb", "lumileds_pcb_parts", "lumileds_led"):
+        for sol in proposal["meshes"][name]:
+            inter = sol.intersect(holder_sol)
+            if inter.isValid() and inter.Volume() > TOL:
+                internal.append({"part": name, "volume_mm3": inter.Volume()})
+    proposal["numbers"]["collisions_inside_proposal"] = internal
     proposal["numbers"]["led_on_light_path"] = abs(proposal["numbers"]["led_centre_xy"][0] - axis[0]) < 1e-6 and abs(proposal["numbers"]["led_centre_xy"][1] - axis[1]) < 0.5
     proposal["numbers"]["led_to_grating_top_mm"] = proposal["numbers"]["led_bottom_z"] - gb["zmax"]
 

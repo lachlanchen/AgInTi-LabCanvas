@@ -1,6 +1,6 @@
 {
   "design": "incubator_thinner_evk5_holder_on_sensor_board",
-  "generated_utc": "20260916T125726Z",
+  "generated_utc": "20260916T130551Z",
   "source_step": {
     "path": "/home/lachlan/Downloads/incubator+thinner.step",
     "sha256": "e80d1c8cd5285858b9d78a85e67648c4cee600332e673b5ca9704e0fbac414bf",
@@ -152,17 +152,28 @@
     "rail_centre_y": 143.073332878,
     "rail_width_mm": 35.00722746276904,
     "carriage_bottom_z": 289.79798170761546,
-    "board_back_face_z": 284.79798170761546,
-    "board_component_face_z": 283.2879817076155,
-    "led_bottom_z": 281.8879817076155,
+    "holder_z": [
+      281.79798170761546,
+      289.79798170761546
+    ],
+    "holder_source": "/home/lachlan/ProjectsLFS/AgenticApp/cad/designs/lumileds_pcb_aligned_sink_cage_holder/USE_THIS_lumileds_pcb_aligned_sink_cage_holder.step",
+    "board_back_face_z": 283.44798170761544,
+    "board_component_face_z": 281.93798170761545,
+    "led_bottom_z": 280.5379817076155,
     "led_centre_xy": [
       141.250001337,
       143.073332878
     ],
     "board_source": "/home/lachlan/ProjectsLFS/AgenticApp/pcb/lumileds-no-resistor/artifacts/lumileds-no-resistor.step",
     "collisions_with_model": [],
+    "collisions_inside_proposal": [
+      {
+        "part": "lumileds_pcb_parts",
+        "volume_mm3": 36.98392478787715
+      }
+    ],
     "led_on_light_path": true,
-    "led_to_grating_top_mm": 78.58638626861548
+    "led_to_grating_top_mm": 77.23638626861546
   },
   "files": {
     "assembly_moved": "artifacts/incubator_thinner_evk5_holder_on_sensor_board_assembly_moved.step",
@@ -187,6 +198,7 @@
     "rest": "artifacts/render_meshes/rest.stl",
     "axis": "artifacts/render_meshes/axis.stl",
     "slider": "artifacts/render_meshes/slider.stl",
+    "led_holder": "artifacts/render_meshes/led_holder.stl",
     "lumileds_pcb": "artifacts/render_meshes/lumileds_pcb.stl",
     "lumileds_pcb_parts": "artifacts/render_meshes/lumileds_pcb_parts.stl",
     "lumileds_led": "artifacts/render_meshes/lumileds_led.stl"
@@ -257,14 +269,14 @@
       }
     },
     "proposal_slider_pcb": {
-      "solids": 18,
+      "solids": 15,
       "invalid_solid_indices": [],
       "bbox": {
         "xmin": 111.25000133699501,
-        "ymin": 125.56971914661,
-        "zmin": 281.88298170755564,
+        "ymin": 122.073332878,
+        "zmin": 280.5329817075556,
         "xmax": 171.250001337,
-        "ymax": 160.576946609385,
+        "ymax": 164.073332878,
         "zmax": 299.79798170761
       }
     }
