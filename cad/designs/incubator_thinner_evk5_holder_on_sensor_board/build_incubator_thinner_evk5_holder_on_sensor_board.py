@@ -504,9 +504,10 @@ def package_run(manifest: dict[str, Any], sync: bool) -> Path:
     run = DESIGN_DIR / "runs" / f"run-1-holder-on-sensor-board-{manifest['generated_utc']}"
     if run.exists():
         shutil.rmtree(run)
-    shutil.copytree(DESIGN_DIR / "artifacts", run / "artifacts")
+    shutil.copytree(DESIGN_DIR / "artifacts", run / "artifacts", ignore=shutil.ignore_patterns("*.blend", "*.blend1", "render_meshes"))
     shutil.copy2(DESIGN_DIR / manifest["use_this"], run / Path(manifest["use_this"]).name)
-    for extra in ("README.md", Path(__file__).name):
+    for extra in ("README.md", Path(__file__).name, "render_incubator_thinner_evk5_holder_on_sensor_board.py",
+                  "render_paper_figure_incubator_thinner_evk5_holder.py", "compose_paper_figure_labels.py"):
         if (DESIGN_DIR / extra).exists():
             shutil.copy2(DESIGN_DIR / extra, run / extra)
     if sync:

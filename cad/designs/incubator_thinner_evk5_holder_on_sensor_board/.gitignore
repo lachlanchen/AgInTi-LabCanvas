@@ -6,3 +6,5 @@ artifacts/*.step
 artifacts/*.stl
 artifacts/*.3mf
 USE_THIS_*.step
+artifacts/paper_figure/*
+!artifacts/paper_figure/*_labels.json

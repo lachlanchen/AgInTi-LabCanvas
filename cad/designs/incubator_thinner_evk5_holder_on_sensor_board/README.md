@@ -16,8 +16,18 @@ Date: 2026-09-16
 - `artifacts/light_path_axis_reference.step`: a 1 mm rod on the optical axis
   from below the sensor plate to above the grating. Reference only.
 - `artifacts/manifest.json`: numbers, checks, source hashes.
-- `artifacts/renders/`: overview with the original position as a ghost, inside
-  view, top view, side elevation, and holder detail.
+- `artifacts/renders/`: engineering check views (overview with the original
+  position as a ghost, inside view, top view, side elevation, holder detail).
+- `artifacts/paper_figure/`: publication renders, 2400 x 1800 px, EEVEE, white
+  background. For each of `figA_incubator_overview`, `figB_optical_stack`,
+  `figC_holder_under_grating_closeup`, `figD_top_view_centred`,
+  `figE_section_through_light_path` there is a plain `.png`, a
+  `_transparent.png` for compositing, and a `_labelled` `.png`/`.pdf`/`.svg`
+  with leader-line labels (EVK5 holder, sensor board, diffraction grating,
+  light path, shelf window, incubator). Regenerate with
+  `render_paper_figure_incubator_thinner_evk5_holder.py` (Blender) followed by
+  `compose_paper_figure_labels.py` (CAD Python); label wording and positions
+  are the `LABELS` and `FIGS` tables in the compose script.
 
 ## What Was Asked
 
