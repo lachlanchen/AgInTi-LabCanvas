@@ -27,7 +27,10 @@ board, centred and aligned on the light path, and change nothing else.
 ## What Was Done
 
 One rigid translation applied to all five solids under the `EVK 5 holder`
-assembly node of the user's Shapr3D export `incubator+thinner.step`:
+folder of the user's Shapr3D export `incubator+thinner.step`. Those five bodies
+are, by their STEP labels: `EVK 5 holder (3)` (base with the camera pocket),
+`Dam 1 (3)` and `Dam 2 (3)` (light-dam walls), `Sample holder outskirt (8)` and
+`(9)` (light-dam sides). The folder's `Aux` subfolder is empty in the export.
 
 ```text
 dx = 0.000 mm
@@ -40,8 +43,8 @@ Move by `Y +220 mm`, `Z +129 mm`.
 
 Rule that produced the vector:
 
-1. Optical axis: the `Sensor` plate under `NHI in incubator` is
-   `200 x 100 x 3 mm`; its XY centre `(141.250, 143.073)` is identical to the
+1. Optical axis: the sensor board (`Sensor board EBS 0cm (2)*2 (2)` under
+   `NHI in incubator / Sensor`) is `200 x 100 x 3 mm`; its XY centre `(141.250, 143.073)` is identical to the
    `Diffraction grating` centre and to the centre of the grating's innermost
    `25.5 mm` square window, so that vertical line is the light path.
 2. Lateral: the holder group's XY bounding-box centre, which is also the centre
@@ -66,9 +69,10 @@ All checks are recorded in `manifest.json` under `checks`.
 
 ## Not Included
 
-- The export contains no `EVK 5` camera body. The archive's `EVK 5` folder holds
-  five imported bodies, but they were not in the STEP. When the camera STEP is
-  supplied, the build can align the camera's lens axis instead of the pocket
+- The export contains no `EVK 5` camera body. In the archive the `EVK 5`
+  folder (five imported camera bodies) sits under the hidden `NHI` folder, not
+  under `EVK 5 holder`, so Shapr3D skipped it. Unhide `NHI` > `EVK 5` and export
+  it, and the build can align the camera's lens axis instead of the pocket
   centre and add the camera to the renders.
 - Nothing else in the model was edited. One vendor stage solid
   (`零件41^FSL30-BC-B35`, 796 faces) is reported invalid by OCCT already in the

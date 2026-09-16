@@ -174,6 +174,61 @@ def contact_area(lower_top_z: float, plate: cq.Solid, moved_holder_solids: list[
 
 # ----------------------------------------------------------------------------- STEP out
 
+import re
+
+
+def step_body_names(path: Path) -> list[dict[str, Any]]:
+    """Read MANIFOLD_SOLID_BREP labels from the STEP text and locate each body by its vertex bbox.
+
+    XCAF sub-shape names crash in this OCP build, so the names are matched to imported
+    solids through the exact vertex bounding box (size and position within 0.01 mm).
+    """
+    txt = path.read_text(errors="ignore")
+    data = txt[txt.index("DATA;"):]
+    ent: dict[int, tuple[str, str]] = {}
+    for m in re.finditer(r"#(\d+)\s*=\s*([A-Z_0-9]+)\s*\((.*?)\)\s*;", data, re.S):
+        ent[int(m.group(1))] = (m.group(2), m.group(3))
+    ref_re = re.compile(r"#(\d+)")
+    skip = {"CARTESIAN_POINT", "DIRECTION", "AXIS2_PLACEMENT_3D", "PLANE", "CYLINDRICAL_SURFACE", "CIRCLE", "LINE",
+            "VECTOR", "B_SPLINE_SURFACE_WITH_KNOTS", "B_SPLINE_CURVE_WITH_KNOTS", "CONICAL_SURFACE",
+            "TOROIDAL_SURFACE", "SPHERICAL_SURFACE", "ELLIPSE", "SURFACE_OF_REVOLUTION", "SURFACE_OF_LINEAR_EXTRUSION"}
+    out = []
+    for eid, (typ, args) in ent.items():
+        if typ != "MANIFOLD_SOLID_BREP":
+            continue
+        name = re.match(r"'([^']*)'", args).group(1)
+        seen: set[int] = set()
+        stack = [eid]
+        pts = []
+        while stack:
+            e = stack.pop()
+            if e in seen or e not in ent:
+                continue
+            seen.add(e)
+            t, a = ent[e]
+            if t == "VERTEX_POINT":
+                pid = int(ref_re.findall(a)[0])
+                nums = re.findall(r"(-?[\d.Ee+-]+)", ent[pid][1].split("(", 1)[1])
+                pts.append(tuple(float(x) for x in nums[:3]))
+                continue
+            if t in skip:
+                continue
+            stack.extend(int(r) for r in ref_re.findall(a))
+        if pts:
+            xs, ys, zs = zip(*pts)
+            out.append({"name": readable_source_name(name), "bbox": [min(xs), min(ys), min(zs), max(xs), max(ys), max(zs)]})
+    return out
+
+
+def match_body_name(solid: cq.Solid, catalog: list[dict[str, Any]]) -> str | None:
+    b = bbox(solid)
+    mine = [b["xmin"], b["ymin"], b["zmin"], b["xmax"], b["ymax"], b["zmax"]]
+    for entry in catalog:
+        if all(abs(x - y) < 0.01 for x, y in zip(mine, entry["bbox"])):
+            return entry["name"]
+    return None
+
+
 def write_named_step(path: Path, groups: list[tuple[str, list[tuple[str, cq.Shape]]]], root_name: str) -> None:
     """Write root -> group -> named part hierarchy (names survive Shapr3D/FreeCAD import)."""
     doc = TDocStd_Document(TCollection_ExtendedString("out"))
@@ -334,19 +389,27 @@ def build(source: Path, sync: bool) -> dict[str, Any]:
         inner = [x for x in p["path"][1:-1] if x]
         return readable_source_name(inner[-1]) if inner else "Incubator enclosure"
 
-    def part_items(parts_list: list[dict[str, Any]], moved: bool = False) -> list[tuple[str, list[tuple[str, cq.Shape]]]]:
+    catalog = step_body_names(source)
+
+    def part_items(parts_list: list[dict[str, Any]], moved: bool = False, untranslate: bool | None = None) -> list[tuple[str, list[tuple[str, cq.Shape]]]]:
+        """Name every solid by its STEP body label; add the geometric role for the holder/enclosure."""
         grouped: dict[str, list[tuple[str, cq.Shape]]] = {}
         gb_all = bbox(cq.Compound.makeCompound([s for p in parts_list for s in p["solids"]])) if parts_list else None
         for p in parts_list:
             g = group_of(p)
             raw = readable_source_name(p["name"])
             for k, sol in enumerate(p["solids"]):
+                back = moved if untranslate is None else untranslate
+                probe = sol.translate(cq.Vector(-dx, -dy, -dz)) if back else sol
+                label = match_body_name(probe, catalog)
                 if moved:
-                    nm = holder_part_name(sol, gb_all)
+                    role = holder_part_name(sol, gb_all)
+                    nm = f"{label} ({role})" if label else role
                 elif raw.startswith("=>") or raw in ("COMPOUND", "SOLID"):
-                    nm = role_name(sol, f"enclosure part {k + 1}")
+                    role = role_name(sol, f"enclosure part {k + 1}")
+                    nm = f"{label} ({role})" if label else role
                 else:
-                    nm = raw + (f" [{k + 1}]" if len(p["solids"]) > 1 else "")
+                    nm = label or (raw + (f" [{k + 1}]" if len(p["solids"]) > 1 else ""))
                 grouped.setdefault(g, []).append((nm, sol))
         return list(grouped.items())
 
@@ -357,7 +420,7 @@ def build(source: Path, sync: bool) -> dict[str, Any]:
     files["holder_moved"] = art / "evk5_holder_group_moved.step"
     write_named_step(files["holder_moved"], [("EVK 5 holder (moved)", part_items(moved_parts, moved=True)[0][1])], "EVK 5 holder group moved")
     files["holder_original"] = art / "evk5_holder_group_original_position.step"
-    write_named_step(files["holder_original"], [("EVK 5 holder (original export position)", part_items(holder_parts, moved=True)[0][1])], "EVK 5 holder group original position")
+    write_named_step(files["holder_original"], [("EVK 5 holder (original export position)", part_items(holder_parts, moved=True, untranslate=False)[0][1])], "EVK 5 holder group original position")
     files["context"] = art / "incubator_context_unchanged.step"
     write_named_step(files["context"], part_items(other_parts), "Incubator thinner - unchanged parts")
     axis_len = gb["zmax"] - pb["zmax"] + 20.0
@@ -420,13 +483,14 @@ def build(source: Path, sync: bool) -> dict[str, Any]:
         "observations": [
             "The sensor plate top (z=%.3f) sits %.3f mm above the lower shelf top; the holder group is %.3f mm tall. Recorded only; not acted on." % (
                 pb["zmax"], pb["zmin"] - max([bbox(s)["zmax"] for s in lower_shelf] or [0]), hb["zmax"] - hb["zmin"]),
-            "The export contains no 'EVK 5' camera body; only the holder assembly node was exported.",
+            "The export contains no 'EVK 5' camera body: in the archive the 'EVK 5' folder sits under the hidden 'NHI' folder, so Shapr3D skipped it; only the 'EVK 5 holder' folder (with its empty 'Aux' subfolder) was exported.",
         ],
         "files": {k: str(v.relative_to(DESIGN_DIR)) for k, v in files.items()},
         "use_this": str(use_this.relative_to(DESIGN_DIR)),
         "render_meshes": {k: (str(v.relative_to(DESIGN_DIR)) if v else None) for k, v in mesh_files.items()},
         "step_roundtrip": {k: step_summary(v) for k, v in files.items() if v.suffix == ".step"},
         "unchanged_parts": [{"group": g, "parts": [n for n, _ in items]} for g, items in part_items(other_parts)],
+        "step_body_labels": [c["name"] for c in catalog],
         "source_validity_note": "STEP round-trip flags one source solid (FSK30 stage part, 796 faces) as invalid in OCCT; it comes from the vendor import in the original export and is copied through unchanged.",
     }
     (art / "manifest.json").write_text(json.dumps(manifest, indent=2, default=str))

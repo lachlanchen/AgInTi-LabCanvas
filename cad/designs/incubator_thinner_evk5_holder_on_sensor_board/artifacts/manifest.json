@@ -1,6 +1,6 @@
 {
   "design": "incubator_thinner_evk5_holder_on_sensor_board",
-  "generated_utc": "20260916T092610Z",
+  "generated_utc": "20260916T122345Z",
   "source_step": {
     "path": "/home/lachlan/Downloads/incubator+thinner.step",
     "sha256": "e80d1c8cd5285858b9d78a85e67648c4cee600332e673b5ca9704e0fbac414bf",
@@ -61,11 +61,11 @@
   "holder_group": {
     "solids": 5,
     "parts": [
-      "light dam wall +Y",
-      "light dam wall -Y",
-      "light dam side -X",
-      "light dam side +X",
-      "EVK 5 holder base (camera pocket)"
+      "Dam 2 (3) (light dam wall +Y)",
+      "Dam 1 (3) (light dam wall -Y)",
+      "Sample holder outskirt (9) (light dam side -X)",
+      "Sample holder outskirt (8) (light dam side +X)",
+      "EVK 5 holder (3) (EVK 5 holder base (camera pocket))"
     ],
     "bbox_before": {
       "xmin": 102.750001337,
@@ -145,7 +145,7 @@
   "all_checks_pass": true,
   "observations": [
     "The sensor plate top (z=129.302) sits 17.000 mm above the lower shelf top; the holder group is 17.000 mm tall. Recorded only; not acted on.",
-    "The export contains no 'EVK 5' camera body; only the holder assembly node was exported."
+    "The export contains no 'EVK 5' camera body: in the archive the 'EVK 5' folder sits under the hidden 'NHI' folder, so Shapr3D skipped it; only the 'EVK 5 holder' folder (with its empty 'Aux' subfolder) was exported."
   ],
   "files": {
     "assembly_moved": "artifacts/incubator_thinner_evk5_holder_on_sensor_board_assembly_moved.step",
@@ -239,8 +239,8 @@
     {
       "group": "NHI in incubator",
       "parts": [
-        "Diffraction grating",
-        "Sensor"
+        "Base (3)",
+        "Sensor board EBS 0cm (2)*2 (2)"
       ]
     },
     {
@@ -250,23 +250,43 @@
         "\u96f6\u4ef638^FSL30-BC-B35",
         "\u540e\u677fFSL30",
         "\u96f6\u4ef641^FSL30-BC-B35",
-        "\u96f6\u4ef640^FSL30-BC-B35"
+        "\\S\\A\\S\\,\\S\\=\\S\\S\\S\\V\\S\\X\\S\\W\\S\\i1"
       ]
     },
     {
       "group": "Incubator enclosure",
       "parts": [
-        "vertical rail",
-        "vertical rail",
-        "lower shelf",
-        "upper shelf with window",
-        "right wall",
-        "left wall",
-        "back wall",
-        "floor plate",
-        "lid plate"
+        "Body 170 (1) (vertical rail)",
+        "Body 170 (vertical rail)",
+        "Inner sensor (lower shelf)",
+        "Inner diffraction (upper shelf with window)",
+        "Right cover (right wall)",
+        "Left cover (left wall)",
+        "Back cover (back wall)",
+        "Lid bottom (floor plate)",
+        "Lid top (lid plate)"
       ]
     }
+  ],
+  "step_body_labels": [
+    "Body 170 (1)",
+    "Body 170",
+    "Inner sensor",
+    "Inner diffraction",
+    "Right cover",
+    "Left cover",
+    "Back cover",
+    "Lid bottom",
+    "Lid top",
+    "Dam 2 (3)",
+    "Dam 1 (3)",
+    "Sample holder outskirt (9)",
+    "Sample holder outskirt (8)",
+    "EVK 5 holder (3)",
+    "Base (3)",
+    "Sensor board EBS 0cm (2)*2 (2)",
+    "\\S\\G\\S\\P\\S\\3\\S\\}-\\S\\@\\S\\-\\S\\I\\S\\l6",
+    "\\S\\A\\S\\,\\S\\=\\S\\S\\S\\V\\S\\X\\S\\W\\S\\i1"
   ],
   "source_validity_note": "STEP round-trip flags one source solid (FSK30 stage part, 796 faces) as invalid in OCCT; it comes from the vendor import in the original export and is copied through unchanged."
 }
