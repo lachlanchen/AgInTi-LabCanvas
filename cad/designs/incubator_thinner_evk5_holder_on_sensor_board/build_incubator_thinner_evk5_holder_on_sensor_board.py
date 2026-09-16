@@ -54,6 +54,13 @@ DESIGN_NAME = DESIGN_DIR.name
 DEFAULT_SOURCE = Path("/home/lachlan/Downloads/incubator+thinner.step")
 SOURCE_SHAPR = Path("/home/lachlan/Nutstore Files/Projects/shapr3d/BACKUP/BATCHEXPORT/Incubator thinner.shapr")
 NUTSTORE_ROOT = Path("/home/lachlan/Nutstore Files/Projects/LabCanvas")
+LUMILEDS_PCB_STEP = ROOT / "pcb/lumileds-no-resistor/artifacts/lumileds-no-resistor.step"
+STAGE_NODE = "FSK30 E200-BC-B35.STEP"
+SLIDER_LENGTH_MM = 60.0     # along the rail (X)
+SLIDER_THICKNESS_MM = 10.0  # hangs below the rail's bottom face
+STANDOFF_HEIGHT_MM = 5.0
+STANDOFF_DIAMETER_MM = 3.0
+LED_PROXY_MM = (3.0, 3.0, 1.4)  # LXCL_MN08 footprint has no 3D model in the KiCad export
 HOLDER_NODE = "EVK 5 holder"
 PLATE_NODE = "Sensor"
 GRATING_NODE = "Diffraction grating"
@@ -309,6 +316,52 @@ def step_summary(path: Path) -> dict[str, Any]:
     return {"solids": len(solids), "invalid_solid_indices": invalid, "bbox": bbox(cq.Compound.makeCompound(solids))}
 
 
+# ----------------------------------------------------------------------------- figure proposal
+
+def build_stage_slider_proposal(rail: cq.Solid, axis_xy: tuple[float, float]) -> dict[str, Any]:
+    """Slider carriage under the FSL30 rail carrying the Lumileds LED board, LED facing down on the light path.
+
+    This is an added illustration layer for the paper figure, not part of the user's source model.
+    """
+    rb = bbox(rail)
+    rail_cy = (rb["ymin"] + rb["ymax"]) / 2.0
+    rail_w = rb["ymax"] - rb["ymin"]
+    x, y = axis_xy[0], rail_cy
+    z_rail_bottom = rb["zmin"]
+    carriage = (cq.Workplane("XY").box(SLIDER_LENGTH_MM, rail_w, SLIDER_THICKNESS_MM, centered=(True, True, False))
+                .edges("|Z").chamfer(2.0).translate(cq.Vector(x, y, z_rail_bottom - SLIDER_THICKNESS_MM)))
+    z_carriage_bottom = z_rail_bottom - SLIDER_THICKNESS_MM
+    standoffs = []
+    for sx in (-6.0, 6.0):
+        for sy in (-6.0, 6.0):
+            standoffs.append(cq.Workplane("XY").circle(STANDOFF_DIAMETER_MM / 2).extrude(STANDOFF_HEIGHT_MM)
+                             .translate(cq.Vector(x + sx, y + sy, z_carriage_bottom - STANDOFF_HEIGHT_MM)).val())
+    pcb_src = cq.importers.importStep(str(LUMILEDS_PCB_STEP))
+    solids = pcb_src.solids().vals()
+    board = max(solids, key=lambda s: s.Volume())
+    bb = bbox(board)
+    cx, cy, cz = (bb["xmin"] + bb["xmax"]) / 2, (bb["ymin"] + bb["ymax"]) / 2, bb["zmin"]
+    thickness = bb["zmax"] - bb["zmin"]
+    z_board_top = z_carriage_bottom - STANDOFF_HEIGHT_MM  # back face of the flipped board touches the standoffs
+    def place(sol: cq.Solid) -> cq.Solid:
+        flipped = sol.rotate(cq.Vector(cx, cy, cz), cq.Vector(cx + 1, cy, cz), 180.0)  # component side now faces -Z, back face at z=cz
+        return flipped.translate(cq.Vector(x - cx, y - cy, z_board_top - cz))
+    board_p = place(board)
+    parts_p = [place(sol) for sol in solids if sol is not board]
+    led = (cq.Workplane("XY").box(*LED_PROXY_MM, centered=(True, True, False))
+           .translate(cq.Vector(x, y, z_board_top - thickness - LED_PROXY_MM[2])).val())
+    items = [("stage slider carriage (proposed)", carriage.val())] + [(f"standoff {i + 1} (proposed)", so) for i, so in enumerate(standoffs)] \
+        + [("Lumileds LED PCB (KiCad lumileds-no-resistor)", board_p)] + [(f"PCB part {i + 1}", p) for i, p in enumerate(parts_p)] \
+        + [("LED proxy LXCL-MN08 (3x3x1.4)", led)]
+    return {
+        "items": items,
+        "meshes": {"slider": [carriage.val()] + standoffs, "lumileds_pcb": [board_p], "lumileds_pcb_parts": parts_p, "lumileds_led": [led]},
+        "numbers": {"rail_bottom_z": z_rail_bottom, "rail_centre_y": rail_cy, "rail_width_mm": rail_w, "carriage_bottom_z": z_carriage_bottom,
+                    "board_back_face_z": z_board_top, "board_component_face_z": z_board_top - thickness, "led_bottom_z": z_board_top - thickness - LED_PROXY_MM[2],
+                    "led_centre_xy": [x, y], "board_source": str(LUMILEDS_PCB_STEP)},
+    }
+
+
 # ----------------------------------------------------------------------------- main
 
 def build(source: Path, sync: bool) -> dict[str, Any]:
@@ -459,6 +512,28 @@ def build(source: Path, sync: bool) -> dict[str, Any]:
         "axis": mesh("axis", [cq.Solid(axis_proxy.wrapped)]),
     }
 
+    # figure proposal layer: slider + Lumileds board on the stage rail, on the light path
+    stage_parts = [p for p in other_parts if STAGE_NODE in " ".join(p["path"])]
+    rail = max((sol for p in stage_parts for sol in p["solids"]), key=lambda sol: bbox(sol)["xmax"] - bbox(sol)["xmin"])
+    proposal = build_stage_slider_proposal(rail, axis)
+    prop_dir = art / "proposal"
+    prop_dir.mkdir(exist_ok=True)
+    files["proposal_slider_pcb"] = prop_dir / "stage_slider_with_lumileds_pcb_proposal.step"
+    write_named_step(files["proposal_slider_pcb"], [("stage slider with Lumileds LED PCB (proposal)", proposal["items"])], "figure proposal: stage slider + Lumileds PCB")
+    for name, sols in proposal["meshes"].items():
+        if sols:
+            mesh_files[name] = mesh(name, [cq.Solid(x.wrapped) if not isinstance(x, cq.Solid) else x for x in sols])
+    prop_collisions = []
+    for name, sols in proposal["meshes"].items():
+        for sol in sols:
+            for i, o in enumerate(others + moved_solids):
+                inter = sol.intersect(o)
+                if inter.isValid() and inter.Volume() > TOL:
+                    prop_collisions.append({"proposal": name, "other_solid": i, "volume_mm3": inter.Volume()})
+    proposal["numbers"]["collisions_with_model"] = prop_collisions
+    proposal["numbers"]["led_on_light_path"] = abs(proposal["numbers"]["led_centre_xy"][0] - axis[0]) < 1e-6 and abs(proposal["numbers"]["led_centre_xy"][1] - axis[1]) < 0.5
+    proposal["numbers"]["led_to_grating_top_mm"] = proposal["numbers"]["led_bottom_z"] - gb["zmax"]
+
     manifest = {
         "design": DESIGN_NAME,
         "generated_utc": stamp,
@@ -485,6 +560,7 @@ def build(source: Path, sync: bool) -> dict[str, Any]:
                 pb["zmax"], pb["zmin"] - max([bbox(s)["zmax"] for s in lower_shelf] or [0]), hb["zmax"] - hb["zmin"]),
             "The export contains no 'EVK 5' camera body: in the archive the 'EVK 5' folder sits under the hidden 'NHI' folder, so Shapr3D skipped it; only the 'EVK 5 holder' folder (with its empty 'Aux' subfolder) was exported.",
         ],
+        "figure_proposal": proposal["numbers"],
         "files": {k: str(v.relative_to(DESIGN_DIR)) for k, v in files.items()},
         "use_this": str(use_this.relative_to(DESIGN_DIR)),
         "render_meshes": {k: (str(v.relative_to(DESIGN_DIR)) if v else None) for k, v in mesh_files.items()},

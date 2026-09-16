@@ -1,6 +1,6 @@
 {
   "design": "incubator_thinner_evk5_holder_on_sensor_board",
-  "generated_utc": "20260916T123426Z",
+  "generated_utc": "20260916T125726Z",
   "source_step": {
     "path": "/home/lachlan/Downloads/incubator+thinner.step",
     "sha256": "e80d1c8cd5285858b9d78a85e67648c4cee600332e673b5ca9704e0fbac414bf",
@@ -147,6 +147,23 @@
     "The sensor plate top (z=129.302) sits 17.000 mm above the lower shelf top; the holder group is 17.000 mm tall. Recorded only; not acted on.",
     "The export contains no 'EVK 5' camera body: in the archive the 'EVK 5' folder sits under the hidden 'NHI' folder, so Shapr3D skipped it; only the 'EVK 5 holder' folder (with its empty 'Aux' subfolder) was exported."
   ],
+  "figure_proposal": {
+    "rail_bottom_z": 299.79798170761546,
+    "rail_centre_y": 143.073332878,
+    "rail_width_mm": 35.00722746276904,
+    "carriage_bottom_z": 289.79798170761546,
+    "board_back_face_z": 284.79798170761546,
+    "board_component_face_z": 283.2879817076155,
+    "led_bottom_z": 281.8879817076155,
+    "led_centre_xy": [
+      141.250001337,
+      143.073332878
+    ],
+    "board_source": "/home/lachlan/ProjectsLFS/AgenticApp/pcb/lumileds-no-resistor/artifacts/lumileds-no-resistor.step",
+    "collisions_with_model": [],
+    "led_on_light_path": true,
+    "led_to_grating_top_mm": 78.58638626861548
+  },
   "files": {
     "assembly_moved": "artifacts/incubator_thinner_evk5_holder_on_sensor_board_assembly_moved.step",
     "holder_moved": "artifacts/evk5_holder_group_moved.step",
@@ -154,7 +171,8 @@
     "context": "artifacts/incubator_context_unchanged.step",
     "axis_reference": "artifacts/light_path_axis_reference.step",
     "holder_moved_stl": "artifacts/evk5_holder_group_moved.stl",
-    "holder_moved_3mf": "artifacts/evk5_holder_group_moved.3mf"
+    "holder_moved_3mf": "artifacts/evk5_holder_group_moved.3mf",
+    "proposal_slider_pcb": "artifacts/proposal/stage_slider_with_lumileds_pcb_proposal.step"
   },
   "use_this": "USE_THIS_incubator_thinner_evk5_holder_on_sensor_board_assembly_moved.step",
   "render_meshes": {
@@ -167,7 +185,11 @@
     "upper_shelf": "artifacts/render_meshes/upper_shelf.stl",
     "stage": "artifacts/render_meshes/stage.stl",
     "rest": "artifacts/render_meshes/rest.stl",
-    "axis": "artifacts/render_meshes/axis.stl"
+    "axis": "artifacts/render_meshes/axis.stl",
+    "slider": "artifacts/render_meshes/slider.stl",
+    "lumileds_pcb": "artifacts/render_meshes/lumileds_pcb.stl",
+    "lumileds_pcb_parts": "artifacts/render_meshes/lumileds_pcb_parts.stl",
+    "lumileds_led": "artifacts/render_meshes/lumileds_led.stl"
   },
   "step_roundtrip": {
     "assembly_moved": {
@@ -232,6 +254,18 @@
         "xmax": 141.750001337,
         "ymax": 143.573333752,
         "zmax": 213.301595439
+      }
+    },
+    "proposal_slider_pcb": {
+      "solids": 18,
+      "invalid_solid_indices": [],
+      "bbox": {
+        "xmin": 111.25000133699501,
+        "ymin": 125.56971914661,
+        "zmin": 281.88298170755564,
+        "xmax": 171.250001337,
+        "ymax": 160.576946609385,
+        "zmax": 299.79798170761
       }
     }
   },
