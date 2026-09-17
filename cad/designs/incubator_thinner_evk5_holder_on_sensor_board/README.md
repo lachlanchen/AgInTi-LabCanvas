@@ -37,10 +37,21 @@ Date: 2026-09-16
   its LED facing down on the light path (LED proxy 3 x 3 x 1.4 mm because the
   footprint has no 3D model). That layer is illustration only: it lives in
   `artifacts/proposal/stage_slider_with_lumileds_pcb_proposal.step`, is not
-  merged into `USE_THIS_*.step`, and its numbers (carriage 60 x 35 x 10 mm, LED
-  77.2 mm above the grating, no collision with the model, one 37 mm3 overlap
-  between the horizontal pin-header body and the holder rim that a real build
-  would relieve) are in `manifest.json` under `figure_proposal`.
+  merged into `USE_THIS_*.step`, and its numbers are in `manifest.json` under
+  `figure_proposal`. The carriage is measured from the module's own faces at
+  the light-path X, not from its bounding box: the body underside is at
+  z 334.30 with a 12 mm guide rib to z 330.30 and the ball screw (r 4) at
+  z 317.30. The carriage (60 x 30 x 25 mm) runs against the body underside,
+  slots over the rib and wraps the screw with a 1 mm clearance bore; the LED
+  holder is screwed directly under it (z 301.3..309.3) and the LED sits
+  96.7 mm above the grating. No collision with any model part; one 37 mm3
+  overlap between the horizontal pin-header body and the holder rim that a
+  real build would relieve.
+- The design root and the Nutstore folder carry copies of the key images as
+  `FIGURE_overview_clean_with_stage_slider_led.png`,
+  `FIGURE_front_elevation_alignment_labelled.png` and
+  `FIGURE_overview_with_light_path_line.png` so the latest versions are easy to
+  find without opening a run folder.
 - `figF_front_elevation_alignment`: orthographic front elevation showing the
   slider, LED holder, grating window and EVK5 holder on one vertical line, which
   proves the slider is at the light-path X (box centre), not at the rail end.

@@ -58,9 +58,9 @@ LUMILEDS_PCB_STEP = ROOT / "pcb/lumileds-no-resistor/artifacts/lumileds-no-resis
 LUMILEDS_HOLDER_STEP = ROOT / "cad/designs/lumileds_pcb_aligned_sink_cage_holder/USE_THIS_lumileds_pcb_aligned_sink_cage_holder.step"
 STAGE_NODE = "FSK30 E200-BC-B35.STEP"
 SLIDER_LENGTH_MM = 60.0     # along the rail (X)
-SLIDER_THICKNESS_MM = 10.0  # hangs below the rail's bottom face
-STANDOFF_HEIGHT_MM = 5.0
-STANDOFF_DIAMETER_MM = 3.0
+SLIDER_WALL_BELOW_SCREW_MM = 4.0   # nut housing wall under the ball screw
+SCREW_BORE_CLEARANCE_MM = 1.0
+RIB_CLEARANCE_MM = 0.2
 LED_PROXY_MM = (3.0, 3.0, 1.4)  # LXCL_MN08 footprint has no 3D model in the KiCad export
 HOLDER_NODE = "EVK 5 holder"
 PLATE_NODE = "Sensor"
@@ -319,29 +319,75 @@ def step_summary(path: Path) -> dict[str, Any]:
 
 # ----------------------------------------------------------------------------- figure proposal
 
+def rail_profile_at(rail: cq.Solid, x: float) -> dict[str, Any]:
+    """Measure the FSL30 module cross-section at X: body underside, guide rib, ball-screw axis.
+
+    The module is mounted under the lid, so the body is at the top, a narrow guide rib hangs below it
+    and the ball screw runs exposed beneath the rib. The rail's bounding-box bottom belongs to the end
+    blocks and must not be used as the carriage datum.
+    """
+    from OCP.GeomAbs import GeomAbs_Cylinder
+    from OCP.BRepAdaptor import BRepAdaptor_Surface
+    screw = None
+    e = TopExp_Explorer(rail.wrapped, TopAbs_FACE)
+    while e.More():
+        f = TopoDS.Face_s(e.Current())
+        e.Next()
+        ad = BRepAdaptor_Surface(f)
+        if ad.GetType() == GeomAbs_Cylinder:
+            c = ad.Cylinder()
+            d = c.Axis().Direction()
+            bb = Bnd_Box()
+            BRepBndLib.Add_s(f, bb, False)
+            x0, y0, z0, x1, y1, z1 = bb.Get()
+            if abs(abs(d.X()) - 1.0) < 1e-6 and x0 < x < x1 and (x1 - x0) > 100:
+                loc = c.Axis().Location()
+                if screw is None or c.Radius() > screw["radius"]:
+                    screw = {"radius": c.Radius(), "y": loc.Y(), "z": loc.Z(), "x_range": [x0, x1]}
+    # long horizontal faces of the module that span this X (no boolean section: the vendor solid is not watertight)
+    down = []
+    for f in planar_faces(rail):
+        x0, y0, z0, x1, y1, z1 = f["bbox"]
+        if f["n"][2] < -0.5 and x0 < x < x1 and (x1 - x0) > 100:
+            down.append((z0, y0, y1))
+    rib_bottom = min(z for z, y0, y1 in down)
+    rib_faces = [(z, y0, y1) for z, y0, y1 in down if abs(z - rib_bottom) < 1e-3]
+    rib_y = [min(y0 for z, y0, y1 in rib_faces), max(y1 for z, y0, y1 in rib_faces)]
+    rib_width = rib_y[1] - rib_y[0]
+    body_bottom = min(z for z, y0, y1 in down if z > rib_bottom + 1.0)
+    body_y = [min(y0 for z, y0, y1 in down), max(y1 for z, y0, y1 in down)]
+    return {"body_bottom_z": body_bottom, "body_y": body_y, "rib_bottom_z": rib_bottom, "rib_width_mm": rib_width, "rib_y": rib_y, "screw": screw}
+
+
 def build_stage_slider_proposal(rail: cq.Solid, axis_xy: tuple[float, float]) -> dict[str, Any]:
-    """Slider carriage under the FSL30 rail, the repo's Lumileds cage holder screwed to it, the Lumileds board
-    seated in the holder's rear sink with its LED facing down on the light path.
+    """Slider carriage riding on the FSL30 body underside around the ball screw, the repo's Lumileds cage holder
+    screwed under the carriage, and the Lumileds board seated in the holder's rear sink with the LED facing down.
 
     Added illustration layer for the paper figure; not part of the user's source model.
-    Holder placement follows cad/designs/lumileds_pcb_aligned_sink_cage_holder (PCB in the rear sink,
-    component side outward, header pins through the relief slot).
     """
-    rb = bbox(rail)
-    rail_cy = (rb["ymin"] + rb["ymax"]) / 2.0
-    rail_w = rb["ymax"] - rb["ymin"]
-    x, y = axis_xy[0], rail_cy
-    z_rail_bottom = rb["zmin"]
-    carriage = (cq.Workplane("XY").box(SLIDER_LENGTH_MM, rail_w, SLIDER_THICKNESS_MM, centered=(True, True, False))
-                .edges("|Z").chamfer(2.0).translate(cq.Vector(x, y, z_rail_bottom - SLIDER_THICKNESS_MM)))
-    z_carriage_bottom = z_rail_bottom - SLIDER_THICKNESS_MM
-    # holder: local z=+4 is the plain front face (against the carriage), local z=-4 is the rear face with the PCB sink
+    x = axis_xy[0]
+    prof = rail_profile_at(rail, x)
+    y = prof["screw"]["y"]
+    body_bottom = prof["body_bottom_z"]
+    screw_z, screw_r = prof["screw"]["z"], prof["screw"]["radius"]
+    width = (prof["body_y"][1] - prof["body_y"][0])            # same width as the module body
+    z_top = body_bottom                                           # carriage runs against the body underside
+    z_bottom = screw_z - screw_r - SLIDER_WALL_BELOW_SCREW_MM     # nut housing wraps the screw
+    height = z_top - z_bottom
+    carriage = (cq.Workplane("XY").box(SLIDER_LENGTH_MM, width, height, centered=(True, True, False))
+                .edges("|Z").chamfer(2.0).translate(cq.Vector(x, y, z_bottom)))
+    if prof["rib_width_mm"] > 0:
+        rib_slot = (cq.Workplane("XY").box(SLIDER_LENGTH_MM + 2, prof["rib_width_mm"] + 2 * RIB_CLEARANCE_MM, z_top - prof["rib_bottom_z"] + RIB_CLEARANCE_MM, centered=(True, True, False))
+                    .translate(cq.Vector(x, y, prof["rib_bottom_z"] - RIB_CLEARANCE_MM)))
+        carriage = carriage.cut(rib_slot)
+    bore = cq.Workplane("YZ").circle(screw_r + SCREW_BORE_CLEARANCE_MM).extrude(SLIDER_LENGTH_MM + 4).translate(cq.Vector(x - SLIDER_LENGTH_MM / 2 - 2, y, screw_z))
+    carriage = carriage.cut(bore)
+    z_carriage_bottom = z_bottom
     holder_src = cq.importers.importStep(str(LUMILEDS_HOLDER_STEP)).solids().vals()[0]
     hb = bbox(holder_src)
     holder = holder_src.translate(cq.Vector(x - (hb["xmin"] + hb["xmax"]) / 2, y - (hb["ymin"] + hb["ymax"]) / 2, z_carriage_bottom - hb["zmax"]))
     hbw = bbox(holder)
-    sink_floor_z = hbw["zmin"] + 1.65   # 24.4 mm sink, 1.65 mm deep, cut into the rear (bottom) face
-    # board: KiCad export, back face at local z=0, component side +z; flip so the component side faces down
+    sink_floor_z = hbw["zmin"] + 1.65
     pcb_src = cq.importers.importStep(str(LUMILEDS_PCB_STEP))
     solids = pcb_src.solids().vals()
     board = max(solids, key=lambda s: s.Volume())
@@ -349,7 +395,7 @@ def build_stage_slider_proposal(rail: cq.Solid, axis_xy: tuple[float, float]) ->
     cx, cy, cz = (bb["xmin"] + bb["xmax"]) / 2, (bb["ymin"] + bb["ymax"]) / 2, bb["zmin"]
     thickness = bb["zmax"] - bb["zmin"]
     def place(sol: cq.Solid) -> cq.Solid:
-        flipped = sol.rotate(cq.Vector(cx, cy, cz), cq.Vector(cx + 1, cy, cz), 180.0)   # back face stays at z=cz, components now below it
+        flipped = sol.rotate(cq.Vector(cx, cy, cz), cq.Vector(cx + 1, cy, cz), 180.0)
         return flipped.translate(cq.Vector(x - cx, y - cy, sink_floor_z - cz))
     board_p = place(board)
     parts_p = [place(sol) for sol in solids if sol is not board]
@@ -362,7 +408,7 @@ def build_stage_slider_proposal(rail: cq.Solid, axis_xy: tuple[float, float]) ->
     return {
         "items": items,
         "meshes": {"slider": [carriage.val()], "led_holder": [holder], "lumileds_pcb": [board_p], "lumileds_pcb_parts": parts_p, "lumileds_led": [led]},
-        "numbers": {"rail_bottom_z": z_rail_bottom, "rail_centre_y": rail_cy, "rail_width_mm": rail_w, "carriage_bottom_z": z_carriage_bottom,
+        "numbers": {"rail_profile_at_light_path_x": prof, "carriage_top_z": z_top, "carriage_bottom_z": z_carriage_bottom, "carriage_size_mm": [SLIDER_LENGTH_MM, width, height],
                     "holder_z": [hbw["zmin"], hbw["zmax"]], "holder_source": str(LUMILEDS_HOLDER_STEP),
                     "board_back_face_z": sink_floor_z, "board_component_face_z": component_face_z,
                     "led_bottom_z": component_face_z - LED_PROXY_MM[2], "led_centre_xy": [x, y], "board_source": str(LUMILEDS_PCB_STEP)},
@@ -546,6 +592,7 @@ def build(source: Path, sync: bool) -> dict[str, Any]:
             if inter.isValid() and inter.Volume() > TOL:
                 internal.append({"part": name, "volume_mm3": inter.Volume()})
     proposal["numbers"]["collisions_inside_proposal"] = internal
+    proposal["numbers"]["rail_bottom_z"] = proposal["numbers"]["carriage_top_z"]
     proposal["numbers"]["led_on_light_path"] = abs(proposal["numbers"]["led_centre_xy"][0] - axis[0]) < 1e-6 and abs(proposal["numbers"]["led_centre_xy"][1] - axis[1]) < 0.5
     proposal["numbers"]["led_to_grating_top_mm"] = proposal["numbers"]["led_bottom_z"] - gb["zmax"]
 
@@ -597,6 +644,13 @@ def package_run(manifest: dict[str, Any], sync: bool) -> Path:
         shutil.rmtree(run)
     shutil.copytree(DESIGN_DIR / "artifacts", run / "artifacts", ignore=shutil.ignore_patterns("*.blend", "*.blend1", "render_meshes"))
     shutil.copy2(DESIGN_DIR / manifest["use_this"], run / Path(manifest["use_this"]).name)
+    figs = DESIGN_DIR / "artifacts" / "paper_figure"
+    for src_name, dst_name in (("figA2_incubator_overview_clean_slider.png", "FIGURE_overview_clean_with_stage_slider_led.png"),
+                               ("figF_front_elevation_alignment_labelled.png", "FIGURE_front_elevation_alignment_labelled.png"),
+                               ("figA_incubator_overview.png", "FIGURE_overview_with_light_path_line.png")):
+        if (figs / src_name).exists():
+            shutil.copy2(figs / src_name, DESIGN_DIR / dst_name)
+            shutil.copy2(figs / src_name, run / dst_name)
     for extra in ("README.md", Path(__file__).name, "render_incubator_thinner_evk5_holder_on_sensor_board.py",
                   "render_paper_figure_incubator_thinner_evk5_holder.py", "compose_paper_figure_labels.py"):
         if (DESIGN_DIR / extra).exists():
@@ -605,6 +659,8 @@ def package_run(manifest: dict[str, Any], sync: bool) -> Path:
         dest = NUTSTORE_ROOT / DESIGN_NAME
         dest.mkdir(parents=True, exist_ok=True)
         shutil.copy2(DESIGN_DIR / manifest["use_this"], dest / Path(manifest["use_this"]).name)
+        for fig in DESIGN_DIR.glob("FIGURE_*.png"):
+            shutil.copy2(fig, dest / fig.name)
         if (dest / run.name).exists():
             shutil.rmtree(dest / run.name)
         shutil.copytree(run, dest / run.name)

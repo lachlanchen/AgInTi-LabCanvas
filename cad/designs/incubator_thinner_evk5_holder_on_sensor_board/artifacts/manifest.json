@@ -1,6 +1,6 @@
 {
   "design": "incubator_thinner_evk5_holder_on_sensor_board",
-  "generated_utc": "20260916T130551Z",
+  "generated_utc": "20260917T025722Z",
   "source_step": {
     "path": "/home/lachlan/Downloads/incubator+thinner.step",
     "sha256": "e80d1c8cd5285858b9d78a85e67648c4cee600332e673b5ca9704e0fbac414bf",
@@ -148,18 +148,43 @@
     "The export contains no 'EVK 5' camera body: in the archive the 'EVK 5' folder sits under the hidden 'NHI' folder, so Shapr3D skipped it; only the 'EVK 5 holder' folder (with its empty 'Aux' subfolder) was exported."
   ],
   "figure_proposal": {
-    "rail_bottom_z": 299.79798170761546,
-    "rail_centre_y": 143.073332878,
-    "rail_width_mm": 35.00722746276904,
-    "carriage_bottom_z": 289.79798170761546,
+    "rail_profile_at_light_path_x": {
+      "body_bottom_z": 334.301595235,
+      "body_y": [
+        128.07333311300002,
+        158.073332643
+      ],
+      "rib_bottom_z": 330.30159533899996,
+      "rib_width_mm": 12.000000199999988,
+      "rib_y": [
+        137.073332778,
+        149.073332978
+      ],
+      "screw": {
+        "radius": 4.0,
+        "y": 143.073332878,
+        "z": 317.301595439,
+        "x_range": [
+          13.250000067999986,
+          265.950000268
+        ]
+      }
+    },
+    "carriage_top_z": 334.301595235,
+    "carriage_bottom_z": 309.301595439,
+    "carriage_size_mm": [
+      60.0,
+      29.999999529999968,
+      24.999999795999997
+    ],
     "holder_z": [
-      281.79798170761546,
-      289.79798170761546
+      301.301595439,
+      309.301595439
     ],
     "holder_source": "/home/lachlan/ProjectsLFS/AgenticApp/cad/designs/lumileds_pcb_aligned_sink_cage_holder/USE_THIS_lumileds_pcb_aligned_sink_cage_holder.step",
-    "board_back_face_z": 283.44798170761544,
-    "board_component_face_z": 281.93798170761545,
-    "led_bottom_z": 280.5379817076155,
+    "board_back_face_z": 302.95159543899996,
+    "board_component_face_z": 301.44159543899997,
+    "led_bottom_z": 300.041595439,
     "led_centre_xy": [
       141.250001337,
       143.073332878
@@ -169,11 +194,12 @@
     "collisions_inside_proposal": [
       {
         "part": "lumileds_pcb_parts",
-        "volume_mm3": 36.98392478787715
+        "volume_mm3": 36.98392478787717
       }
     ],
+    "rail_bottom_z": 334.301595235,
     "led_on_light_path": true,
-    "led_to_grating_top_mm": 77.23638626861546
+    "led_to_grating_top_mm": 96.73999999999998
   },
   "files": {
     "assembly_moved": "artifacts/incubator_thinner_evk5_holder_on_sensor_board_assembly_moved.step",
@@ -272,12 +298,12 @@
       "solids": 15,
       "invalid_solid_indices": [],
       "bbox": {
-        "xmin": 111.25000133699501,
+        "xmin": 111.250001337,
         "ymin": 122.073332878,
-        "zmin": 280.5329817075556,
-        "xmax": 171.250001337,
+        "zmin": 300.0365954389556,
+        "xmax": 171.25000133700001,
         "ymax": 164.073332878,
-        "zmax": 299.79798170761
+        "zmax": 334.301595235
       }
     }
   },
