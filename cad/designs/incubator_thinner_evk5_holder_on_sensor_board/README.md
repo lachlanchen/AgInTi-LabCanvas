@@ -47,6 +47,14 @@ Date: 2026-09-16
   96.7 mm above the grating. No collision with any model part; one 37 mm3
   overlap between the horizontal pin-header body and the holder rim that a
   real build would relieve.
+- `artifacts/paper_figure/paper_figures_labelled.pptx` (also copied as
+  `FIGURE_paper_figures_labelled_editable.pptx`): one 4:3 slide per figure with
+  the render as the picture and every label as a native PowerPoint text box
+  (Arial 14 pt, white rounded box, 0.75 pt grey outline) joined to its anchor
+  dot by a straight connector, so wording, font, box style and positions can
+  be edited directly. Built by `make_paper_figure_pptx.py` (needs python-pptx;
+  the miniconda base `python3` has it); label wording and positions are the
+  `LABELS` and `FIGS` tables in that script, provenance is in the slide notes.
 - The design root and the Nutstore folder carry copies of the key images as
   `FIGURE_overview_clean_with_stage_slider_led.png`,
   `FIGURE_front_elevation_alignment_labelled.png` and

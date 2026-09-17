@@ -9,3 +9,4 @@ USE_THIS_*.step
 artifacts/paper_figure/*
 !artifacts/paper_figure/*_labels.json
 FIGURE_*.png
+FIGURE_*.pptx

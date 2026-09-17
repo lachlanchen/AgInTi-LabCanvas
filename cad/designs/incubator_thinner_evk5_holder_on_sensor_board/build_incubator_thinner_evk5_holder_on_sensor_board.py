@@ -647,7 +647,8 @@ def package_run(manifest: dict[str, Any], sync: bool) -> Path:
     figs = DESIGN_DIR / "artifacts" / "paper_figure"
     for src_name, dst_name in (("figA2_incubator_overview_clean_slider.png", "FIGURE_overview_clean_with_stage_slider_led.png"),
                                ("figF_front_elevation_alignment_labelled.png", "FIGURE_front_elevation_alignment_labelled.png"),
-                               ("figA_incubator_overview.png", "FIGURE_overview_with_light_path_line.png")):
+                               ("figA_incubator_overview.png", "FIGURE_overview_with_light_path_line.png"),
+                               ("paper_figures_labelled.pptx", "FIGURE_paper_figures_labelled_editable.pptx")):
         if (figs / src_name).exists():
             shutil.copy2(figs / src_name, DESIGN_DIR / dst_name)
             shutil.copy2(figs / src_name, run / dst_name)
@@ -659,7 +660,7 @@ def package_run(manifest: dict[str, Any], sync: bool) -> Path:
         dest = NUTSTORE_ROOT / DESIGN_NAME
         dest.mkdir(parents=True, exist_ok=True)
         shutil.copy2(DESIGN_DIR / manifest["use_this"], dest / Path(manifest["use_this"]).name)
-        for fig in DESIGN_DIR.glob("FIGURE_*.png"):
+        for fig in list(DESIGN_DIR.glob("FIGURE_*.png")) + list(DESIGN_DIR.glob("FIGURE_*.pptx")):
             shutil.copy2(fig, dest / fig.name)
         if (dest / run.name).exists():
             shutil.rmtree(dest / run.name)
