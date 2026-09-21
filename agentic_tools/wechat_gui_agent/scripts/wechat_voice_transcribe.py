@@ -332,11 +332,23 @@ def transcribe_wav_openai_whisper(
         raise RuntimeError(f"missing usable whisper package in the selected Python environment: {exc}") from exc
 
     def run(selected_device: str) -> dict[str, Any]:
-        whisper_model = whisper.load_model(model, device=selected_device)
-        kwargs: dict[str, Any] = {"fp16": selected_device not in {"cpu", ""}}
-        if language:
-            kwargs["language"] = language
-        return whisper_model.transcribe(str(wav_path), **kwargs)
+        previous_threads = None
+        if selected_device == "cpu":
+            import torch
+            previous_threads = torch.get_num_threads()
+            # Large OpenMP pools can make autoregressive CPU fallback slower
+            # while saturating a shared workstation. Do not change GPU choice.
+            threads = max(1, int(os.environ.get("WECHAT_WHISPER_CPU_THREADS", "4")))
+            torch.set_num_threads(min(previous_threads, threads))
+        try:
+            whisper_model = whisper.load_model(model, device=selected_device)
+            kwargs: dict[str, Any] = {"fp16": selected_device not in {"cpu", ""}}
+            if language:
+                kwargs["language"] = language
+            return whisper_model.transcribe(str(wav_path), **kwargs)
+        finally:
+            if previous_threads is not None:
+                torch.set_num_threads(previous_threads)
 
     cpu_fallback = False
     try:

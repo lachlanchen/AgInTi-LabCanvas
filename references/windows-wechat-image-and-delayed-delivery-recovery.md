@@ -103,6 +103,21 @@ Text receipts, files and source knowledge remain separate. This is not a
 guarantee of arbitrary-length upload support; provider size limits, actual
 transcodes and unavailable native cache need their own evidence-based handling.
 
+### Resource-Bound Transcription
+
+A live follow-up exposed a separate delay: Whisper exhausted its assigned
+GPU's available memory, fell back to CPU and spent over fifteen minutes in the
+first 30-second decoding window. A read-only stack sample confirmed CPU decoding,
+not a network wait or sender deadlock. The downloaded original and extracted WAV
+were intact.
+
+`wechat_voice_transcribe.py` now caps its own CPU inference pool at four threads
+by default (`WECHAT_WHISPER_CPU_THREADS` overrides this). It restores the previous
+thread count even on failure. GPU selection, model, timestamps and decoding
+options are unchanged; it does not steal another GPU or terminate another
+project's model. Regression tests cover both GPU-OOM fallback and CPU failure.
+Do not reset a whole chat or rerun a download to repair a stalled ASR child.
+
 ## Repeated Microsoft Browser Tabs
 
 The observed Edge tabs were MSN/captive-portal pages opened through Windows
