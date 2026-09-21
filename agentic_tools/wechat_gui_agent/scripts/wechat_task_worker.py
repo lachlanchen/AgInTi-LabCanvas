@@ -1627,6 +1627,8 @@ def process_one(queue: Path, chat: str, *, send: bool, send_targets: Path = DEFA
     if not task:
         auto_flush = send and os.environ.get("WECHAT_WORKER_AUTO_FLUSH_DEFERRED", "1") == "1"
         if auto_flush:
+            if reconcile_one_uncertain_native_file(queue, chat):
+                return True
             if flush_one_deferred_send(queue, chat, send_targets=send_targets, log_idle=log_idle):
                 return True
         if retry_one_source_knowledge(queue):
@@ -8121,6 +8123,70 @@ def task_delivery_is_uncertain(task: dict[str, Any]) -> bool:
         or task.get("send_deferred_reason") == "gui_postcommit_uncertain"
         or send_errors_indicate_gui_postcommit_uncertain(task.get("send_errors") or [])
     )
+
+
+def reconcile_one_uncertain_native_file(queue: Path, chat: str = "") -> bool:
+    """Release the remaining bundle only after proving the submitted file sent.
+
+    Missing evidence stays held. This performs no GUI writes, does not replay
+    video, and cannot unpause WeCom or manually held tasks.
+    """
+    with queue.with_suffix(queue.suffix + ".native-receipt.lock").open("a") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return False
+        return _reconcile_one_uncertain_native_file(queue, chat)
+
+
+def _reconcile_one_uncertain_native_file(queue: Path, chat: str) -> bool:
+    now = time.time()
+    for task in reversed(read_tasks(queue)):
+        if (task.get("status") != SEND_UNCERTAIN_STATUS or task.get("manual_pause")
+                or (chat and task.get("chat") != chat)
+                or not uses_tiny11_wechat(task)
+                or float(task.get("native_receipt_recheck_after") or 0) > now):
+            continue
+        errors = task.get("file_send_errors") or []
+        paths = list(dict.fromkeys(str(item.get("path") or "") for item in errors
+                                  if isinstance(item, dict) and "WECHAT_GUI_SEND_UNCERTAIN" in str(item.get("error"))))
+        if not paths or not all(Path(path).is_file() for path in paths):
+            continue
+        task["native_receipt_recheck_after"] = now + 300
+        try:
+            from wechat_tiny11_bridge import Tiny11WeChatBridge
+            bridge = Tiny11WeChatBridge()
+            verified = all(bridge.reconcile_submitted_file(str(task["chat"]), Path(path),
+                           task_id=str(task["id"])) for path in paths)
+        except Exception as exc:
+            task["native_receipt_recheck_error"] = type(exc).__name__
+            verified = False
+        if verified:
+            task.setdefault("delivery_recovery_history", []).append({
+                "at": datetime.now().isoformat(timespec="seconds"),
+                "source": "native_submitted_file_receipt", "files": paths,
+            })
+            task["sent_file_paths"] = sorted(set(task.get("sent_file_paths") or []) |
+                                             {str(Path(path).resolve()) for path in paths})
+            task["status"] = SEND_DEFERRED_LOCKED_STATUS
+            task["send_expires_at"] = queue_deadline_iso(DEFAULT_DEFERRED_SEND_TTL_SECONDS)
+            for key in ("send_errors", "file_send_errors", "send_deferred_reason", "send_review_required_at"):
+                task.pop(key, None)
+        # Do not undo a pause, reprocess, or send claimed while proof was read.
+        with queue.with_suffix(queue.suffix + ".lock").open("a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            current = read_tasks(queue)
+            for index, latest in enumerate(current):
+                if latest.get("id") != task.get("id"):
+                    continue
+                if (latest.get("status") != SEND_UNCERTAIN_STATUS or latest.get("manual_pause")
+                        or task_execution_generation(latest) != task_execution_generation(task)):
+                    return False
+                current[index] = merge_concurrent_task_interruptions(latest, task)
+                write_tasks(queue, current)
+                return verified
+        return False
+    return False
 
 
 def hold_uncertain_sends(path: Path) -> dict[str, Any]:
@@ -15124,7 +15190,18 @@ def should_prepare_media_resolution(task: dict[str, Any]) -> bool:
 
 
 def prepare_media_resolution_preflight(task: dict[str, Any], artifact_dir: Path) -> dict[str, Any]:
-    refresh = refresh_media_sync_for_task(task)
+    native_image = uses_tiny11_wechat(task) and task_source_is_image(task)
+    native_candidates = []
+    if native_image:
+        try:
+            from wechat_tiny11_image import recover_image
+            native_candidates = [recover_image(task, artifact_dir / "native_image")]
+            refresh = {"status": "ok", "transport": "wechat_tiny11_image"}
+        except Exception as exc:
+            refresh = {"status": "failed", "transport": "wechat_tiny11_image",
+                       "reason": f"{type(exc).__name__}: {str(exc)[:250]}"}
+    else:
+        refresh = refresh_media_sync_for_task(task)
     exact_file_title = current_request_file_title(str(task.get("request") or ""))
     expected_suffixes = file_intake_expected_suffixes(task) if is_file_intake_task(task) else set()
     if task_requests_local_download_save(task) and exact_file_title:
@@ -15132,13 +15209,13 @@ def prepare_media_resolution_preflight(task: dict[str, Any], artifact_dir: Path)
         if title_suffix:
             expected_suffixes = {title_suffix}
     expected_file_identity = exact_source_file_identity(task) if expected_suffixes else {}
-    candidates = resolve_synced_media_from_mirror(task, limit=12, suffixes=expected_suffixes or None)
+    candidates = native_candidates if native_image else resolve_synced_media_from_mirror(task, limit=12, suffixes=expected_suffixes or None)
     if expected_file_identity:
         candidates = filter_exact_file_candidates(candidates, expected_file_identity)
     gui_cache_probe: dict[str, Any] = {}
     gui_probe_reason = ""
     second_refresh: dict[str, Any] = {}
-    if not candidates and exact_file_title and expected_suffixes and should_materialize_exact_file(task):
+    if not native_image and not candidates and exact_file_title and expected_suffixes and should_materialize_exact_file(task):
         gui_cache_probe = materialize_exact_file_for_cache(task, artifact_dir, exact_file_title)
         gui_cache_probe["reason"] = "exact_file_card_not_cached"
         second_refresh = refresh_media_sync_for_task(task)
@@ -15168,7 +15245,7 @@ def prepare_media_resolution_preflight(task: dict[str, Any], artifact_dir: Path)
                 candidates = filter_exact_file_candidates(candidates, expected_file_identity)
     else:
         gui_probe_reason = media_gui_cache_probe_reason(task, candidates)
-    if not gui_cache_probe and gui_probe_reason and should_probe_gui_media_cache(task):
+    if not native_image and not gui_cache_probe and gui_probe_reason and should_probe_gui_media_cache(task):
         gui_cache_probe = materialize_chat_for_media_cache(task, artifact_dir)
         gui_cache_probe["reason"] = gui_probe_reason
         second_refresh = refresh_media_sync_for_task(task)

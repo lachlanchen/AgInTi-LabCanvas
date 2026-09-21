@@ -384,16 +384,40 @@ class Tiny11WeChatBridge(Tiny11WeComGuiBridge):
                 finally:
                     if proof:
                         self.cleanup_staged_file(staged_file=staged, staging_dir=folder)
-            remember_delivery(self.state_db, key, chat, str(path))
-            identity = file_transport_identity(path)
-            native_md5 = (proof.get('media_proof') or {}).get('rawmd5')
-            if native_md5:
-                identity['md5_values'] = sorted(set(identity.get('md5_values', [])) | {native_md5})
-            record_event(chat_name=chat, action='file_send', direction='outbound', status='sent',
-                         db_path=DEFAULT_DB, metadata={'file_identity': identity,
-                                                       'transport': 'wechat_tiny11', 'receipt': proof})
+            self.remember_file_receipt(chat, path, key, proof)
             sent.append(str(path))
         return {'ok': True, 'sent_messages': [], 'sent_files': sent, 'errors': []}
+
+    def remember_file_receipt(self, chat, path, key, proof):
+        remember_delivery(self.state_db, key, chat, str(path))
+        identity = file_transport_identity(path)
+        native_md5 = (proof.get('media_proof') or {}).get('rawmd5')
+        if native_md5:
+            identity['md5_values'] = sorted(set(identity.get('md5_values', [])) | {native_md5})
+        record_event(chat_name=chat, action='file_send', direction='outbound', status='sent',
+                     db_path=DEFAULT_DB, metadata={'file_identity': identity,
+                                                   'transport': 'wechat_tiny11', 'receipt': proof})
+
+    def reconcile_submitted_file(self, chat, source, *, task_id):
+        """Read-only proof after a slow upload; never compose or press Send."""
+        if chat not in self.target_groups:
+            return False
+        path = self.validate_send_file(source)
+        key = file_delivery_key(chat, task_id, path)
+        if delivery_done(self.state_db, key, chat):
+            return True
+        prior = get_runtime(self.state_db, 'native-intent:' + key)
+        if not prior:
+            return False
+        receipt = json.loads(prior)
+        binding = native_chat_binding(self.config['targets'][chat])
+        if any(receipt.get(field) != binding[field] for field in ('table', 'sender')):
+            return False
+        proof = self.wait_receipt(receipt, file=path, timeout=0)
+        if not proof:
+            return False
+        self.remember_file_receipt(chat, path, key, proof)
+        return True
 
 
 def find_receipt(receipt, *, message='', file=None, db_path=STORE, video_verifier=None):
