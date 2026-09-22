@@ -10,6 +10,8 @@ import xml.etree.ElementTree as ET
 
 def parse_quote_reference(value: Any) -> dict[str, str] | None:
     text = str(value or "").strip()
+    if len(text) > 2_000_000:
+        return None
     # The transport may prepend the group sender or entity-escape the envelope.
     for _ in range(3):
         start = text.find("<")
