@@ -102,6 +102,9 @@ The idle worker now performs one read-only reconciliation at a time:
 Text receipts, files and source knowledge remain separate. This is not a
 guarantee of arbitrary-length upload support; provider size limits, actual
 transcodes and unavailable native cache need their own evidence-based handling.
+Worker progress updates replace the private queue atomically after flushing
+the complete new contents. Unlocked readers no longer observe a temporarily
+empty queue during those updates; a failed replacement preserves the old file.
 
 ### Resource-Bound Transcription
 

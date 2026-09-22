@@ -22,6 +22,28 @@ spec.loader.exec_module(guest)
 
 
 class Tiny11ImageTests(unittest.TestCase):
+    def test_progress_queue_update_never_exposes_partial_rows(self):
+        import wechat_task_worker as worker
+        with tempfile.TemporaryDirectory() as folder:
+            queue = Path(folder) / 'queue.jsonl'
+            before = [{'id': 'old', 'status': 'pending'}]
+            after = [{'id': 'old', 'status': 'done'}, {'id': 'new', 'status': 'pending'}]
+            worker.write_tasks(queue, before)
+            replace = worker.os.replace
+            def observe_then_replace(source, destination):
+                self.assertEqual(worker.read_tasks(queue), before)
+                self.assertEqual(worker.read_tasks(Path(source)), after)
+                replace(source, destination)
+            with mock.patch.object(worker.os, 'replace', side_effect=observe_then_replace):
+                worker.write_tasks(queue, after)
+            self.assertEqual(worker.read_tasks(queue), after)
+            self.assertEqual(queue.stat().st_mode & 0o777, 0o600)
+            with mock.patch.object(worker.os, 'replace', side_effect=OSError('replace failed')):
+                with self.assertRaises(OSError):
+                    worker.write_tasks(queue, before)
+            self.assertEqual(worker.read_tasks(queue), after)
+            self.assertEqual(list(Path(folder).glob('*.tmp')), [])
+
     def test_resource_join_is_chat_server_local_time_and_type_bound(self):
         with sqlite3.connect(':memory:') as conn:
             conn.executescript('''CREATE TABLE ChatName2Id(user_name TEXT);

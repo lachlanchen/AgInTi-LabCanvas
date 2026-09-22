@@ -9075,7 +9075,18 @@ def persist_task_progress(task: dict[str, Any]) -> bool:
 
 def write_tasks(path: Path, tasks: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("".join(json.dumps(task, ensure_ascii=False) + "\n" for task in tasks), encoding="utf-8")
+    # Readers do not all take the writer lock. Never expose an empty or partial
+    # queue while a progress update replaces its contents.
+    payload = "".join(json.dumps(task, ensure_ascii=False) + "\n" for task in tasks)
+    fd, temporary = tempfile.mkstemp(prefix=path.name + ".", suffix=".tmp", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
 
 
 def log_worker_event(status: str, task: dict[str, Any]) -> None:
