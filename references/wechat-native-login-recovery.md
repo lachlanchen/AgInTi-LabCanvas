@@ -36,6 +36,22 @@ content from that transport failure.
 - These changes do not resume paused WeCom groups, launch another client,
   control Android, dismiss security prompts, or reset ingestion cursors.
 
+## Focus After Login
+
+A newly logged-in client can be visible while Windows refuses the background
+helper's `SetForegroundWindow` request. This is an input-focus failure, not
+evidence that login failed again. After the normal focus attempt, personal
+WeChat uses its existing Ctrl+Alt+W activation shortcut once and verifies the
+exact main window before input. Other applications and WeCom do not use this
+fallback. Native child players and owned dialogs retain their existing focus
+guard. Windows security dialogs stop input before activation is attempted.
+
+Do not restart clients, reset profiles, change device identity, repeatedly
+dismiss security warnings, or control the phone to work around this error.
+Stable login/profile reuse and bounded UI actions reduce unnecessary
+disruption; they cannot guarantee that the service will never require login.
+Logging into WeCom does not resume paused tasks or schedules.
+
 ## Recover One Task
 
 1. Inspect the exact source message and task, separating reception, media

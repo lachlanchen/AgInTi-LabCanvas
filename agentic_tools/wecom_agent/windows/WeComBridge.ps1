@@ -146,8 +146,15 @@ function Focus-WeCom {
         -not (Test-NativeWebForeground $foregroundProcessId $window)) {
         [LabCanvasWin32]::SetForegroundWindow($window.Handle) | Out-Null
         Start-Sleep -Milliseconds 80
+        if ($script:TargetApp -eq 'wechat' -and [LabCanvasWin32]::GetForegroundWindow() -ne $window.Handle) {
+            # Windows can deny a background helper's foreground request after
+            # interactive login. Use the running client's normal hotkey once,
+            # then verify ownership again before any requested input.
+            [System.Windows.Forms.SendKeys]::SendWait('^%w')
+            Start-Sleep -Milliseconds 500
+        }
         if ([LabCanvasWin32]::GetForegroundWindow() -ne $window.Handle) {
-            throw 'WeCom could not receive focus; refusing input into another app.'
+            throw ($script:TargetApp + ' could not receive focus; refusing input into another app.')
         }
     }
     return $window

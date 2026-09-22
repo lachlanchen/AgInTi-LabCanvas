@@ -90,6 +90,16 @@ class Tiny11WeComTransportTests(unittest.TestCase):
         self.assertIn("$process.Path -ieq $expected", source)
         self.assertIn('input_blocker = $inputBlocker', source)
 
+    def test_personal_focus_recovery_uses_one_native_hotkey_and_rechecks(self):
+        source = (ROOT / 'agentic_tools/wecom_agent/windows/WeComBridge.ps1').read_text()
+        focus = source.split('function Focus-WeCom {', 1)[1].split('function Invoke-Key {', 1)[0]
+        self.assertIn("$script:TargetApp -eq 'wechat' -and [LabCanvasWin32]::GetForegroundWindow() -ne $window.Handle", focus)
+        self.assertEqual(focus.count("SendWait('^%w')"), 1)
+        self.assertLess(focus.index('Get-SystemInputBlocker'), focus.index("SendWait('^%w')"))
+        self.assertLess(focus.index("SendWait('^%w')"), focus.index('could not receive focus'))
+        for forbidden in ('Stop-Process', 'Start-Process', 'Remove-Item', 'AttachThreadInput'):
+            self.assertNotIn(forbidden, focus)
+
     def test_system_dialog_health_overrides_cached_chat_ready(self):
         bridge = object.__new__(gui.Tiny11WeComGuiBridge)
         bridge.tiny11 = mock.Mock()
