@@ -102,6 +102,26 @@ class WeChatSessionPreservationTests(unittest.TestCase):
                  mock.patch.object(selection.time, 'time', return_value=1061):
                 self.assertFalse(selection.tiny11_health()['ok'])
 
+    def test_only_fresh_native_login_evidence_requests_human_action(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            config = root / 'config.json'
+            config.write_text(json.dumps({'delivery_verified': True}))
+            for state, now, expected in [('entry_required', 1001, True),
+                                         ('entry_required', 1061, False),
+                                         ('window_hidden', 1001, False),
+                                         ('window_unavailable', 1001, False)]:
+                with self.subTest(state=state, now=now):
+                    (root / 'status.json').write_text(json.dumps({'ok': True, 'client_ready': False,
+                        'client_state': state, 'last_sync_epoch': 1000}))
+                    with mock.patch.object(selection, 'CONFIG', config), \
+                         mock.patch.object(selection, 'STORE', root / 'store.db'), \
+                         mock.patch.object(selection.time, 'time', return_value=now):
+                        result = selection.tiny11_health()
+                    self.assertFalse(result['ok'])
+                    self.assertEqual(result['human_action_required'], expected)
+                    self.assertEqual(result['status'], 'entry_required' if expected else 'transport_unavailable')
+
     def test_windows_delivery_failure_cannot_restart_ubuntu_fallback(self):
         issue = {'issues': [{'code': 'wechat_gui_delivery_stalled'}]}
         for windows in (True, False):

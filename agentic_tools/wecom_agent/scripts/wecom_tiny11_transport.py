@@ -243,6 +243,8 @@ Write-Output 'installed'
         try:
             with request.urlopen(req, timeout=self.timeout) as response:
                 data = response.read(20 * 1024 * 1024)
+        except error.HTTPError as exc:
+            raise Tiny11TransportError(self._http_error_message(exc)) from exc
         except (OSError, error.URLError, TimeoutError) as exc:
             raise Tiny11TransportError(f"Tiny11 screenshot failed: {type(exc).__name__}") from exc
         if not data.startswith(b"\x89PNG\r\n\x1a\n"):
@@ -289,8 +291,17 @@ Write-Output 'installed'
             f"Remove-Item -LiteralPath {ps_quote(remote_directory)} -Recurse -Force -ErrorAction SilentlyContinue"
         )
 
+    def helper_ready(self) -> bool:
+        state = self.health()
+        # A responding bridge is healthy even when its selected client needs
+        # login. Older deployed helpers expose app/session_id but not this flag.
+        return bool(state.get("helper_ready") or (
+            state.get("app") == self.app and isinstance(state.get("session_id"), int)
+            and state["session_id"] > 0
+        ))
+
     def start_helper_if_needed(self) -> None:
-        if self.health().get("ok"):
+        if self.helper_ready():
             return
         self.powershell(f"Start-ScheduledTask -TaskName {ps_quote(self.task_name)}")
 
@@ -303,7 +314,7 @@ Write-Output 'installed'
             try:
                 deadline = time.monotonic() + 30
                 while time.monotonic() < deadline and tunnel.poll() is None:
-                    if self.health().get("ok"):
+                    if self.helper_ready():
                         backoff = 2.0
                         break
                     try:
@@ -312,7 +323,7 @@ Write-Output 'installed'
                         pass
                     time.sleep(1)
                 while tunnel.poll() is None:
-                    if not self.health().get("ok"):
+                    if not self.helper_ready():
                         try:
                             self.start_helper_if_needed()
                         except Tiny11TransportError:
@@ -328,10 +339,24 @@ Write-Output 'installed'
                 time.sleep(backoff)
                 backoff = min(60.0, backoff * 2)
 
+    def _http_error_message(self, exc: error.HTTPError) -> str:
+        detail = ""
+        try:
+            payload = json.loads(exc.read(8192).decode("utf-8"))
+            if isinstance(payload, dict) and isinstance(payload.get("error"), str):
+                detail = " ".join(payload["error"].replace(self.token, "[redacted]").split())[:500]
+        except (OSError, UnicodeError, ValueError):
+            pass
+        finally:
+            exc.close()
+        return f"Tiny11 helper HTTP {exc.code}" + (f": {detail}" if detail else "")
+
     def _json_request(self, req: request.Request) -> dict[str, Any]:
         try:
             with request.urlopen(req, timeout=self.timeout) as response:
                 payload = json.loads(response.read().decode("utf-8"))
+        except error.HTTPError as exc:
+            raise Tiny11TransportError(self._http_error_message(exc)) from exc
         except (OSError, error.URLError, TimeoutError, json.JSONDecodeError) as exc:
             raise Tiny11TransportError(f"Tiny11 helper unavailable: {type(exc).__name__}") from exc
         if not isinstance(payload, dict):

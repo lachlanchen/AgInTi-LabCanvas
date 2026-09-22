@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import hashlib
 import importlib
+import io
 import json
 from pathlib import Path
 import sys
 import tempfile
 import unittest
 from unittest import mock
+from urllib.error import HTTPError
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -34,6 +36,52 @@ def config(**tiny11):
 
 
 class Tiny11WeComTransportTests(unittest.TestCase):
+    def test_helper_http_error_retains_login_reason_without_token(self):
+        client = transport.Tiny11Transport(config(app='wechat'))
+        for operation in (lambda: client.invoke({'action': 'restore'}), client.screenshot):
+            body = io.BytesIO(json.dumps({'error': 'WECHAT_ENTRY_REQUIRED: test-token'}).encode())
+            exc = HTTPError(client.helper_url, 500, 'error', {}, body)
+            with mock.patch.object(transport.request, 'urlopen', side_effect=exc):
+                with self.assertRaises(transport.Tiny11TransportError) as caught:
+                    operation()
+            self.assertIn('HTTP 500: WECHAT_ENTRY_REQUIRED', str(caught.exception))
+            self.assertNotIn('test-token', str(caught.exception))
+            self.assertTrue(body.closed)
+
+    def test_helper_non_json_error_does_not_expose_proxy_body(self):
+        client = transport.Tiny11Transport(config())
+        for content in (b'<html>private proxy diagnostics</html>', b'["private"]', b'{"error":42}'):
+            exc = HTTPError(client.helper_url, 403, 'Forbidden', {}, io.BytesIO(content))
+            with mock.patch.object(transport.request, 'urlopen', side_effect=exc):
+                self.assertEqual(client.health(), {'ok': False, 'error': 'Tiny11 helper HTTP 403'})
+
+    def test_logged_out_client_does_not_restart_responding_helper(self):
+        client = transport.Tiny11Transport(config(app='wechat'))
+        for state in ({'ok': False, 'app': 'wechat', 'session_id': 1},
+                      {'ok': False, 'helper_ready': True, 'app': 'wechat', 'client_state': 'entry_required'}):
+            with mock.patch.object(client, 'health', return_value=state), \
+                    mock.patch.object(client, 'powershell') as start:
+                self.assertTrue(client.helper_ready())
+                client.start_helper_if_needed()
+                start.assert_not_called()
+
+    def test_missing_helper_still_can_be_restarted(self):
+        client = transport.Tiny11Transport(config())
+        with mock.patch.object(client, 'health', return_value={'ok': False, 'error': 'connection refused'}), \
+                mock.patch.object(client, 'powershell') as start:
+            client.start_helper_if_needed()
+            start.assert_called_once()
+
+    def test_native_login_detection_is_personal_read_only_and_checks_hidden_main_first(self):
+        source = (ROOT / 'agentic_tools/wecom_agent/windows/WeComBridge.ps1').read_text()
+        detector = source.split('function Get-PersonalWeChatState {', 1)[1].split('function Test-NativeWebForeground', 1)[0]
+        self.assertLess(detector.index("return 'window_hidden'"), detector.index("return 'entry_required'"))
+        self.assertIn('$_.Height -gt $_.Width', detector)
+        for forbidden in ('SendWait', 'SetForegroundWindow', 'Start-Process', 'Stop-Process'):
+            self.assertNotIn(forbidden, detector)
+        restore = source.split("{ $_ -in @('restore', 'activate') }", 1)[1].split('"click"', 1)[0]
+        self.assertLess(restore.index('WECHAT_ENTRY_REQUIRED'), restore.index('SendWait'))
+
     def test_system_dialog_blocks_input_before_focus_and_remains_visible_in_health(self):
         source = (ROOT / 'agentic_tools/wecom_agent/windows/WeComBridge.ps1').read_text()
         focus = source.split('function Focus-WeCom {', 1)[1].split('function Invoke-Key {', 1)[0]

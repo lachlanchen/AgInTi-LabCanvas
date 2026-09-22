@@ -42,6 +42,25 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
 
+    def test_native_delivery_readiness_never_probes_inactive_android(self):
+        worker = load_worker()
+        for ready in (False, True):
+            with mock.patch('wechat_transport_selection.tiny11_enabled', return_value=True), \
+                 mock.patch('wechat_transport_selection.tiny11_health', return_value={'ok': ready}), \
+                 mock.patch.object(worker.subprocess, 'run') as run:
+                self.assertEqual(worker.personal_wechat_delivery_transport_ready(), ready)
+                run.assert_not_called()
+
+    def test_native_login_deferred_delivery_waits_for_readiness_even_without_backoff(self):
+        worker = load_worker()
+        task = {'send_deferred_reason': 'wechat_entry_required'}
+        for ready in (False, True):
+            with mock.patch('wechat_transport_selection.tiny11_enabled', return_value=True), \
+                 mock.patch.object(worker, 'personal_wechat_delivery_transport_ready', return_value=ready), \
+                 mock.patch.object(worker, 'gui_send_lock_busy', return_value=False), \
+                 mock.patch.dict(os.environ, {'WECHAT_WORKER_ENTRY_SEND_BACKOFF_SECONDS': '0'}):
+                self.assertEqual(worker.deferred_send_backoff_elapsed(task, worker.datetime.now()), ready)
+
     def test_native_link_python_respects_explicit_environment(self):
         worker = load_worker()
         with mock.patch.dict(os.environ, {"WECHAT_SHIPINHAO_CAPTURE_PYTHON": "/chosen/python"}), \

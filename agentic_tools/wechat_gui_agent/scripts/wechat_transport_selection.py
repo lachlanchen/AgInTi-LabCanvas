@@ -31,11 +31,13 @@ def tiny11_health():
     age = max(0, time.time() - state.get('last_sync_epoch', 0))
     ready = bool(state.get('ok') and age < 60 and config.get('delivery_verified')
                  and state.get('client_ready') is True)
+    entry_required = bool(not ready and age < 60 and state.get('client_state') == 'entry_required')
     return {'ok': ready, 'available': ready, 'known': True, 'transport': 'wechat_tiny11',
-            'status': 'unlocked' if ready else 'transport_unavailable',
-            'reason': 'native_store_and_delivery_ready' if ready else 'native_transport_not_ready',
+            'status': 'unlocked' if ready else 'entry_required' if entry_required else 'transport_unavailable',
+            'reason': ('native_store_and_delivery_ready' if ready else
+                       'wechat_login_required' if entry_required else 'native_transport_not_ready'),
             'client_ready': state.get('client_ready') is True,
-            'human_action_required': False, 'state_age_seconds': round(age),
+            'human_action_required': entry_required, 'state_age_seconds': round(age),
             'binding_missing_chats': state.get('binding_missing_chats', []),
             'novnc_url': 'http://127.0.0.1:6143/'}
 

@@ -4074,6 +4074,10 @@ def personal_wechat_delivery_transport_ready() -> bool:
     still lets a restored desktop session release the same stored result.
     """
 
+    from wechat_transport_selection import tiny11_enabled, tiny11_health
+    if tiny11_enabled():
+        return tiny11_health().get("ok") is True
+
     state_path = PRIVATE / "wechat_desktop_unlock_watchdog.state.json"
     try:
         state = json.loads(state_path.read_text(encoding="utf-8"))
@@ -8687,6 +8691,9 @@ def deferred_send_backoff_elapsed(task: dict[str, Any], now: datetime) -> bool:
         return (now - last).total_seconds() >= backoff
     if reason == "wechat_entry_required":
         if gui_send_lock_busy():
+            return False
+        from wechat_transport_selection import tiny11_enabled
+        if tiny11_enabled() and not personal_wechat_delivery_transport_ready():
             return False
         backoff = int(os.environ.get("WECHAT_WORKER_ENTRY_SEND_BACKOFF_SECONDS", "15"))
         if backoff <= 0:

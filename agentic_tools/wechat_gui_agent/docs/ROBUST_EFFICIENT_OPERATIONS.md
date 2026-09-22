@@ -1,5 +1,8 @@
 # Robust And Efficient Operations
 
+Keep helper reachability separate from client login and use the selected
+transport for retry readiness. See [native login recovery](../../../references/wechat-native-login-recovery.md).
+
 This guide is the system contract for keeping LabCanvas WeChat automation
 durable, low-cost, and predictable. Use it when changing monitors, workers,
 media sync, generated-video workflows, LazyEdit publishing, or GUI sending.

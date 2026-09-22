@@ -1,5 +1,8 @@
 # WeChat Full Control Manual
 
+For Windows client login failures, see
+[native login recovery](../../../references/wechat-native-login-recovery.md).
+
 This manual is the operator map for LabCanvas WeChat automation. In this repo,
 "full control" means reliable, auditable control of the logged-in local WeChat
 client through owned and consented surfaces: isolated GUI actions, local message

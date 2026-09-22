@@ -65,6 +65,25 @@ function Get-WeComWindow {
         Sort-Object { $_.Width * $_.Height } -Descending | Select-Object -First 1
 }
 
+function Get-PersonalWeChatState {
+    param($MainWindow)
+    if ($null -ne $MainWindow) { return 'ready' }
+    $ids = @(Get-Process -Name @('Weixin', 'WeChat') -ErrorAction SilentlyContinue | ForEach-Object Id)
+    if ($ids.Count -eq 0) { return 'client_unavailable' }
+    $all = @([LabCanvasDesktop.NativeWindows]::Snapshot([int[]]$ids, $true))
+    $main = @($all | Where-Object { $_.Name -in @('Weixin', 'WeChat', '微信') -and
+        $_.ClassName -eq 'Qt51514QWindowIcon' -and $_.Width -ge 700 -and $_.Height -ge 500 })
+    if ($main.Count -gt 0) { return 'window_hidden' }
+    # The observed login surface is a portrait Qt window (296 x 388 at 100%).
+    # A minimized main window or an arbitrary small popup is not proof of logout.
+    $login = @([LabCanvasDesktop.NativeWindows]::Snapshot([int[]]$ids) |
+        Where-Object { $_.Name -in @('Weixin', 'WeChat', '微信') -and
+            $_.ClassName -eq 'Qt51514QWindowIcon' -and $_.Width -ge 200 -and
+            $_.Width -lt 700 -and $_.Height -gt $_.Width -and $_.Height -ge 300 })
+    if ($login.Count -eq 1) { return 'entry_required' }
+    return 'window_unavailable'
+}
+
 function Test-NativeWebForeground {
     param([uint32]$ProcessId, $Window)
     $child = Get-CimInstance Win32_Process -Filter "ProcessId=$ProcessId" -ErrorAction SilentlyContinue
@@ -104,6 +123,9 @@ function Get-SystemInputBlocker {
 function Focus-WeCom {
     $window = Get-WeComWindow
     if ($null -eq $window) {
+        if ($script:TargetApp -eq 'wechat' -and (Get-PersonalWeChatState $window) -eq 'entry_required') {
+            throw 'WECHAT_ENTRY_REQUIRED: personal WeChat is at its login screen.'
+        }
         throw "No visible WeCom window was found in the interactive session."
     }
     # Preserve the current size. Exact-chat OCR and the following click must
@@ -175,7 +197,11 @@ function Invoke-BridgeAction {
     switch ($kind) {
         { $_ -in @('restore', 'activate') } {
             if ($script:TargetApp -ne 'wechat') { throw 'Restore is scoped to personal WeChat.' }
-            if ($kind -eq 'restore' -and $null -ne (Get-WeComWindow)) { return $true }
+            $main = Get-WeComWindow
+            if ((Get-PersonalWeChatState $main) -eq 'entry_required') {
+                throw 'WECHAT_ENTRY_REQUIRED: personal WeChat is at its login screen.'
+            }
+            if ($kind -eq 'restore' -and $null -ne $main) { return $true }
             $ids = @(Get-Process -Name @('Weixin','WeChat') -ErrorAction SilentlyContinue | ForEach-Object Id)
             $candidates = @([LabCanvasDesktop.NativeWindows]::Snapshot([int[]]$ids, $true) |
                 Where-Object { $_.Name -in @('Weixin','WeChat','微信') -and
@@ -347,6 +373,10 @@ try {
                 $inputBlocker = Get-SystemInputBlocker $foregroundProcessId
                 $payload = [ordered]@{
                     ok = ($null -ne $window)
+                    helper_ready = $true
+                    client_state = if ($script:TargetApp -eq 'wechat') {
+                        Get-PersonalWeChatState $window
+                    } elseif ($null -ne $window) { 'ready' } else { 'window_unavailable' }
                     input_ready = ($null -ne $window -and -not $inputBlocker)
                     input_blocker = $inputBlocker
                     app = $script:TargetApp

@@ -567,6 +567,7 @@ def _sync_once(config=None):
     client_ready = client.get('ok') is True and client.get('app') == 'wechat'
     state = {'ok': True, 'last_sync_epoch': time.time(), 'inserted': inserted,
              'client_ready': client_ready,
+             'client_state': client.get('client_state', 'unknown'),
              'reader_mode': summary.get('reader_mode', 'unknown'),
              'tables': len(payload['tables']), 'expected_tables': len(config['message_tables']),
              'all_tables_available': set(config['message_tables']) <= set(payload['tables']),
