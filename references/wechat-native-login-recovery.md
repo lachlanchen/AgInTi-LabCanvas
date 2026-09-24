@@ -67,6 +67,43 @@ Logging into WeCom does not resume paused tasks or schedules.
    same-chat delivery receipts before marking success. Never bulk-replay old
    failures or successful schedules after login.
 
+## Hidden Window Overlap Is Not Logout
+
+On September 25, personal WeChat received new messages and the backend finished
+three article summaries, but delivery failed with `WeChat overlaps WeCom`.
+The same guard prevented native Channels link recovery. Both main clients were
+correctly placed side by side; a WeCom Drive window behind WeChat had an
+overlapping bounding rectangle. Checking rectangles alone incorrectly treated
+that hidden content as a privacy leak.
+
+The screenshot helper now checks actual stacking order before rejecting an
+overlap. `NativeWindows.IsAbove` follows the documented `GetWindow` /
+`GW_HWNDPREV` relationship with cycle and traversal bounds. A background window
+does not block capture; another app actually covering the selected window still
+does. The target must remain visible and keep its measured geometry. Capture
+remains read-only, masks the desktop outside the selected app, and never moves,
+closes, logs out, or activates WeCom. The bounds guard is not a reason to disable
+privacy isolation or restart either client.
+
+API reference: [Microsoft GetWindow documentation](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getwindow).
+
+For live diagnosis, distinguish:
+
+- Intake: the selected Windows mirror and its exact per-database cursor.
+- Work: saved result and media recovery status, independent of delivery.
+- Delivery: native receipt/ledger, not merely a running helper or worker.
+
+`wechat health` now reads the selected Windows store rather than an obsolete
+Linux cache. An existing empty chat table is valid; an absent table or missing
+selected store is not. It compares the matching database cursor, not another
+transport's larger local message ID. Preserve the Linux cache for fallback.
+
+After this repair, use `wechat worker repair-result TASK_ID --send` for completed
+unsent work. Reprocess only tasks whose source recovery failed. Keep successful
+delivery receipts, and do not bulk-replay historical failures. Live recovery
+verified the three-article result and the exact card's original media/transcript
+through the existing worker. WeCom/LabAgent remained paused.
+
 ## Verification
 
 Regression coverage lives in `test_wecom_tiny11_transport.py`,

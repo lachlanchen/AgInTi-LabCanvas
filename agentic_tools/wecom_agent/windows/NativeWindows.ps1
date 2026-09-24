@@ -19,6 +19,7 @@ namespace LabCanvasDesktop {
         [DllImport("user32.dll")] private static extern bool EnumWindows(EnumProc proc, IntPtr arg);
         [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr window);
         [DllImport("user32.dll")] private static extern bool IsIconic(IntPtr window);
+        [DllImport("user32.dll")] private static extern IntPtr GetWindow(IntPtr window, uint command);
         [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr window, out uint pid);
         [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr window, out Rect rect);
         [DllImport("user32.dll", CharSet=CharSet.Unicode)]
@@ -26,6 +27,19 @@ namespace LabCanvasDesktop {
         [DllImport("user32.dll", CharSet=CharSet.Unicode)]
         private static extern int GetClassName(IntPtr window, StringBuilder text, int count);
         [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+
+        public static bool IsAbove(IntPtr candidate, IntPtr target) {
+            var seen = new HashSet<IntPtr>();
+            // GW_HWNDPREV follows documented Z order. Bound traversal in case
+            // windows are destroyed/reordered while the helper observes them.
+            for (IntPtr current = GetWindow(target, 3); current != IntPtr.Zero;
+                 current = GetWindow(current, 3)) {
+                if (!seen.Add(current) || seen.Count > 4096)
+                    throw new InvalidOperationException("Window order changed during capture.");
+                if (current == candidate) return true;
+            }
+            return false;
+        }
 
         public static WindowInfo[] Snapshot(int[] processIds) {
             return Snapshot(processIds, false);

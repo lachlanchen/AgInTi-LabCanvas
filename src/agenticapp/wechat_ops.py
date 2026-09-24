@@ -3433,6 +3433,12 @@ def direct_config_health(
             state_last = 0
 
     latest = latest_direct_db_local_id(str(config.get("message_table") or ""))
+    cursors = state.get("message_db_cursors")
+    if isinstance(cursors, dict) and latest.get("message_db") in cursors:
+        try:
+            state_last = int(cursors[latest["message_db"]])
+        except (TypeError, ValueError):
+            state_last = 0
     has_guarded_target = has_send_title_guard(config.get("send_target"))
     codex = config.get("codex") if isinstance(config.get("codex"), dict) else {}
     organizer = config.get("organizer") if isinstance(config.get("organizer"), dict) else {}
@@ -3551,11 +3557,19 @@ def sanitize_loop_metrics(raw: Any) -> dict[str, Any]:
 
 
 def latest_direct_db_local_id(table: str) -> dict[str, Any]:
-    db_paths = sorted(
-        (PRIVATE / "wechat_decrypt" / "decrypted" / "message").glob("message_*.db"),
-        key=lambda path: int(path.stem.rsplit("_", 1)[-1]) if path.stem.rsplit("_", 1)[-1].isdigit() else -1,
-        reverse=True,
-    )
+    sys.path.insert(0, str(SCRIPTS))
+    from wechat_transport_selection import STORE, tiny11_enabled
+
+    # Match the monitor's selected transport; old Linux caches remain on disk
+    # for fallback but must not be compared with a Windows ingestion cursor.
+    if tiny11_enabled():
+        db_paths = [STORE] if STORE.is_file() else []
+    else:
+        db_paths = sorted(
+            (PRIVATE / "wechat_decrypt" / "decrypted" / "message").glob("message_*.db"),
+            key=lambda path: int(path.stem.rsplit("_", 1)[-1]) if path.stem.rsplit("_", 1)[-1].isdigit() else -1,
+            reverse=True,
+        )
     if not db_paths:
         return {"ok": False, "status": "decrypted-db-missing", "latest_local_id": None, "latest_at": "", "age_seconds": None}
     if not is_safe_sql_identifier(table):
@@ -3567,7 +3581,7 @@ def latest_direct_db_local_id(table: str) -> dict[str, Any]:
                 row = conn.execute(f'SELECT MAX(local_id), MAX(create_time) FROM "{table}"').fetchone()
         except sqlite3.Error:
             continue
-        if row and (row[0] is not None or row[1] is not None):
+        if row:
             rows.append((int(row[0] or 0), int(row[1] or 0), db_path.name))
     if not rows:
         return {"ok": False, "status": "message-table-unreadable", "latest_local_id": None, "latest_at": "", "age_seconds": None}

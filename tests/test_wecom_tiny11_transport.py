@@ -365,6 +365,23 @@ class Tiny11WeComTransportTests(unittest.TestCase):
         self.assertIn('No visible WeCom window; refusing desktop capture.', source)
         self.assertNotIn('CopyFromScreen($bounds.Left, $bounds.Top, 0, 0, $bounds.Size)', source)
 
+    def test_capture_blocks_only_other_app_windows_above_the_target(self) -> None:
+        folder = ROOT / 'agentic_tools/wecom_agent/windows'
+        native = (folder / 'NativeWindows.ps1').read_text()
+        source = (folder / 'WeComBridge.ps1').read_text()
+        capture = source.split('function Write-ScreenshotResponse {', 1)[1].split('$listener =', 1)[0]
+        self.assertIn('GetWindow(target, 3)', native)
+        self.assertIn('GetWindow(current, 3)', native)
+        self.assertIn('!seen.Add(current) || seen.Count > 4096', native)
+        self.assertIn('if (current == candidate) return true;', native)
+        self.assertIn('$_.Handle -eq $window.Handle', capture)
+        self.assertIn('$other.ProcessId -notin $wechatIds', capture)
+        self.assertIn('::IsAbove($other.Handle, $captureTarget.Handle)', capture)
+        self.assertIn('Target window changed; refusing cross-app capture.', capture)
+        self.assertIn('$region.IntersectsWith($otherRect)', capture)
+        self.assertNotIn('Focus-WeCom', capture)
+        self.assertNotIn('SetForegroundWindow', capture)
+
     def test_shared_desktop_layout_is_explicit_and_keeps_dual_mode(self) -> None:
         source = (ROOT / 'agentic_tools/wecom_agent/windows/Set-Tiny11AppScreens.ps1').read_text()
         self.assertIn("[ValidateSet('Dual', 'Shared')][string]$Layout = 'Dual'", source)

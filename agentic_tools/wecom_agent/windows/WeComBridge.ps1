@@ -322,10 +322,22 @@ function Write-ScreenshotResponse {
     $region = [System.Drawing.Rectangle]::Intersect($bounds,$rect)
     $otherNames = if ($script:TargetApp -eq 'wechat') { @('WXWork') } else { @('WeChat', 'Weixin') }
     $wechatIds = @(Get-Process -Name $otherNames -ErrorAction SilentlyContinue | ForEach-Object Id)
-    foreach ($other in [LabCanvasDesktop.NativeWindows]::Snapshot([int[]]$wechatIds)) {
+    # Compare current windows and stacking order. A window behind the target cannot
+    # leak into its screen capture, even when their bounding rectangles overlap.
+    $captureIds = @($window.ProcessId) + $wechatIds
+    $captureWindows = @([LabCanvasDesktop.NativeWindows]::Snapshot([int[]]$captureIds))
+    $captureTarget = $captureWindows | Where-Object { $_.Handle -eq $window.Handle } | Select-Object -First 1
+    if ($null -eq $captureTarget -or $captureTarget.X -ne $window.X -or
+        $captureTarget.Y -ne $window.Y -or $captureTarget.Width -ne $window.Width -or
+        $captureTarget.Height -ne $window.Height) {
+        throw 'Target window changed; refusing cross-app capture.'
+    }
+    foreach ($other in $captureWindows) {
+        if ($other.ProcessId -notin $wechatIds) { continue }
         if ($other.ClassName -in @('PerryShadowWnd', 'TitleBarWindow')) { continue }
         $otherRect = New-Object System.Drawing.Rectangle($other.X,$other.Y,$other.Width,$other.Height)
-        if ($region.IntersectsWith($otherRect)) {
+        if ($region.IntersectsWith($otherRect) -and
+            [LabCanvasDesktop.NativeWindows]::IsAbove($other.Handle, $captureTarget.Handle)) {
             throw 'WeChat overlaps WeCom; refusing cross-app capture.'
         }
     }

@@ -7,6 +7,7 @@ import importlib
 import io
 import json
 import os
+import sqlite3
 from pathlib import Path
 import subprocess
 import tempfile
@@ -17,6 +18,55 @@ from agenticapp import wechat_ops
 
 
 class WeChatOpsHealthTests(unittest.TestCase):
+    def test_latest_message_health_uses_selected_windows_store_not_old_linux_cache(self):
+        import sys
+        sys.path.insert(0, str(wechat_ops.SCRIPTS))
+        import wechat_transport_selection as selection
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            old = root / 'wechat_decrypt/decrypted/message/message_0.db'
+            old.parent.mkdir(parents=True)
+            native = root / 'message_999998.db'
+            for path, value in ((old, 900), (native, 12)):
+                with sqlite3.connect(path) as conn:
+                    conn.execute('CREATE TABLE Msg_test(local_id INTEGER, create_time INTEGER)')
+                    conn.execute('INSERT INTO Msg_test VALUES (?, ?)', (value, value))
+                    conn.execute('CREATE TABLE Msg_empty(local_id INTEGER, create_time INTEGER)')
+            with (
+                mock.patch.object(wechat_ops, 'PRIVATE', root),
+                mock.patch.object(selection, 'STORE', native),
+                mock.patch.object(selection, 'tiny11_enabled', return_value=True),
+            ):
+                latest = wechat_ops.latest_direct_db_local_id('Msg_test')
+                self.assertEqual(latest['latest_local_id'], 12)
+                self.assertEqual(latest['message_db'], native.name)
+                empty = wechat_ops.latest_direct_db_local_id('Msg_empty')
+                self.assertTrue(empty['ok'])
+                self.assertEqual(empty['latest_local_id'], 0)
+                self.assertFalse(wechat_ops.latest_direct_db_local_id('Msg_missing')['ok'])
+                native.unlink()
+                self.assertFalse(wechat_ops.latest_direct_db_local_id('Msg_test')['ok'])
+
+    def test_health_compares_cursor_from_same_message_database(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state = root / 'state.json'
+            state.write_text(json.dumps({
+                'last_local_id': 900,
+                'message_db_cursors': {'message_999998.db': 11, 'message_0.db': 900},
+                'last_loop_at': datetime.now(timezone.utc).isoformat(),
+            }))
+            config = root / 'config.json'
+            config.write_text(json.dumps({'state_path': str(state), 'message_table': 'Msg_test',
+                                          'send_target': {'expected_title': 'Test'}}))
+            with mock.patch.object(wechat_ops, 'latest_direct_db_local_id', return_value={
+                'ok': True, 'message_db': 'message_999998.db', 'latest_local_id': 12,
+            }):
+                result = wechat_ops.direct_config_health(config)
+            self.assertEqual(result['state_last_local_id'], 11)
+            self.assertFalse(result['caught_up'])
+
     def compact_health_fixture(self) -> dict:
         return {
             "checked_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
