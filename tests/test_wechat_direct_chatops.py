@@ -191,6 +191,32 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertEqual(research["language_mode"], "match_requester_language")
         self.assertEqual(research["chat"], "懒人科研")
 
+    def test_private_assistant_context_reaches_router_and_reply_without_leaking(self) -> None:
+        config = self.backend_chat_config("Company team", purpose="company_collaboration")
+        config["assistant_context"] = {
+            "brief": "Use evidence for company decisions.",
+            "reference_paths": [" /private/company.md ", "/private/company.md", None],
+            "cross_chat_context_allowed": True,
+        }
+        profile = direct_chatops.build_chat_response_policy(config)["capability_profile"]
+        self.assertEqual(profile["operator_context"], {
+            "brief": "Use evidence for company decisions.",
+            "reference_paths": ["/private/company.md"],
+        })
+        row = self.row("What should we do next?")
+        for prompt in (
+            direct_chatops.build_agent_route_prompt(config, row, [row]),
+            direct_chatops.build_codex_prompt(config, row, ""),
+        ):
+            self.assertIn("Use evidence for company decisions.", prompt)
+            self.assertIn("/private/company.md", prompt)
+        other = direct_chatops.build_chat_response_policy(self.backend_chat_config("Other"))
+        self.assertNotIn("operator_context", other["capability_profile"])
+        self.assertFalse(other["cross_chat_context_allowed"])
+        for malformed in (None, "bad", {"brief": {}, "reference_paths": "bad"}):
+            config["assistant_context"] = malformed
+            self.assertNotIn("operator_context", direct_chatops.build_chat_response_policy(config)["capability_profile"])
+
     def test_renamed_groups_share_capabilities_and_keep_stable_sessions(self) -> None:
         cases = (
             ("LazyResearch", "lazyresearch", "懒人科研"),

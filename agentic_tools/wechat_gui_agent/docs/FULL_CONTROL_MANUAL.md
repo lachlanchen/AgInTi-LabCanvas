@@ -1,5 +1,10 @@
 # WeChat Full Control Manual
 
+For a private company/team assistant using the same bridge, see
+[company group enrollment](../../../references/wechat-private-company-assistant.md).
+Operator-owned `assistant_context` stays scoped to its direct config and follows
+both the fast agent and the worker; it never enables another transport or group.
+
 For Windows client login failures, see
 [native login recovery](../../../references/wechat-native-login-recovery.md).
 

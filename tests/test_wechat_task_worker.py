@@ -36,6 +36,23 @@ def load_worker():
 
 
 class WeChatTaskWorkerTests(unittest.TestCase):
+    def test_private_group_context_survives_codex_and_fallback_packets(self):
+        worker = load_worker()
+        context = {"brief": "Help this company using evidence.",
+                   "reference_paths": ["/private/company.md"]}
+        task = {"id": "test-company", "chat": "Company", "request": "Explain the product",
+                "artifact_dir": "/tmp/company-test", "response_policy": {
+                    "capability_profile": {"id": "company", "operator_context": context,
+                        "default_behavior": "Answer naturally.",
+                        "proactive_policy": "No unsolicited schedules."}}}
+        for view in (worker.worker_agent_task_view(task), worker.aginti_worker_task_view(task)):
+            profile = view["response_policy"]["capability_profile"]
+            self.assertEqual(profile["operator_context"], context)
+            self.assertEqual(profile["default_behavior"], "Answer naturally.")
+        other = worker.worker_response_policy({"id": "other", "chat": "Other"})
+        self.assertNotIn("operator_context", other["capability_profile"])
+        self.assertFalse(other["cross_chat_context_allowed"])
+
     def setUp(self):
         # Unit tests must not adopt the workstation's live Windows transport.
         patcher = mock.patch.dict(os.environ, {"WECHAT_TINY11_DISABLE": "1"})

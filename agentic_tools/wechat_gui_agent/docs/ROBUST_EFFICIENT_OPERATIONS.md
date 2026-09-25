@@ -1,5 +1,11 @@
 # Robust And Efficient Operations
 
+Per-group company/reference briefs use private `assistant_context` configuration,
+not global prompts. Preserve it through routing, fast replies and bounded worker
+packets, including fallback agents. Follow the
+[company enrollment checks](../../../references/wechat-private-company-assistant.md)
+before treating a newly added group as live.
+
 Keep helper reachability separate from client login and use the selected
 transport for retry readiness. See [native login recovery](../../../references/wechat-native-login-recovery.md).
 

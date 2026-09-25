@@ -2494,6 +2494,20 @@ def build_chat_response_policy(config: dict[str, Any]) -> dict[str, Any]:
         chat_purpose=str(config.get("chat_purpose") or ""),
         analysis_mode=str(config.get("analysis_mode") or ""),
     )
+    # Operator-owned private configuration, never populated from inbound text.
+    assistant_context = config.get("assistant_context")
+    if isinstance(assistant_context, dict):
+        context = {}
+        brief = assistant_context.get("brief")
+        if isinstance(brief, str) and brief.strip():
+            context["brief"] = brief.strip()
+        paths = assistant_context.get("reference_paths")
+        if isinstance(paths, list):
+            context["reference_paths"] = list(dict.fromkeys(
+                path.strip() for path in paths if isinstance(path, str) and path.strip()
+            ))
+        if context:
+            capability_profile["operator_context"] = context
     return {
         "scope": "exact_chat_only",
         "chat": str(config.get("chat_name") or "wechat-chat"),

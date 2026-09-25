@@ -9842,6 +9842,9 @@ def worker_agent_task_view(task: dict[str, Any]) -> dict[str, Any]:
                 "id",
                 "template_profile",
                 "focus",
+                "default_behavior",
+                "proactive_policy",
+                "operator_context",
                 "restrictions",
                 "explicit_request_overrides_focus",
             )

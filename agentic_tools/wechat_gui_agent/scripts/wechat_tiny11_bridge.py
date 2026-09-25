@@ -51,6 +51,14 @@ def title_matches(observed, expected):
     )
 
 
+def neutral_title_image(source):
+    """Keep monochrome native title text, excluding colored membership badges."""
+    image = source.convert('RGB')
+    image.putdata([(255, 255, 255) if max(pixel) - min(pixel) > 20 else pixel
+                   for pixel in image.getdata()])
+    return image
+
+
 def composed_filename_matches(filename, observed):
     if filename_matches_ocr(filename, observed):
         return True
@@ -151,6 +159,11 @@ class Tiny11WeChatBridge(Tiny11WeComGuiBridge):
                 raw_path = self.runtime_dir / 'wechat-title-native-ocr.png'
                 raw.save(raw_path)
                 variants.append(self.ocr(raw_path, psm=7, language='chi_sim+eng'))
+            # Mixed WeChat/WeCom groups have a colored badge after the member
+            # count. Filter its pixels, not arbitrary trailing OCR characters.
+            neutral_path = self.runtime_dir / 'wechat-title-neutral.png'
+            neutral_title_image(source).save(neutral_path)
+        variants.append(self.ocr_scaled(neutral_path, scale=4, psm=7))
         for observed in variants:
             title = observed.strip().splitlines()[0] if observed.strip() else ''
             title = re.sub(r'\s*[（(]\d+[）)]\s*$', '', title)

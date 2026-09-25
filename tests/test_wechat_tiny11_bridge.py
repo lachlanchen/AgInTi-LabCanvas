@@ -20,6 +20,32 @@ snapshot = importlib.import_module('wechat_store_snapshot')
 
 
 class Tiny11WeChatTests(unittest.TestCase):
+    def test_title_badge_filter_preserves_monochrome_identity_text(self):
+        source = Image.new('RGB', (4, 1))
+        pixels = [(20, 20, 20), (140, 140, 140), (0, 133, 252), (244, 200, 0)]
+        source.putdata(pixels)
+        cleaned = bridge.neutral_title_image(source)
+        self.assertEqual(list(cleaned.getdata()), pixels[:2] + [(255, 255, 255)] * 2)
+        self.assertEqual(list(source.getdata()), pixels)
+
+    def test_native_title_badge_does_not_relax_exact_name_guard(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            client = object.__new__(bridge.Tiny11WeChatBridge)
+            client.runtime_dir = Path(tmp)
+            source = Path(tmp) / 'title.png'
+            Image.new('RGB', (600, 40), 'white').save(source)
+            client.capture_screen = mock.Mock(return_value=source)
+            client.crop = mock.Mock(return_value=source)
+            client.aliases = mock.Mock(return_value=['Company team'])
+            client.ocr = mock.Mock(return_value='Company team(10) C')
+            window = SimpleNamespace(x=0, y=0, width=1276)
+            for neutral, expected in [('Company team(10)', True),
+                                      ('Company other(10)', False),
+                                      ('Company team extended(10)', False),
+                                      ('Company team(10) C', False)]:
+                client.ocr_scaled = mock.Mock(side_effect=['Company team(10) C', neutral])
+                self.assertEqual(client.current_title_matches(window, 'Company team'), expected)
+
     def test_native_draft_file_roundtrip_requires_exact_single_staged_path(self):
         client = object.__new__(bridge.Tiny11WeChatBridge)
         staged = Path('/tmp/staged/untruncated-source-name.mp4')
