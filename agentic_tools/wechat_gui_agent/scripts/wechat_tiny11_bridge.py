@@ -30,11 +30,13 @@ from wecom_tiny11_gui_bridge import Tiny11WeComGuiBridge
 from wecom_tiny11_transport import Tiny11Transport, load_config
 from wecom_gui_bridge import (normalize_text, write_private_json, chunk_text,
                               short_hash, delivery_done, remember_delivery,
-                              get_runtime, set_runtime, file_delivery_key, filename_matches_ocr)
+                              get_runtime, set_runtime, file_delivery_key, filename_matches_ocr,
+                              canonical_composer_text)
 from wechat_native_text_delivery import (native_chat_binding, pending_receipt_path,
                                          retain_pending_receipt, normalize_text as normalize_message)
 from wechat_mirror import DEFAULT_DB, record_event
 from wechat_message_policy import file_transport_identity
+from wechat_reply_mentions import mention_header, mention_picker_box
 
 TABLE_RE = re.compile(r'Msg_[0-9a-fA-F]{32}')
 
@@ -249,6 +251,17 @@ class Tiny11WeChatBridge(Tiny11WeComGuiBridge):
     def poll_cycle(self):
         raise RuntimeError('WeChat intake uses the exact local store, not WeCom OCR ingestion')
 
+    def composer_text_matches(self, window, expected, delivery_key):
+        if super().composer_text_matches(window, expected, delivery_key):
+            return True
+        if not mention_header(expected)[0]:
+            return False
+        # Native mentions add U+2005 padding. Normalize only the recipient
+        # header, retaining the existing strict comparison of the answer body.
+        observed = canonical_composer_text(self.get_clipboard())
+        return (canonical_composer_text(mention_header(observed)[2]) ==
+                canonical_composer_text(mention_header(expected)[2]))
+
     def composer_contains_filename(self, screenshot, window, filename, delivery_key):
         crop = self.crop(screenshot, (self.content_left(window) + 10,
                                      window.y + window.height - 165, 600, 130),
@@ -321,9 +334,70 @@ class Tiny11WeChatBridge(Tiny11WeComGuiBridge):
                 return proof
             time.sleep(1)
 
+    def compose_reply_mentions(self, window, names, body, canonical, key):
+        """Upgrade the agent's recipient header using exact native member rows."""
+        selected = []
+        try:
+            for name in names:
+                before = self.capture_screen('mention-before-' + key)
+                self.set_clipboard('@')
+                self.key('ctrl+v')
+                time.sleep(.3)
+                self.set_clipboard(name)
+                self.key('ctrl+v')
+                match = None
+                for _ in range(3):
+                    time.sleep(.35)
+                    after = self.capture_screen('mention-after-' + key)
+                    box = mention_picker_box(before, after, window, self.content_left(window))
+                    if not box:
+                        continue
+                    crop = self.crop(after, box, self.runtime_dir / ('mention-picker-' + key + '.png'))
+                    # Remove the hovered row's gray rounded border before OCR;
+                    # otherwise it can be read as another Chinese character.
+                    with Image.open(crop) as image:
+                        label = image.convert('L').point(lambda value: 255 if value > 160 else 0)
+                    label.save(crop)
+                    try:
+                        candidate = self.find_ocr_line(
+                            crop, name, scale=4, full_line_only=True,
+                            native_pixels=any('\u3400' <= char <= '\u9fff' for char in name))
+                    except RuntimeError as exc:
+                        if not str(exc).startswith('ambiguous visible '):
+                            raise
+                        raise ValueError('native member name is ambiguous') from exc
+                    # OCR's generic conversation matcher allows near matches;
+                    # mentions must retain the complete spelling, including spaces.
+                    if candidate and candidate['text'].strip() == name:
+                        match = candidate
+                        break
+                if not match:
+                    raise ValueError('native member name unavailable or ambiguous')
+                self.click(box[0] + int(match['center_x']), box[1] + int(match['center_y']))
+                selected.append(name)
+                time.sleep(.2)
+            self.set_clipboard('\n' + body)
+            self.key('ctrl+v')
+            if not self.composer_text_matches(window, canonical, key):
+                raise ValueError('native mention draft did not round-trip')
+            return selected
+        except ValueError as exc:
+            write_private_json(self.runtime_dir / ('mention-fallback-' + key + '.json'), {
+                'status': 'plain_name_fallback', 'reason': str(exc)[:250],
+                'requested': names, 'selected_before_fallback': selected,
+            })
+            # Only this invocation's unsent draft is owned here. Never press
+            # Enter while a picker is unresolved or retry an uncertain send.
+            self.click(window.x + window.width - 60, window.y + 40)
+            self.clear_composer(window)
+            self.set_clipboard(canonical)
+            self.composer_keys(window, 'ctrl+v')
+            return []
+
     def send_text_locked(self, chat, text, *, task_id):
         sent = []
         for index, chunk in enumerate(chunk_text(text, 1800)):
+            names, body, chunk = mention_header(chunk)
             key = short_hash(f'{chat}:{task_id}:{index}:{chunk}')
             if delivery_done(self.state_db, key, chat):
                 continue
@@ -337,8 +411,11 @@ class Tiny11WeChatBridge(Tiny11WeComGuiBridge):
                 if not self.composer_is_empty(window, key):
                     raise RuntimeError('WECHAT_COMPOSE_VERIFY_FAILED: refusing to overwrite an existing draft')
                 receipt = self.prepare_native_receipt(chat)
-                self.set_clipboard(chunk)
-                self.composer_keys(window, 'ctrl+v')
+                if names:
+                    receipt['mentioned_users'] = self.compose_reply_mentions(window, names, body, chunk, key)
+                else:
+                    self.set_clipboard(chunk)
+                    self.composer_keys(window, 'ctrl+v')
                 if not self.composer_text_matches(window, chunk, key):
                     raise RuntimeError('WECHAT_COMPOSE_VERIFY_FAILED: pasted text did not round-trip')
                 retain_pending_receipt(pending_receipt_path(self.config['targets'][chat], chunk), receipt)
@@ -354,7 +431,9 @@ class Tiny11WeChatBridge(Tiny11WeComGuiBridge):
             record_event(chat_name=chat, action='send', direction='outbound', message=chunk,
                          status='sent', db_path=DEFAULT_DB, metadata={'transport': 'wechat_tiny11', 'receipt': proof})
             screen = self.capture_screen('sent-' + key)
-            sent.append({'verified': True, 'receipt': proof, 'sent_evidence': str(screen)})
+            sent.append({'verified': True, 'receipt': proof, 'sent_evidence': str(screen),
+                         'mentioned_users': receipt.get('mentioned_users', []) if not prior else
+                                            json.loads(prior).get('mentioned_users', [])})
         return {'ok': True, 'sent_messages': sent, 'sent_files': [], 'errors': []}
 
     def send_files_locked(self, chat, paths, *, task_id):

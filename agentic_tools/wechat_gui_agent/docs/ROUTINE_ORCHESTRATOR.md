@@ -30,6 +30,13 @@ Keep consecutive quotes distinct in the message ledger, even when the agent
 answers them together. See [quoted source identity](../../../references/wechat-quoted-source-identity-2026-09-14.md)
 for the failure analysis, parser, worker guards, and recovery checks.
 
+Group replies address each member whose request is actually answered once,
+including combined replies. Recipient choice belongs to the agent and the
+same-chat ledger, not everyone in history or a quoted author. Windows WeChat
+upgrades an explicit recipient header through exact native member selection,
+with named-text fallback and unchanged delivery guards. See
+[recipient mentions](../../../references/wechat-group-reply-recipient-mentions-2026-09-25.md).
+
 Channels cards default to exact native link recovery, original download, and
 transcript delivery; a second download request or pasted URL is not required.
 Source captions cannot authorize publishing or create consent waits. See

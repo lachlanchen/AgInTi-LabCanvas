@@ -11,12 +11,21 @@ import tempfile
 import time
 import unicodedata
 
+from wechat_reply_mentions import mention_header
+
 
 PRIVATE = Path(__file__).resolve().parents[1] / ".private"
 
 
 def normalize_text(value: str) -> str:
-    return unicodedata.normalize("NFC", value.replace("\r\n", "\n").replace("\r", "\n"))
+    value = unicodedata.normalize("NFC", value.replace("\r\n", "\n").replace("\r", "\n"))
+    # Rich @ recipients carry editor-only U+2005 padding in the native row.
+    # Match the same pending send before the monitor can mistake it for input.
+    if "\u2005" in value.partition("\n")[0]:
+        names, _body, canonical = mention_header(value)
+        if names:
+            return canonical
+    return value
 
 
 def native_chat_binding(target: dict, private: Path = PRIVATE) -> dict:

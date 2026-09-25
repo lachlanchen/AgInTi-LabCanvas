@@ -1244,7 +1244,7 @@ class WeComGuiBridge:
         return (top + bottom) / 2.0
 
     def find_ocr_line(self, path: Path, target: str, *, scale: int = 3,
-                      native_pixels: bool = False) -> dict[str, Any] | None:
+                      native_pixels: bool = False, full_line_only: bool = False) -> dict[str, Any] | None:
         if Image is None or ImageOps is None or ImageFilter is None:
             raise RuntimeError("Pillow is required for WeCom GUI conversation selection")
         prepared = self.runtime_dir / f"{path.stem}-ocr.png"
@@ -1277,7 +1277,8 @@ class WeComGuiBridge:
             words.sort(key=lambda item: int(item.get("left") or 0))
             line = join_ocr_words([str(item.get("text") or "") for item in words])
             match_units: list[tuple[str, list[dict[str, str]]]] = [(line, words)]
-            match_units.extend((str(word.get("text") or ""), [word]) for word in words)
+            if not full_line_only:
+                match_units.extend((str(word.get("text") or ""), [word]) for word in words)
             for value, unit_words in match_units:
                 normalized = normalize_text(value)
                 similarity = SequenceMatcher(None, normalized, wanted).ratio()

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from typing import Any
 import re
+from wechat_reply_mentions import GROUP_REPLY_ADDRESSING
 
 
 SHARED_CAPABILITIES = (
@@ -208,6 +209,7 @@ def profile_for_chat(
         "capabilities": list(raw.get("capabilities") or SHARED_CAPABILITIES),
         "cross_chat_context_allowed": False,
         "cross_chat_artifacts_allowed": False,
+        "reply_addressing": GROUP_REPLY_ADDRESSING if selected != "personal_dm" else "No group mentions in a DM.",
     }
 
 
