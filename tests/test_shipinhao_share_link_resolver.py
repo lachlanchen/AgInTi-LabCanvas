@@ -92,6 +92,21 @@ class ShipinhaoShareLinkResolverTests(unittest.TestCase):
             with self.assertRaisesRegex(module.ShareLinkResolutionError, "tun0"):
                 module.resolve_share_link("https://weixin.qq.com/sph/Ae2UMH6gqr")
 
+    def test_long_identity_fields_are_whitespace_normalized_not_truncated(self) -> None:
+        module = load_module()
+        title = "An example caption " * 40 + "\n\t #ai episode 2"
+        author = "Example " * 30 + "\n Studio"
+        result = module.normalize_provider_result(
+            {"data": {
+                "feedInfo": {"description": title, "videoUrl": "https://finder.video.qq.com/video"},
+                "authorInfo": {"nickname": author},
+            }},
+            canonical_url="https://weixin.qq.com/sph/ABcd123",
+            token="ABcd123",
+        )
+        self.assertEqual(result["title"], " ".join(title.split()))
+        self.assertEqual(result["author"], " ".join(author.split()))
+
 
 if __name__ == "__main__":
     unittest.main()

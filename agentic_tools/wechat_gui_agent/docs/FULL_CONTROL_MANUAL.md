@@ -609,6 +609,10 @@ coalesced burst as one source batch: a later instruction retains the exact
 Shipinhao card/link from the row immediately before it, without searching old
 chat history for a substitute source.
 
+The Windows native Copy Link path compares full caption and author fields,
+not their display previews. A long caption must not force the user to paste
+a URL. See the [full-identity recovery test](../../../references/windows-wechat-channels-originals-and-send-reconciliation.md#full-identity-not-preview-text).
+
 If desktop WeChat is unavailable and the source row came from the allowlisted
 Android intake, the worker invokes `wechat_android_source_recovery.py` instead
 of asking for a pasted link. It returns to the exact chat after audio-helper

@@ -99,8 +99,9 @@ def extract_shipinhao_media_profile(text: str) -> dict[str, Any]:
         reverse=True,
     )
     result = candidates[0]
-    result["title"] = compact_text(result.get("title"), 300)
-    result["author"] = compact_text(result.get("author"), 160)
+    # Identity checks need the full fields, not truncated display previews.
+    result["title"] = " ".join(str(result.get("title") or "").split())
+    result["author"] = " ".join(str(result.get("author") or "").split())
     return result
 
 

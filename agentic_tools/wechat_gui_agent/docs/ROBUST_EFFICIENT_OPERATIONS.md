@@ -45,6 +45,11 @@ hand the copied URL explicitly to the existing original-video transcriber via
 fall back to recording. The source-knowledge reference above records the live
 card-only verification and the client-specific menu/OCR details.
 
+Card and resolved-link identity fields retain their full caption and author;
+never compare independently truncated previews or accept a common prefix.
+See [full-identity recovery](../../../references/windows-wechat-channels-originals-and-send-reconciliation.md#full-identity-not-preview-text)
+for the tested long-caption failure and exact original-download verification.
+
 For text delivery, fresh clipboard readback and an exact native outgoing row
 are required; a stale clipboard or screenshot difference is not confirmation.
 Persist the pre-Enter receipt and resolve uncertain sends before any retry.

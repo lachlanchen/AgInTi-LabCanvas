@@ -11,9 +11,55 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "agentic_tools/wechat_gui_agent/scripts"))
 native = importlib.import_module("shipinhao_tiny11_share_link")
+resolver = importlib.import_module("shipinhao_share_link_resolver")
 
 
 class NativeChannelsLinkTests(unittest.TestCase):
+    @staticmethod
+    def identity_profiles(title, author):
+        card = native.extract_shipinhao_media_profile(
+            "<finderFeed><objectId>123</objectId>"
+            f"<desc><![CDATA[{title}]]></desc>"
+            f"<nickname><![CDATA[{author}]]></nickname></finderFeed>"
+        )
+        resolved = resolver.normalize_provider_result(
+            {"data": {
+                "feedInfo": {"description": title, "videoUrl": "https://finder.video.qq.com/video"},
+                "authorInfo": {"nickname": author},
+            }},
+            canonical_url="https://weixin.qq.com/sph/ABcd123",
+            token="ABcd123",
+        )
+        return card, resolved
+
+    def test_copied_link_matches_full_long_card_identity(self):
+        for size in (299, 300, 301, 1200):
+            with self.subTest(title_length=size):
+                title = "a" * size + " #ai episode 2"
+                author = "author" * 30 + " studio"
+                card, resolved = self.identity_profiles(title, author)
+                self.assertEqual(card["title"], title)
+                self.assertEqual(card["author"], author)
+                with mock.patch.object(native, "resolve_sph_share_profile", return_value=resolved):
+                    result = native.verify_resolved_card(card, "https://weixin.qq.com/sph/ABcd123")
+                self.assertEqual(card["object_id"], "123")
+                self.assertTrue(result["content_identity_verified"])
+                self.assertEqual(result["title"], title)
+                self.assertEqual(result["author"], author)
+
+    def test_shared_long_prefix_cannot_hide_different_title_or_author(self):
+        for field, prefix_length in (("title", 300), ("author", 160)):
+            with self.subTest(field=field):
+                title = "a" * 300 + " episode 1"
+                author = "a" * 160 + " studio 1"
+                card, _ = self.identity_profiles(title, author)
+                other = {"title": title, "author": author}
+                other[field] = "a" * prefix_length + " different 2"
+                _, resolved = self.identity_profiles(**other)
+                with mock.patch.object(native, "resolve_sph_share_profile", return_value=resolved):
+                    with self.assertRaisesRegex(ValueError, f"native_link_resolved_{field}_mismatch"):
+                        native.verify_resolved_card(card, "https://weixin.qq.com/sph/ABcd123")
+
     def test_resolved_link_requires_full_title_and_author_not_fuzzy_ocr(self):
         profile = {'object_id': '123', 'title': 'Poem title', 'author': 'Author'}
         resolved = {**profile, 'share_token': 'ABcd123'}

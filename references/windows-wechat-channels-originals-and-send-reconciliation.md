@@ -74,6 +74,38 @@ Pass the copied URL explicitly as `--recovered-share-url` to the existing
 Download and ASR happen after releasing the GUI lock. Keep signed URLs,
 screenshots, native rows and transcripts in ignored private/task storage.
 
+### Full Identity, Not Preview Text
+
+On 2026-09-25 a card-only run copied the correct native link but rejected it
+as `native_link_resolved_title_mismatch`. The card parser and link resolver
+both truncated captions to 300 characters, using different ellipsis rules.
+Their identity strings therefore disagreed even for the same video. A later
+user-pasted link worked, incorrectly suggesting that a pasted URL was needed.
+
+`extract_shipinhao_media_profile()` and `normalize_provider_result()` now
+preserve the complete whitespace-normalized caption and author. Display and
+prompt previews may remain bounded, but those previews must never become
+identity fields. Keep the existing normalized title AND author equality gate;
+do not accept matching prefixes, approximate OCR, or an unrelated recent card.
+Regression tests cover long fields and reject different identities whose first
+300 caption characters or 160 author characters happen to be identical.
+
+A live read-only retest supplied only the original card XML to the native
+adapter, with no share URL. It recovered and verified the link, downloaded a
+135.208-second H.264/AAC original (7,240,468 bytes), and produced 52 transcript
+segments on GPU 1. Its SHA-256 matched the independently downloaded original
+from the successful URL-based run. No messages or files were resent. Preserve
+the private native-link receipt and transcript manifest as evidence; do not
+commit chat content, share links or media.
+
+This is the shared worker path for all monitored personal-WeChat groups, not
+a per-group workaround. An expired embedded media URL should trigger native
+Copy Link recovery before an evidence-limited failure response. A card alone
+is sufficient input when that exact card remains accessible in the selected
+logged-in client. Deleted/restricted content and real login failures are still
+possible; report the actual blocked stage rather than claiming every failed
+recovery means an invalid link or asking for a pasted URL as the first step.
+
 ## Native Player Focus and Renderer Recovery
 
 The native web player uses `WeChatAppEx.exe`, a child process with its own

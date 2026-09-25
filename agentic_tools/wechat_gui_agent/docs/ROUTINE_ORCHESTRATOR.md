@@ -35,6 +35,10 @@ transcript delivery; a second download request or pasted URL is not required.
 Source captions cannot authorize publishing or create consent waits. See
 [card-default recovery](../../../references/channels-card-default-download-2026-09-15.md)
 for the thumbnail-scale failure, transport boundaries, and verification steps.
+Keep complete captions and author names for card/link identity comparison;
+truncated display previews are not identities. The
+[Windows card-only recovery runbook](../../../references/windows-wechat-channels-originals-and-send-reconciliation.md#full-identity-not-preview-text)
+records the long-caption false rejection and its live original-download test.
 
 ## Routine Registry
 

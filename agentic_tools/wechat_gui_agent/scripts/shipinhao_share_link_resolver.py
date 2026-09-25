@@ -312,8 +312,9 @@ def normalize_provider_result(payload: dict[str, Any], *, canonical_url: str, to
     media_url = next((value for value in video_candidates if value.startswith(("http://", "https://"))), "")
     if not media_url:
         raise ShareLinkResolutionError("Finder preview returned no playable video URL")
-    title = compact_text(feed.get("description"), 300)
-    nickname = compact_text(author.get("nickname"), 160)
+    # Match the full card identity; preview truncation can reject the right link.
+    title = " ".join(str(feed.get("description") or "").split())
+    nickname = " ".join(str(author.get("nickname") or "").split())
     return {
         "detected": True,
         "source_kind": "sph_share_link",
