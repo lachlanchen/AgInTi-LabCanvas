@@ -14,6 +14,7 @@ fi
 SESSION="${WECHAT_SUPERVISOR_SESSION:-labcanvas-wechat}"
 CONFIG="${WECHAT_DIRECT_CONFIG:-$ROOT/agentic_tools/wechat_gui_agent/.private/lazy-research-direct-chatops.local.json}"
 CONFIGS="${WECHAT_DIRECT_CONFIGS:-$CONFIG}"
+DAILY_BRIEFS_CONFIG="${WECHAT_DAILY_BRIEFS_CONFIG:-$ROOT/agentic_tools/wechat_gui_agent/.private/daily-briefs.local.json}"
 QUEUE="${WECHAT_WORKER_QUEUE:-$ROOT/agentic_tools/wechat_gui_agent/.private/wechat_task_queue.jsonl}"
 LOG_DIR="$ROOT/output/wechat_gui_agent/$(date +%F)"
 PY="$ROOT/agentic_tools/wechat_gui_agent/.private/wechat_decrypt/.venv/bin/python"
@@ -310,6 +311,15 @@ tiny11_store_command() {
     "$ROOT" "$LOG_DIR/supervisor-tiny11-store.log"
 }
 
+ensure_daily_brief_window() {
+  if [[ -f "$DAILY_BRIEFS_CONFIG" ]]; then
+    local brief_command
+    printf -v brief_command 'cd %q && if [[ -f %q ]]; then set -a; source %q; set +a; fi; exec agentic_tools/wechat_gui_agent/scripts/wechat_restart_loop.sh daily-briefs python3 -u agentic_tools/wechat_gui_agent/scripts/wechat_daily_brief.py --config %q --loop >> %q 2>&1' \
+      "$ROOT" "$PRIVATE_ENV" "$PRIVATE_ENV" "$DAILY_BRIEFS_CONFIG" "$LOG_DIR/supervisor-daily-briefs.log"
+    start_missing_window daily-briefs "$brief_command"
+  fi
+}
+
 ensure_runtime_windows() {
   if ! tmux has-session -t "$SESSION" 2>/dev/null; then
     echo "Session not running: $SESSION" >&2
@@ -338,6 +348,7 @@ ensure_runtime_windows() {
     worker_label="$(worker_window_name "$worker_index")"
     start_missing_window "$worker_label" "$(worker_command "$worker_index")"
   done
+  ensure_daily_brief_window
   if [[ "$TINY11" == "0" ]]; then
   start_missing_window media-sync \
     "cd '$ROOT' && WECHAT_CHAT_NAME='$CHAT_NAME' WECHAT_MEDIA_CHATS='$MEDIA_CHATS' agentic_tools/wechat_gui_agent/scripts/wechat_restart_loop.sh media-sync agentic_tools/wechat_gui_agent/scripts/wechat_media_sync_loop.sh >> '$LOG_DIR/supervisor-media-sync.log' 2>&1"
@@ -517,6 +528,7 @@ case "$action" in
     fi
     tmux select-layout -t "$SESSION:desktop" tiled >/dev/null
     tmux select-window -t "$SESSION:desktop" >/dev/null
+    ensure_daily_brief_window
     echo "Started tmux session: $SESSION"
     echo "Logs: $LOG_DIR"
     echo "Attach: tmux attach -t $SESSION"

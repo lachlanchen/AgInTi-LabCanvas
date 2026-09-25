@@ -104,3 +104,55 @@ packet retention and isolation for both supported agent paths.
 Native chat identity, sender serialization, restart durability and outbound echo
 remain covered by existing transport and worker tests. Keep the brief small and
 link to evidence; do not dump entire histories into every routing call.
+
+## Optional daily short briefing
+
+`wechat_daily_brief.py` reuses the existing backend selector/fallbacks,
+per-chat session registry, full-history compaction and verified native sender.
+Its only added logic is scheduling, output validation and a durable outbox.
+Configure explicitly authorized schedules in ignored
+`.private/daily-briefs.local.json`:
+
+```json
+{
+  "state_dir": "<PRIVATE_STATE_DIRECTORY>",
+  "schedules": [{
+    "id": "company-market",
+    "enabled": true,
+    "direct_config": "<PRIVATE_DIRECT_CONFIG>",
+    "time": "19:00",
+    "timezone": "Asia/Hong_Kong",
+    "max_chars": 200,
+    "instruction": "One concise Chinese market insight with practical business advice."
+  }]
+}
+```
+
+The existing tmux supervisor starts one `daily-briefs` window when this config
+exists; `ensure` and reboot recovery restore it without new GUI stacks. The loop
+checks once per minute without model calls before the due time. Brief generation
+starts when due, so network/research and transport latency can delay delivery.
+Daily briefs are independent of conversational idle/quiet-hour schedules.
+
+One read-only agent researches sources and writes JSON. Count the entire message,
+including punctuation and Latin text, against `max_chars`. One bounded editing
+pass can repair an oversized reply; never cut off the text mechanically. Keep
+source URLs private, deliver one message only, and never attach files or logs.
+
+Persist the accepted message before delivery. Same-day transport retries reuse
+both message and idempotency ID, including recovery from a crash after sending.
+Past-day pending briefs are retained for audit but not replayed into the group.
+Failure backs off five minutes; inspect `health.json` and the per-day private
+record instead of treating a running tmux process as proof of delivery.
+
+Immediate enrollment test:
+
+```bash
+python agentic_tools/wechat_gui_agent/scripts/wechat_daily_brief.py \
+  --config <PRIVATE_SCHEDULE_CONFIG> --only company-market --preview
+```
+
+The preview has its own once-per-day identity, so it neither consumes the evening
+brief nor sends another preview when invoked twice. Verify its native receipt,
+then let the existing supervisor handle the regular clock. Keep the private
+company brief consistent with the newly authorized schedule.
