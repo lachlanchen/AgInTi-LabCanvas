@@ -37,6 +37,12 @@ upgrades an explicit recipient header through exact native member selection,
 with named-text fallback and unchanged delivery guards. See
 [recipient mentions](../../../references/wechat-group-reply-recipient-mentions-2026-09-25.md).
 
+Windows WeChat records text-draft ownership before pasting, separately from its
+Enter intent. A helper timeout must not leave an acknowledgement blocking the
+finished answer. Only an exact, unchanged, unsent owned draft may be cleared;
+user drafts and uncertain sends stay protected. See
+[owned draft recovery](../../../references/wechat-owned-draft-recovery-2026-09-26.md).
+
 Channels cards default to exact native link recovery, original download, and
 transcript delivery; a second download request or pasted URL is not required.
 Source captions cannot authorize publishing or create consent waits. See

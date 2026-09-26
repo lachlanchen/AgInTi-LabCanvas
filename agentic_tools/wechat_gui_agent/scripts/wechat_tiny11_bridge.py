@@ -394,6 +394,31 @@ class Tiny11WeChatBridge(Tiny11WeComGuiBridge):
             self.composer_keys(window, 'ctrl+v')
             return []
 
+    def clear_owned_text_draft(self, window, chat):
+        """Recover only a complete, unsent draft journaled by this transport."""
+        draft_key = 'native-text-draft:' + short_hash(chat)
+        try:
+            draft = json.loads(get_runtime(self.state_db, draft_key) or '{}')
+        except (ValueError, TypeError):
+            return False
+        if (not isinstance(draft, dict) or draft.get('chat') != chat
+                or not draft.get('key') or not draft.get('text')):
+            return False
+        binding = native_chat_binding(self.config['targets'][chat])
+        if any(draft.get(field) != binding[field] for field in ('table', 'sender')):
+            return False
+        if not self.composer_text_matches(window, draft['text'], draft['key']):
+            return False
+        if self.tiny11.invoke({'action': 'get_file_clipboard'}):
+            return False
+        if get_runtime(self.state_db, 'native-intent:' + draft['key']):
+            raise RuntimeError('WECHAT_GUI_SEND_UNCERTAIN: owned text draft has a submission intent')
+        self.clear_composer(window)
+        if not self.composer_is_empty(window, draft['key']):
+            raise RuntimeError('WECHAT_COMPOSE_VERIFY_FAILED: owned draft did not clear')
+        set_runtime(self.state_db, draft_key, '')
+        return True
+
     def send_text_locked(self, chat, text, *, task_id):
         sent = []
         for index, chunk in enumerate(chunk_text(text, 1800)):
@@ -408,9 +433,17 @@ class Tiny11WeChatBridge(Tiny11WeComGuiBridge):
                     raise RuntimeError('WECHAT_GUI_SEND_UNCERTAIN: prior text submission requires reconciliation')
             else:
                 window = self.ensure_chat(chat)
-                if not self.composer_is_empty(window, key):
+                if (not self.composer_is_empty(window, key)
+                        and not self.clear_owned_text_draft(window, chat)):
                     raise RuntimeError('WECHAT_COMPOSE_VERIFY_FAILED: refusing to overwrite an existing draft')
                 receipt = self.prepare_native_receipt(chat)
+                # Persist ownership BEFORE the first paste. A helper timeout can
+                # leave text in the editor even though no Enter intent exists.
+                set_runtime(self.state_db, 'native-text-draft:' + short_hash(chat), json.dumps({
+                    'chat': chat, 'key': key, 'text': chunk,
+                    'table': receipt['table'], 'sender': receipt['sender'],
+                    'created_at': int(time.time()),
+                }))
                 if names:
                     receipt['mentioned_users'] = self.compose_reply_mentions(window, names, body, chunk, key)
                 else:
@@ -453,6 +486,8 @@ class Tiny11WeChatBridge(Tiny11WeComGuiBridge):
                 window = self.ensure_chat(chat, operation='file')
                 draft = get_runtime(self.state_db, 'native-draft:' + key)
                 empty = self.composer_is_empty(window, key)
+                if not draft and not empty:
+                    empty = self.clear_owned_text_draft(window, chat)
                 if not draft and not empty:
                     raise RuntimeError('WECHAT_COMPOSE_VERIFY_FAILED: refusing to overwrite an existing draft')
                 receipt = json.loads(draft) if draft else self.prepare_native_receipt(chat)

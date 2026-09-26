@@ -990,8 +990,11 @@ def queue_health(
         )
         if superseded_proactive:
             superseded_failed_ids.append(task_id)
-        if status in {"send_deferred_artifact", "send_deferred_locked", "send_failed"}:
-            attempted = parse_timestamp(task.get("last_send_attempt_at")) or failed_at
+        if status in {"send_deferred_artifact", "send_deferred_locked", "send_failed", "send_expired"}:
+            # Expiring retries prevents backlog spam; it does not prove delivery.
+            attempted = parse_timestamp(
+                task.get("expired_at") if status == "send_expired" else task.get("last_send_attempt_at")
+            ) or parse_timestamp(task.get("last_send_attempt_at")) or failed_at
             if attempted is None or (now - attempted).total_seconds() < failure_alert_seconds:
                 deferred_delivery_ids.append(task_id)
         if status in {"worker_failed", "failed", "error"} and not delivered_proactive:
