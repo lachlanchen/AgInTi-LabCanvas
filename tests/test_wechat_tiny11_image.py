@@ -142,6 +142,70 @@ class Tiny11ImageTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 images.decode_wxgf(path, path.with_suffix('.png'))
 
+    def test_uncached_image_opens_exact_chat_and_retries_native_export(self):
+        import wechat_task_worker as worker
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            source = root / 'exact.png'
+            Image.new('RGB', (2, 2)).save(source)
+            candidate = {'mirror_path': str(source), 'original_resolution_verified': True}
+            task = {'id': 'test', 'chat': 'Shares', 'source': {'kind': 'image', 'local_type': 3}}
+            missing = ValueError('ValueError: exact_full_image_not_cached')
+            with mock.patch.object(worker, 'uses_tiny11_wechat', return_value=True), \
+                    mock.patch.object(images, 'recover_image', side_effect=[missing, missing, candidate]) as recover, \
+                    mock.patch.object(worker, 'should_materialize_exact_file', return_value=True), \
+                    mock.patch.object(worker, 'materialize_chat_for_media_cache', return_value={'status': 'ok'}) as open_chat, \
+                    mock.patch.object(worker, 'refresh_media_sync_for_task') as linux, \
+                    mock.patch.object(worker, 'resolve_synced_media_from_mirror') as mirror, \
+                    mock.patch.object(worker, 'enrich_media_resolution_copies_with_image_read'), \
+                    mock.patch.object(worker, 'enrich_copies_with_document_read'), \
+                    mock.patch.object(worker.time, 'sleep'):
+                result = worker.prepare_media_resolution_preflight(task, root)
+                self.assertEqual(result['status'], 'ok')
+                self.assertEqual(result['second_refresh']['attempts'], 2)
+                self.assertEqual(result['refresh']['status'], 'failed')
+                self.assertEqual(len(result['copied']), 1)
+                self.assertEqual(recover.call_count, 3)
+                open_chat.assert_called_once_with(task, root)
+                self.assertTrue(all(call.args[0] == task for call in recover.call_args_list))
+                linux.assert_not_called()
+                mirror.assert_not_called()
+
+    def test_image_retry_is_bounded_and_never_retries_identity_or_key_failure(self):
+        import wechat_task_worker as worker
+        cases = (
+            ('exact_full_image_not_cached', {'status': 'ok'}, 4, 1),
+            ('exact_full_image_not_cached', {'status': 'failed'}, 1, 1),
+            ('image_export_identity_mismatch', {'status': 'ok'}, 1, 0),
+            ('image_key_provisioning_required', {'status': 'ok'}, 1, 0),
+            ('image_native_digest_mismatch', {'status': 'ok'}, 1, 0),
+        )
+        for reason, probe, calls, opens in cases:
+            with self.subTest(reason=reason, probe=probe), tempfile.TemporaryDirectory() as folder:
+                task = {'id': 'test', 'chat': 'Shares', 'source': {'kind': 'image', 'local_type': 3}}
+                with mock.patch.object(worker, 'uses_tiny11_wechat', return_value=True), \
+                        mock.patch.object(images, 'recover_image', side_effect=ValueError(reason)) as recover, \
+                        mock.patch.object(worker, 'should_materialize_exact_file', return_value=True), \
+                        mock.patch.object(worker, 'materialize_chat_for_media_cache', return_value=probe.copy()) as open_chat, \
+                        mock.patch.object(worker, 'resolve_synced_media_from_mirror') as mirror, \
+                        mock.patch.object(worker, 'enrich_media_resolution_copies_with_image_read'), \
+                        mock.patch.object(worker, 'enrich_copies_with_document_read'), \
+                        mock.patch.object(worker.time, 'sleep'):
+                    result = worker.prepare_media_resolution_preflight(task, Path(folder))
+                    self.assertEqual(result['status'], 'missing')
+                    self.assertEqual(recover.call_count, calls)
+                    self.assertEqual(open_chat.call_count, opens)
+                    mirror.assert_not_called()
+
+    def test_missing_image_goes_to_agent_not_generic_file_receipt(self):
+        import wechat_task_worker as worker
+        task = {'source': {'kind': 'image', 'local_type': 3},
+                'preflight': {'file_intake': {'status': 'missing', 'copied': []}}}
+        with mock.patch.object(worker, 'is_file_intake_task', return_value=True):
+            self.assertIsNone(worker.deterministic_file_intake_result(task))
+            task['source'] = {'kind': 'file', 'local_type': 49}
+            self.assertIsNotNone(worker.deterministic_file_intake_result(task))
+
     @unittest.skipUnless(shutil.which('ffmpeg'), 'ffmpeg not installed')
     def test_wxgf_decodes_native_dimensions_to_png(self):
         with tempfile.TemporaryDirectory() as folder:

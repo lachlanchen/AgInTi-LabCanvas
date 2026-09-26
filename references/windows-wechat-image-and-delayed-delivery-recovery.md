@@ -1,6 +1,6 @@
 # Windows WeChat Images and Delayed Video Delivery
 
-Updated: 2026-09-22
+Updated: 2026-09-26
 
 This extends [the Windows Channels runbook](windows-wechat-channels-originals-and-send-reconciliation.md).
 It repairs native Windows image intake and late file receipts without starting
@@ -21,8 +21,8 @@ The persistent path is:
    image type. Accept one unambiguous resource token in its known protobuf field.
 4. Select that token's high/full native cache file, never a thumbnail, nearby
    file selected by modification time, chat bubble crop or viewer screenshot.
-5. Decode with the separately installed upstream decoder. Normal intake uses
-   a cached private key; it does not scan process memory or manipulate the GUI.
+5. Decode with the separately installed upstream decoder. Cached intake uses
+   a private key without process-memory scanning or GUI input.
 6. Transfer through the existing SSH/SFTP connection and validate source
    length/MD5 where supplied, export length/SHA-256, and successful decoding.
 7. Retain WXGF as the original. Decode its HEVC image on CPU to native-size
@@ -35,6 +35,41 @@ that lock is bounded. A missing cache, missing key, ambiguous resource mapping,
 checksum mismatch and decoder failure remain distinct private failure states.
 None authorizes substitution of another image. An uncached original still
 requires native retrieval; this repair does not claim remote CDN access.
+
+### Attachment Cache Arrival Race
+
+A live image on September 26 reached the message database before its full
+attachment was cached. The native reader correctly returned
+`exact_full_image_not_cached`, but the worker immediately converted that into a
+generic file-upload/resend message and marked the task done. Its original
+subsequently became available and passed the existing resource/transfer checks.
+This was a retrieval timing and orchestration failure, not missing vision.
+
+The worker now opens the exact allowlisted source chat using the existing
+serialized Windows bridge and retries the same native export up to three times,
+with 0.5, 2 and 5 second delays. The snapshot lock is released between attempts;
+the GUI lock is released after opening the chat. Record the initial failure,
+`gui_cache_probe` and `second_refresh` in the task's media-resolution manifest.
+Do not retry identity, checksum, decoder or key-provisioning failures as cache
+misses. Respect the existing GUI/media-preflight disable switches.
+
+If no original is recovered, image intake now reaches the per-chat agent with
+the actual preflight evidence rather than returning the generic file receipt.
+The agent can recheck with the existing `recover --task-id` command. It must not
+guess from a thumbnail, switch accounts, ask for a resend before inspecting the
+native recovery evidence, or promise background recovery without a durable job.
+Opening a chat may let the official client download its attachment; it is not a
+guarantee for expired/deleted originals or a substitute for verified retrieval.
+
+For an already-missed image, use the normal worker's exact-task `--reprocess`
+with a recovery reason, not a manually composed reply or a broad history replay.
+On September 26 the worker recovered a 750x1334 original and delivered its
+semantic App Store screenshot analysis to the source group with no send errors.
+Keep task IDs, screenshots and receipts in ignored runtime evidence.
+
+Regression coverage in `tests/test_wechat_tiny11_image.py` includes late cache
+arrival, bounded failure, failed chat opening, integrity/key failures, exact-task
+reuse and the agent handoff. Neither Ubuntu nor Android transport is touched.
 
 ### Reusable Installation
 

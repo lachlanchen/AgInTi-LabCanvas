@@ -102,6 +102,10 @@ Current routines:
   extracts ZIP/Word/PDF/text content. Readable documents pass an
   `agent_context_path` to the resumed worker for a concise preliminary summary;
   unsupported or unsafe files receive a fail-closed receipt.
+  Windows image cache misses first open the verified source chat and retry the
+  exact native export. If still unavailable, pass the evidence to the agent,
+  not the generic file-upload/resend response. See
+  `references/windows-wechat-image-and-delayed-delivery-recovery.md`.
 - `file_download_save`: exact-source file, media, link, and download handling.
 - `video_publish_existing`: source-scoped existing video processing and
   LazyEdit/public publishing only when explicitly requested; `public_publish_verified`
