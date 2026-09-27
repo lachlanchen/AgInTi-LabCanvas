@@ -36,6 +36,7 @@ class Tiny11WeChatTests(unittest.TestCase):
             Image.new('RGB', (600, 40), 'white').save(source)
             client.capture_screen = mock.Mock(return_value=source)
             client.crop = mock.Mock(return_value=source)
+            client.chat_right_edge = mock.Mock(return_value=1276)
             client.aliases = mock.Mock(return_value=['Company team'])
             client.ocr = mock.Mock(return_value='Company team(10) C')
             window = SimpleNamespace(x=0, y=0, width=1276)
@@ -129,6 +130,7 @@ class Tiny11WeChatTests(unittest.TestCase):
         client = object.__new__(bridge.Tiny11WeChatBridge)
         client.runtime_dir = Path('/tmp')
         client.content_left = mock.Mock(return_value=10)
+        client.chat_right_edge = mock.Mock(return_value=1276)
         client.crop = mock.Mock(return_value=Path('/tmp/label.png'))
         client.ocr_scaled = mock.Mock(side_effect=['unreadable icon', 'sample..…script.txt'])
         window = SimpleNamespace(y=0, height=1000)
@@ -142,6 +144,32 @@ class Tiny11WeChatTests(unittest.TestCase):
         self.assertFalse(bridge.composer_has_visible_content(image))
         image.paste((120, 130, 150), (20, 20, 40, 40))
         self.assertTrue(bridge.composer_has_visible_content(image))
+
+    def test_docked_player_pixels_are_not_a_draft_and_do_not_enter_history(self):
+        with tempfile.TemporaryDirectory() as folder:
+            source = Path(folder) / 'desktop.png'
+            window = SimpleNamespace(x=1284, y=0, width=1276, height=1392)
+            client = object.__new__(bridge.Tiny11WeChatBridge)
+            client.capture_screen = mock.Mock(return_value=source)
+            image = Image.new('RGB', (2560, 1440), 'white')
+            image.paste((0, 0, 0), (2114, 80, 2560, 1392))
+            image.paste((218, 218, 223), (2110, 80, 2114, 1392))
+            image.save(source)
+            with mock.patch.object(bridge.Tiny11WeComGuiBridge, 'composer_is_empty', return_value=True):
+                self.assertTrue(client.composer_is_empty(window, 'empty'))
+                left, top, width, height = client.history_surface(window)
+                self.assertLess(left + width, 2110)
+                self.assertEqual(top + height, 1242)
+                # An actual file chip inside the narrower editor must still block.
+                image.paste((100, 100, 100), (1550, 1280, 1580, 1310))
+                image.save(source)
+                self.assertFalse(client.composer_is_empty(window, 'attachment'))
+            with mock.patch.object(bridge.Tiny11WeComGuiBridge, 'composer_is_empty', return_value=False):
+                self.assertFalse(client.composer_is_empty(window, 'human-text'))
+            image = Image.new('RGB', (2560, 1440), 'white')
+            image.save(source)
+            self.assertEqual(client.chat_right_edge(window), 2560)
+            self.assertEqual(client.conversation_surface(window)[2], 1026)
 
     def test_retried_owned_draft_is_not_pasted_again(self):
         client = object.__new__(bridge.Tiny11WeChatBridge)

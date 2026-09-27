@@ -86,6 +86,32 @@ def composer_has_visible_content(image):
                for x in range(image.width)) >= 8
 
 
+def native_docked_pane(screen, window):
+    """Locate the native dock divider, including a still-loading white pane."""
+    with Image.open(screen).convert('RGB') as image:
+        right = min(image.width - 10, window.x + window.width - 14)
+        rows = [window.y + offset for offset in (150, 300, 800)]
+        if right >= 0 and all(0 <= y < image.height for y in rows):
+            for left in range(right - 300, max(window.x + 700, right - 650), -1):
+                values = [image.getpixel((left, y)) for y in rows]
+                if all(210 <= r <= 230 and abs(g-r) <= 2 and 0 <= b-r <= 8 for r,g,b in values):
+                    return (left + 1, window.y + 80, right - left, window.height - 96)
+    with Image.open(screen).convert('L') as image:
+        right = min(image.width - 1, window.x + window.width - 14)
+        samples = [window.y + offset for offset in (150, 220, 300)]
+        if right < 0 or any(y < 0 or y >= image.height for y in samples):
+            return None
+        if any(image.getpixel((right, y)) > 60 for y in samples):
+            return None
+        left = right
+        while left > window.x + 700 and all(image.getpixel((left, y)) < 60 for y in samples):
+            left -= 1
+        width = right - left
+        if not 300 <= width <= 650:
+            return None
+        return (left + 1, window.y + 80, width, window.height - 96)
+
+
 def enabled():
     try:
         return load_config(CONFIG).get('enabled') is True
@@ -113,9 +139,14 @@ class Tiny11WeChatBridge(Tiny11WeComGuiBridge):
     def content_left(window):
         return window.x + 226
 
+    def chat_right_edge(self, window, screen=None):
+        screen = screen or self.capture_screen('chat-pane-layout')
+        pane = native_docked_pane(screen, window)
+        return pane[0] - 4 if pane else window.x + window.width
+
     def conversation_surface(self, window):
         left = self.content_left(window) + 10
-        return left, window.y + 80, window.x + window.width - left - 14, window.height - 90
+        return left, window.y + 80, self.chat_right_edge(window) - left - 14, window.height - 90
 
     def history_surface(self, window):
         left, top, width, _ = self.conversation_surface(window)
@@ -145,7 +176,7 @@ class Tiny11WeChatBridge(Tiny11WeComGuiBridge):
     def current_title_matches(self, window, chat):
         image = self.capture_screen('wechat-title')
         left = self.content_left(window) + 5
-        crop = self.crop(image, (left, window.y + 32, min(600, window.width - 400), 40),
+        crop = self.crop(image, (left, window.y + 32, min(600, self.chat_right_edge(window, image) - left - 180), 40),
                          self.runtime_dir / 'wechat-title.png')
         variants = [self.ocr_scaled(crop, scale=4, psm=11)]
         variants.append(self.ocr(self.runtime_dir / 'wechat-title-scaled-ocr.png',
@@ -263,8 +294,9 @@ class Tiny11WeChatBridge(Tiny11WeComGuiBridge):
                 canonical_composer_text(mention_header(expected)[2]))
 
     def composer_contains_filename(self, screenshot, window, filename, delivery_key):
+        width = min(600, self.chat_right_edge(window, screenshot) - self.content_left(window) - 24)
         crop = self.crop(screenshot, (self.content_left(window) + 10,
-                                     window.y + window.height - 165, 600, 130),
+                                     window.y + window.height - 165, width, 130),
                          self.runtime_dir / ('wechat-file-composer-' + delivery_key + '.png'))
         if composed_filename_matches(filename, self.ocr_scaled(crop, scale=4, psm=6)):
             return True
@@ -279,12 +311,13 @@ class Tiny11WeChatBridge(Tiny11WeComGuiBridge):
             return False
         screen = self.capture_screen('empty-composer-' + delivery_key)
         left = self.content_left(window) + 18
+        right = self.chat_right_edge(window, screen) - 24
         with Image.open(screen) as image:
             # The empty editor has a voice-input hint on its first line.
             # Clipboard validation covers text; the lower chip/icon area
             # detects non-text attachments without treating that hint as a draft.
             content = image.crop((left, window.y + window.height - 120,
-                                  window.x + window.width - 24, window.y + window.height - 80))
+                                  right, window.y + window.height - 80))
             return not composer_has_visible_content(content)
 
     def wait_composed_file(self, window, path, key):
@@ -388,7 +421,7 @@ class Tiny11WeChatBridge(Tiny11WeComGuiBridge):
             })
             # Only this invocation's unsent draft is owned here. Never press
             # Enter while a picker is unresolved or retry an uncertain send.
-            self.click(window.x + window.width - 60, window.y + 40)
+            self.click(self.chat_right_edge(window) - 60, window.y + 40)
             self.clear_composer(window)
             self.set_clipboard(canonical)
             self.composer_keys(window, 'ctrl+v')
@@ -691,7 +724,9 @@ def _sync_once(config=None):
     # A decrypted cache can remain readable after logout. This probe only
     # observes the selected native window; it never focuses/restores a client.
     client = transport.health()
-    client_ready = client.get('ok') is True and client.get('app') == 'wechat'
+    client_ready = (client.get('ok') is True and client.get('app') == 'wechat'
+                    and client.get('client_state') == 'ready'
+                    and client.get('input_ready') is not False)
     state = {'ok': True, 'last_sync_epoch': time.time(), 'inserted': inserted,
              'client_ready': client_ready,
              'client_state': client.get('client_state', 'unknown'),

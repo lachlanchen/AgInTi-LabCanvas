@@ -67,7 +67,10 @@ function Get-WeComWindow {
 
 function Get-PersonalWeChatState {
     param($MainWindow)
-    if ($null -ne $MainWindow) { return 'ready' }
+    if ($null -ne $MainWindow) {
+        if (-not [LabCanvasDesktop.NativeWindows]::IsResponding($MainWindow.Handle)) { return 'unresponsive' }
+        return 'ready'
+    }
     $ids = @(Get-Process -Name @('Weixin', 'WeChat') -ErrorAction SilentlyContinue | ForEach-Object Id)
     if ($ids.Count -eq 0) { return 'client_unavailable' }
     $all = @([LabCanvasDesktop.NativeWindows]::Snapshot([int[]]$ids, $true))
@@ -127,6 +130,10 @@ function Focus-WeCom {
             throw 'WECHAT_ENTRY_REQUIRED: personal WeChat is at its login screen.'
         }
         throw "No visible WeCom window was found in the interactive session."
+    }
+    if ($script:TargetApp -eq 'wechat' -and
+        -not [LabCanvasDesktop.NativeWindows]::IsResponding($window.Handle)) {
+        throw 'WECHAT_CLIENT_UNRESPONSIVE: native window message loop is not responding.'
     }
     # Preserve the current size. Exact-chat OCR and the following click must
     # use the same frame; resizing between those two steps invalidates the
@@ -390,13 +397,14 @@ try {
                 [uint32]$foregroundProcessId = 0
                 [LabCanvasWin32]::GetWindowThreadProcessId($foreground, [ref]$foregroundProcessId) | Out-Null
                 $inputBlocker = Get-SystemInputBlocker $foregroundProcessId
+                $clientState = if ($script:TargetApp -eq 'wechat') {
+                    Get-PersonalWeChatState $window
+                } elseif ($null -ne $window) { 'ready' } else { 'window_unavailable' }
                 $payload = [ordered]@{
                     ok = ($null -ne $window)
                     helper_ready = $true
-                    client_state = if ($script:TargetApp -eq 'wechat') {
-                        Get-PersonalWeChatState $window
-                    } elseif ($null -ne $window) { 'ready' } else { 'window_unavailable' }
-                    input_ready = ($null -ne $window -and -not $inputBlocker)
+                    client_state = $clientState
+                    input_ready = ($null -ne $window -and -not $inputBlocker -and $clientState -eq 'ready')
                     input_blocker = $inputBlocker
                     app = $script:TargetApp
                     session_id = [System.Diagnostics.Process]::GetCurrentProcess().SessionId
@@ -446,8 +454,21 @@ try {
         }
         catch {
             Write-BridgeLog ("request_error " + $_.Exception.Message)
-            if ($null -ne $context.Response -and $context.Response.OutputStream.CanWrite) {
-                Write-JsonResponse $context.Response ([ordered]@{ ok = $false; error = $_.Exception.Message }) 500
+            $requestError = $_.Exception.Message
+            try {
+                if ($null -ne $context.Response -and $context.Response.OutputStream.CanWrite) {
+                    Write-JsonResponse $context.Response ([ordered]@{ ok = $false; error = $requestError }) 500
+                }
+            }
+            catch {
+                # A disconnected caller cannot receive an error response.
+                # Do not let the second write terminate the shared helper.
+                Write-BridgeLog 'response_disconnected'
+            }
+            finally {
+                if ($null -ne $context.Response) {
+                    try { $context.Response.Close() } catch { }
+                }
             }
         }
     }

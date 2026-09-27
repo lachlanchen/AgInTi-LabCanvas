@@ -17,7 +17,7 @@ from shipinhao_media_transcribe import (
     normalize_identity, safe_component, resolve_sph_share_profile, merge_resolved_share_profile,
 )
 from shipinhao_share_link_resolver import extract_share_urls
-from wechat_tiny11_bridge import Tiny11WeChatBridge
+from wechat_tiny11_bridge import Tiny11WeChatBridge, native_docked_pane as player_box
 from wecom_gui_bridge import write_private_json
 
 
@@ -34,32 +34,6 @@ def card_candidates(screen, cover, region, output_dir):
             path.chmod(0o600)
             candidates.extend(exact_cover_candidates(screen, path, region=region, min_confidence=.80))
     return sorted(candidates, key=lambda item: item['match_confidence'], reverse=True)
-
-
-def player_box(screen, window):
-    """Locate the native dock divider, including a still-loading white pane."""
-    with Image.open(screen).convert('RGB') as image:
-        right = min(image.width - 10, window.x + window.width - 14)
-        rows = [window.y + offset for offset in (150, 300, 800)]
-        if right >= 0 and all(0 <= y < image.height for y in rows):
-            for left in range(right - 300, max(window.x + 700, right - 650), -1):
-                values = [image.getpixel((left, y)) for y in rows]
-                if all(210 <= r <= 230 and abs(g-r) <= 2 and 0 <= b-r <= 8 for r,g,b in values):
-                    return (left + 1, window.y + 80, right - left, window.height - 96)
-    with Image.open(screen).convert('L') as image:
-        right = min(image.width - 1, window.x + window.width - 14)
-        samples = [window.y + offset for offset in (150, 220, 300)]
-        if right < 0 or any(y < 0 or y >= image.height for y in samples):
-            return None
-        if any(image.getpixel((right, y)) > 60 for y in samples):
-            return None
-        left = right
-        while left > window.x + 700 and all(image.getpixel((left, y)) < 60 for y in samples):
-            left -= 1
-        width = right - left
-        if not 300 <= width <= 650:
-            return None
-        return (left + 1, window.y + 80, width, window.height - 96)
 
 
 def exact_player_title(expected, observed):

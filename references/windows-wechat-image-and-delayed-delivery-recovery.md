@@ -5,6 +5,9 @@ Updated: 2026-09-26
 This extends [the Windows Channels runbook](windows-wechat-channels-originals-and-send-reconciliation.md).
 It repairs native Windows image intake and late file receipts without starting
 another desktop, operating Android, restarting chat clients, or replaying video.
+For an empty editor wrongly reported as an existing draft, or a live SSH tunnel
+that no longer forwards helper requests, see
+[docked-pane and transport delivery recovery](windows-wechat-docked-pane-delivery.md).
 
 ## Image Failure and Repair
 

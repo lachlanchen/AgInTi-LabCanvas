@@ -27,6 +27,16 @@ namespace LabCanvasDesktop {
         [DllImport("user32.dll", CharSet=CharSet.Unicode)]
         private static extern int GetClassName(IntPtr window, StringBuilder text, int count);
         [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+        [DllImport("user32.dll", SetLastError=true)]
+        private static extern IntPtr SendMessageTimeout(IntPtr window, uint message,
+            UIntPtr wParam, IntPtr lParam, uint flags, uint timeout, out IntPtr result);
+
+        public static bool IsResponding(IntPtr window) {
+            IntPtr result;
+            // WM_NULL checks the app's message loop without typing or changing UI.
+            return SendMessageTimeout(window, 0, UIntPtr.Zero, IntPtr.Zero,
+                2, 2000, out result) != IntPtr.Zero;
+        }
 
         public static bool IsAbove(IntPtr candidate, IntPtr target) {
             var seen = new HashSet<IntPtr>();

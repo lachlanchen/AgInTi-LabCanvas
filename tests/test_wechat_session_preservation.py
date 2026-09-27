@@ -102,6 +102,22 @@ class WeChatSessionPreservationTests(unittest.TestCase):
                  mock.patch.object(selection.time, 'time', return_value=1061):
                 self.assertFalse(selection.tiny11_health()['ok'])
 
+    def test_hung_window_with_fresh_store_is_not_ready_or_a_login_request(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            config = root / 'config.json'
+            config.write_text(json.dumps({'delivery_verified': True}))
+            (root / 'status.json').write_text(json.dumps({'ok': True,
+                'client_ready': True, 'client_state': 'unresponsive', 'last_sync_epoch': 1000}))
+            with mock.patch.object(selection, 'CONFIG', config), \
+                 mock.patch.object(selection, 'STORE', root / 'store.db'), \
+                 mock.patch.object(selection.time, 'time', return_value=1001):
+                result = selection.tiny11_health()
+            self.assertFalse(result['ok'])
+            self.assertFalse(result['client_ready'])
+            self.assertFalse(result['human_action_required'])
+            self.assertEqual(result['reason'], 'wechat_client_unresponsive')
+
     def test_only_fresh_native_login_evidence_requests_human_action(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

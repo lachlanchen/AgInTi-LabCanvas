@@ -141,6 +141,7 @@ class ReplyMentionTests(unittest.TestCase):
     def test_nearby_member_is_not_tagged_and_plain_name_reply_can_still_send(self):
         with tempfile.TemporaryDirectory() as tmp:
             client = self.native_client(tmp)
+            client.chat_right_edge = mock.Mock(return_value=900)
             client.find_ocr_line = mock.Mock(return_value={"text": "Alice Other", "center_x": 50, "center_y": 20})
             window = SimpleNamespace(x=0, y=0, width=900, height=900)
             with mock.patch.object(native, "mention_picker_box", return_value=(200, 600, 150, 100)), \

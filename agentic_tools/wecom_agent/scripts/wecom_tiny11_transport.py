@@ -322,12 +322,20 @@ Write-Output 'installed'
                     except Tiny11TransportError:
                         pass
                     time.sleep(1)
+                failed_probes = 0
                 while tunnel.poll() is None:
                     if not self.helper_ready():
+                        failed_probes += 1
+                        # A live SSH process can retain a dead forwarded channel.
+                        # Recycle only our tunnel, never the logged-in client.
+                        if failed_probes >= 3:
+                            break
                         try:
                             self.start_helper_if_needed()
                         except Tiny11TransportError:
                             pass
+                    else:
+                        failed_probes = 0
                     time.sleep(10)
             finally:
                 if tunnel.poll() is None:

@@ -58,7 +58,8 @@ class Tiny11WeComTransportTests(unittest.TestCase):
     def test_logged_out_client_does_not_restart_responding_helper(self):
         client = transport.Tiny11Transport(config(app='wechat'))
         for state in ({'ok': False, 'app': 'wechat', 'session_id': 1},
-                      {'ok': False, 'helper_ready': True, 'app': 'wechat', 'client_state': 'entry_required'}):
+                      {'ok': False, 'helper_ready': True, 'app': 'wechat', 'client_state': 'entry_required'},
+                      {'ok': True, 'helper_ready': True, 'app': 'wechat', 'client_state': 'unresponsive'}):
             with mock.patch.object(client, 'health', return_value=state), \
                     mock.patch.object(client, 'powershell') as start:
                 self.assertTrue(client.helper_ready())
@@ -72,6 +73,32 @@ class Tiny11WeComTransportTests(unittest.TestCase):
             client.start_helper_if_needed()
             start.assert_called_once()
 
+    def test_supervisor_recycles_stalled_tunnel_and_resets_failure_count(self):
+        client = transport.Tiny11Transport(config())
+        tunnel = mock.Mock()
+        tunnel.poll.return_value = None
+        with mock.patch.object(client, 'ensure_vm'), \
+                mock.patch.object(client, 'install'), \
+                mock.patch.object(client, 'helper_ready', side_effect=[False, True, False, False, False]) as ready, \
+                mock.patch.object(client, 'start_helper_if_needed') as start, \
+                mock.patch.object(transport.time, 'monotonic', side_effect=[0, 31]), \
+                mock.patch.object(transport.time, 'sleep'), \
+                mock.patch.object(transport.subprocess, 'Popen', side_effect=[tunnel, RuntimeError('test finished')]), \
+                self.assertRaisesRegex(RuntimeError, 'test finished'):
+            client.supervise()
+        self.assertEqual(ready.call_count, 5)
+        self.assertEqual(start.call_count, 3)
+        tunnel.terminate.assert_called_once()
+        tunnel.wait.assert_called_once_with(timeout=5)
+        tunnel.kill.assert_not_called()
+
+    def test_disconnected_error_response_does_not_escape_request_loop(self):
+        source = transport.GUEST_HELPER.read_text()
+        handler = source.split('Write-BridgeLog ("request_error "', 1)[1]
+        self.assertIn("catch {\n                # A disconnected caller", handler)
+        self.assertIn("Write-BridgeLog 'response_disconnected'", handler)
+        self.assertIn('try { $context.Response.Close() } catch { }', handler)
+
     def test_native_login_detection_is_personal_read_only_and_checks_hidden_main_first(self):
         source = (ROOT / 'agentic_tools/wecom_agent/windows/WeComBridge.ps1').read_text()
         detector = source.split('function Get-PersonalWeChatState {', 1)[1].split('function Test-NativeWebForeground', 1)[0]
@@ -81,6 +108,18 @@ class Tiny11WeComTransportTests(unittest.TestCase):
             self.assertNotIn(forbidden, detector)
         restore = source.split("{ $_ -in @('restore', 'activate') }", 1)[1].split('"click"', 1)[0]
         self.assertLess(restore.index('WECHAT_ENTRY_REQUIRED'), restore.index('SendWait'))
+
+    def test_existing_but_hung_window_does_not_claim_input_readiness(self):
+        source = transport.GUEST_HELPER.read_text()
+        detector = source.split('function Get-PersonalWeChatState {', 1)[1].split('function Test-NativeWebForeground', 1)[0]
+        self.assertIn("return 'unresponsive'", detector)
+        self.assertIn('::IsResponding($MainWindow.Handle)', detector)
+        focus = source.split('function Focus-WeCom {', 1)[1].split('function Invoke-Key {', 1)[0]
+        self.assertLess(focus.index('WECHAT_CLIENT_UNRESPONSIVE'), focus.index('SetForegroundWindow'))
+        self.assertIn("-and $clientState -eq 'ready'", source)
+        native = transport.GUEST_HELPER.with_name('NativeWindows.ps1').read_text()
+        self.assertIn('SendMessageTimeout(window, 0, UIntPtr.Zero, IntPtr.Zero,', native)
+        self.assertIn('2, 2000, out result)', native)
 
     def test_system_dialog_blocks_input_before_focus_and_remains_visible_in_health(self):
         source = (ROOT / 'agentic_tools/wecom_agent/windows/WeComBridge.ps1').read_text()
