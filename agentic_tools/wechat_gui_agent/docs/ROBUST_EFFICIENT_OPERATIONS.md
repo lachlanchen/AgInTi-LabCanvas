@@ -1,5 +1,8 @@
 # Robust And Efficient Operations
 
+For retained Channels cards, use [saved-card recovery](../../../references/wechat-saved-card-recovery-2026-09-27.md).
+Internal retrieval failures must not ask the owner to resend an identified card.
+
 Per-group company/reference briefs use private `assistant_context` configuration,
 not global prompts. Preserve it through routing, fast replies and bounded worker
 packets, including fallback agents. Follow the

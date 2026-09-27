@@ -85,7 +85,7 @@ def evidence_records(task: dict[str, Any]):
     """Read only established preflight contracts, never arbitrary model file lists."""
     preflight = task.get("preflight") or {}
     finder = preflight.get("shipinhao_media_transcript") or {}
-    if finder.get("status") in {"transcribed", "cached"} and (
+    if finder.get("transcript_usable") is not False and finder.get("status") in {"transcribed", "cached"} and (
         finder.get("content_identity_verified") is True
         or finder.get("visual_identity_verified") is True
     ):
@@ -130,6 +130,14 @@ def store_task_knowledge(
         "chat", "server_id", "local_id", "message_db", "message_table", "sender",
         "sender_display", "create_time",
     ) if key in source}, ensure_ascii=False, sort_keys=True)
+    finder = (task.get("preflight") or {}).get("shipinhao_media_transcript") or {}
+    if finder.get("transcript_usable") is False and db.is_file():
+        # Keep rejected ASR for audit, but retract it and dependent synthesis
+        # from the memory supplied to future same-chat agent turns.
+        with closing(sqlite3.connect(db, timeout=max(.01, timeout_seconds))) as conn, conn:
+            conn.execute("""UPDATE source_knowledge SET evidence_status='transcript_rejected'
+                WHERE transport=? AND chat=? AND task_id=?
+                AND kind IN ('shipinhao_transcript','agent_summary')""", (transport, chat, task_id))
     records = []
     errors = []
     seen = set()
@@ -214,6 +222,7 @@ def knowledge_context(
                 k.provenance_json,s.body FROM source_knowledge_search s
                 JOIN source_knowledge k ON k.id=s.knowledge_id
                 WHERE source_knowledge_search MATCH ? AND k.transport=? AND k.chat=?
+                AND k.evidence_status != 'transcript_rejected'
                 ORDER BY bm25(source_knowledge_search) LIMIT ?""",
                 (match, transport, chat, max(1, min(20, char_budget // 400)))).fetchall()
     items = []

@@ -175,6 +175,7 @@ class WeChatTaskWorkerTests(unittest.TestCase):
             "id": "native-blocked", "chat": "Shares", "request": "Download this Channels card",
         })
         self.assertIn(worker.CHAT_CLIENT_PRESERVATION, prompt)
+        self.assertIn(worker.SAVED_SOURCE_RECOVERY, prompt)
         self.assertIn("stop GUI mutation", prompt)
         self.assertIn("separate explicit current operator maintenance instruction", prompt)
 
@@ -3848,6 +3849,32 @@ stderr: noisy internal trace
         self.assertFalse(task["worker_result_exhausted"])
         self.assertEqual([call["backend"] for call in calls], ["codex", "aginti"])
 
+    def test_agent_can_reject_transcript_without_losing_original_video(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as folder:
+            media, transcript = Path(folder) / "source.mp4", Path(folder) / "asr.txt"
+            media.write_bytes(b"verified-video")
+            transcript.write_text("unintelligible recognition")
+            finder = {"status": "transcribed", "duration_seconds": 29.7,
+                      "delivery_media_path": str(media), "delivery_transcript_path": str(transcript),
+                      "text_preview": "unintelligible recognition", "profile": {"title": "A song"}}
+            task = {"id": "review", "chat": "Shares", "request": "Read this card",
+                    "preflight": {"shipinhao_media_transcript": finder}}
+            with mock.patch.object(worker, "verified_shipinhao_delivery_record", return_value=finder), \
+                    mock.patch.object(worker, "shipinhao_download_delivery_requested", return_value=True), \
+                    mock.patch.object(worker, "shipinhao_request_requires_extended_research", return_value=False), \
+                    mock.patch.object(worker, "run_codex_session", return_value={"ok": True, "message": json.dumps({
+                        "message": "Original video attached; transcription was unreliable.",
+                        "transcript_usable": False, "continue_research": False,
+                    })}) as agent:
+                raw = worker.run_verified_shipinhao_delivery_synthesis(task, {"model": "test"})
+                self.assertEqual(json.loads(raw)["files"], [str(media)])
+                self.assertEqual(worker.shipinhao_auto_delivery_files(task), [str(media)])
+            self.assertFalse(finder["transcript_usable"])
+            self.assertEqual(worker.shipinhao_transcript_for_agent(finder), "")
+            self.assertIn("transcript_usable=false", agent.call_args.args[0])
+            self.assertTrue(transcript.is_file())
+
     def test_verified_shipinhao_delivery_falls_back_from_codex_to_aginti(self) -> None:
         worker = load_worker()
         with tempfile.TemporaryDirectory() as tmp:
@@ -5417,6 +5444,7 @@ stderr: noisy internal trace
         self.assertIn("Central orchestrator handoff", str(calls[0]["prompt"]))
         self.assertIn("WeChat is only the message transport", str(calls[0]["prompt"]))
         self.assertIn(worker.CHAT_CLIENT_PRESERVATION, str(calls[0]["prompt"]))
+        self.assertIn(worker.SAVED_SOURCE_RECOVERY, str(calls[0]["prompt"]))
         self.assertIn("Execution contract", str(calls[0]["prompt"]))
         self.assertIn("message_transport_only", str(calls[0]["prompt"]))
         self.assertIn("resume_per_chat_worker_session", str(calls[0]["prompt"]))
@@ -10470,6 +10498,51 @@ stderr: noisy internal trace
         self.assertEqual(guarded["confirmation"], "")
         self.assertEqual(guarded["contract_guard"], "read_only_source_never_waits_for_verification")
         self.assertTrue(worker.should_send_worker_result(task, guarded))
+
+    def test_saved_finder_download_never_needs_resend_even_without_preflight(self) -> None:
+        worker = load_worker()
+        task = {
+            "route_decision": {"route_kind": "file_download_or_save"},
+            "request": "<finderFeed><objectId>123</objectId><desc>Exact card</desc>"
+                       "<nickname>Author</nickname></finderFeed>",
+        }
+        result = {"message": "Only the card is readable.", "files": [],
+                  "confirmation": "Please resend this Channels card.",
+                  "data": {"confirmation": "Please resend this Channels card."}}
+        guarded = worker.enforce_worker_result_contract(task, result, "")
+        self.assertEqual(guarded["confirmation"], "")
+        self.assertEqual(guarded["data"]["confirmation"], "")
+        self.assertEqual(guarded["message"], result["message"])
+        self.assertEqual(result["confirmation"], "Please resend this Channels card.")
+        self.assertEqual(guarded["data"]["source_read_quality"], "evidence_limited")
+        for changed in (
+            {**task, "request": "Download that video"},
+            {**task, "route_decision": {"route_kind": "publish_video", "public_publish_allowed": True}},
+        ):
+            with self.subTest(task=changed):
+                unchanged = worker.enforce_worker_result_contract(changed, result, "")
+                self.assertEqual(unchanged["confirmation"], result["confirmation"])
+
+    def test_resend_delivery_applies_current_saved_source_guard(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as folder:
+            queue = Path(folder) / "queue.jsonl"
+            worker.write_tasks(queue, [{
+                "id": "stored-card", "chat": "Shares", "status": "send_failed",
+                "route_decision": {"route_kind": "file_download_or_save"},
+                "request": "<finderFeed><objectId>123</objectId><desc>Exact card</desc></finderFeed>",
+                "result": {"message": "Limited source evidence.", "files": [],
+                           "confirmation": "Please forward the card again."},
+            }])
+            with mock.patch.object(worker, "send_result_once") as send, \
+                    mock.patch.object(worker, "prepare_long_response_delivery"), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                code = worker.resend_task_result(queue, "stored-card", "Shares")
+            self.assertEqual(code, 0)
+            self.assertEqual(send.call_args.args[0]["confirmation"], "")
+            saved = worker.find_task(queue, "stored-card")
+            self.assertEqual(saved["result"]["confirmation"], "")
+            self.assertNotEqual(saved["status"], "waiting_confirmation")
 
     def test_wecom_android_article_preflight_uses_native_exact_card_resolver(self) -> None:
         worker = load_worker()

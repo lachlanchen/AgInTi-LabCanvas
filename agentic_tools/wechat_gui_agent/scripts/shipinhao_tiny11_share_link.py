@@ -67,19 +67,79 @@ def verify_resolved_card(profile, url):
     return merge_resolved_share_profile({**profile, 'share_token': url.rsplit('/', 1)[-1]}, resolved)
 
 
+def menu_panel_boxes(path):
+    """Isolate light native popups from a playing video's noisy background."""
+    import cv2
+
+    image = cv2.imread(str(path))
+    if image is None:
+        return []
+    mask = cv2.inRange(image, (210, 210, 210), (255, 255, 255))
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    boxes = []
+    for contour in contours:
+        x, y, width, height = cv2.boundingRect(contour)
+        if (80 <= width <= 400 and 50 <= height <= 500
+                and cv2.contourArea(contour) >= .85 * width * height):
+            boxes.append((x, y, width, height))
+    return sorted(boxes, key=lambda box: (box[1], box[0]))
+
+
 def match_menu(bridge, screen, box, labels, output_dir, label):
     crop = bridge.crop(screen, box, output_dir / f'{label}.png')
-    crops = [(crop, 0)]
+    crops = [
+        (bridge.crop(crop, panel, output_dir / f'{label}-panel-{index}.png'), panel[0], panel[1])
+        for index, panel in enumerate(menu_panel_boxes(crop))
+    ]
+    crops.append((crop, 0, 0))
     if box[2] < 200:
         crops.append((bridge.crop(crop, (29, 0, box[2] - 29, box[3]),
-                                  output_dir / f'{label}-text.png'), 29))
-    for candidate, inset in crops:
+                                  output_dir / f'{label}-text.png'), 29, 0))
+    for candidate, inset_x, inset_y in crops:
         for text in labels:
             for native in (False, True):
                 match = bridge.find_ocr_line(candidate, text, scale=3, native_pixels=native)
                 if match and match.get('similarity') == 1:
-                    return box[0] + inset + int(match['center_x']), box[1] + int(match['center_y'])
+                    return (box[0] + inset_x + int(match['center_x']),
+                            box[1] + inset_y + int(match['center_y']))
     return None
+
+
+def player_tab_close_point(screen, window, player):
+    """Find the small X in the owned dock tab, never the app title bar."""
+    import cv2
+    import numpy as np
+
+    left, top = player[0], window.y + 35
+    with Image.open(screen).convert('RGB') as image:
+        header = np.array(image.crop((left, top, left + min(player[2], 320), top + 40)))
+    gray = cv2.cvtColor(header, cv2.COLOR_RGB2GRAY)
+    mask = ((gray < 170) & ((header.max(axis=2).astype(int) - header.min(axis=2)) < 20)).astype('uint8')
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    points = []
+    for contour in contours:
+        x, y, width, height = cv2.boundingRect(contour)
+        if not (8 <= width <= 16 and 8 <= height <= 16 and abs(width - height) <= 1):
+            continue
+        rows, columns = np.nonzero(mask[y:y+height, x:x+width])
+        distance = np.minimum(abs(rows - columns), abs(rows + columns - (width - 1)))
+        if len(rows) >= 2 * width - 3 and np.mean(distance <= 1) >= .9:
+            points.append((left + x + width//2, top + y + height//2))
+    return points[0] if len(points) == 1 else None
+
+
+def close_owned_player(bridge, window, player):
+    # A popup consumes the first click; dismiss it before locating the tab X.
+    bridge.click(window.x + 300, window.y + 40)
+    time.sleep(.2)
+    screen = bridge.capture_screen('channels-owned-tab-close')
+    point = player_tab_close_point(screen, window, player)
+    if point is None:
+        raise RuntimeError('native_owned_tab_close_unavailable')
+    bridge.click(*point)
+    time.sleep(.3)
+    if player_box(bridge.capture_screen('channels-owned-tab-closed'), window):
+        raise RuntimeError('native_owned_tab_close_not_confirmed')
 
 
 def recover(chat, source_text, output_dir, *, bridge=None, max_scrolls=48):
@@ -235,7 +295,7 @@ def recover(chat, source_text, output_dir, *, bridge=None, max_scrolls=48):
                 if opened and player:
                     # Close only the tab this invocation opened, not WeChat or
                     # its shared desktop. Escape can hide the logged-in app.
-                    b.click(player[0] + 181, w.y + 55)
+                    close_owned_player(b, w, player)
                 elif menu_open:
                     b.dismiss_transient_overlays(b.find_window())
             except Exception as exc:

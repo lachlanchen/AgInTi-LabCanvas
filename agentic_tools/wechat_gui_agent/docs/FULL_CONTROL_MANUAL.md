@@ -1,5 +1,8 @@
 # WeChat Full Control Manual
 
+For retained Channels cards, use [saved-card recovery](../../../references/wechat-saved-card-recovery-2026-09-27.md).
+Internal retrieval failures must not ask the owner to resend an identified card.
+
 For a private company/team assistant using the same bridge, see
 [company group enrollment](../../../references/wechat-private-company-assistant.md).
 Operator-owned `assistant_context` stays scoped to its direct config and follows

@@ -105,6 +105,19 @@ CHAT_CLIENT_PRESERVATION = (
     "pending delivery, and return the real blocker. Never bypass the existing native guard "
     "with raw coordinates or repeated retries; a frozen window is not proof of logout."
 )
+SAVED_SOURCE_RECOVERY = (
+    "An exact saved Channels/Finder card is sufficient input, including after a timeout or "
+    "client recovery. Use its original same-chat message/quote, source IDs, private source file, "
+    "verified cache, and the selected transport's native Copy Link routine. An expired media "
+    "URL or failed menu read is an internal retrieval problem, not missing user input. Do not "
+    "ask the user to resend, reforward, reopen, screenshot, or paste the link for a card already "
+    "identified in this task. Try the established exact-source recovery, then report a genuine "
+    "remaining limitation concisely with confirmation empty; never claim a download or "
+    "transcript without verified evidence. Retain source identity for a later retry, without "
+    "promising an automatic retry unless one is durably scheduled. Ask for clarification only "
+    "if the intended source really cannot be identified. This never authorizes publishing, "
+    "commenting, payment, bypassing login/security gates, or restarting clients."
+)
 SHIPINHAO_COMMENT_INTEL_SCRIPT = ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "shipinhao_comment_intel.py"
 SHIPINHAO_MEDIA_TRANSCRIBE_SCRIPT = ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "shipinhao_media_transcribe.py"
 SHIPINHAO_GUI_AUDIO_CAPTURE_SCRIPT = ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "shipinhao_gui_audio_capture.py"
@@ -3028,6 +3041,8 @@ def enforce_worker_result_response_policy(
     task: dict[str, Any], result: dict[str, Any]
 ) -> dict[str, Any]:
     """Apply narrow final guards against transport and language-mode leakage."""
+    # Replayed/deferred results must obey the same source contract as new turns.
+    enforce_read_only_source_result(task, result)
     if task_transport_kind(task) == "wecom" and result.get("files"):
         source_files = [Path(str(path)).expanduser() for path in result.get("files") or []]
         delivery_files = wecom_research_delivery_files(task, source_files)
@@ -10401,6 +10416,8 @@ LabCanvas already owns message intake, exact-chat isolation, scheduling, determi
 
 {CHAT_CLIENT_PRESERVATION}
 
+{SAVED_SOURCE_RECOVERY}
+
 {matched_routine_note}
 
 Treat the current request and later same-chat interruptions as authoritative. Keep every source and artifact scoped to this task and chat. Do not use nearby media or another group's context. Do not repeat completed stages. Never retry a payment, public publication, external send, destructive change, or other irreversible action without the packet's explicit gate and current authorization. Persist long work through the existing routine instead of holding a model call.
@@ -10932,6 +10949,8 @@ def run_worker_agent_session(task: dict[str, Any], policy: dict[str, Any]) -> st
 Handle the task using available local files/tools. Save downloaded or generated artifacts under the repo's ignored private/output folders when possible.
 WeChat is only the message transport: it receives user messages and returns safe files/messages. Official WeCom tasks follow the same transport-only contract. Backend execution belongs to the routine orchestrator and the selected per-chat worker agent session.
 {CHAT_CLIENT_PRESERVATION}
+
+{SAVED_SOURCE_RECOVERY}
 You are being resumed by the central routine orchestrator. Treat the routine contract and orchestrator handoff as the execution center: inspect current stage, use mature routine entrypoints first, repair blockers, and only invent a new approach if no routine stage applies.
 The task may be a fragment or follow-up from an ongoing WeChat thread. Use the task's source and context fields to resolve pronouns, repeated requests, "same/again/this/that/last one", and incomplete messages.
 {response_policy_instruction}
@@ -13325,8 +13344,9 @@ def shipinhao_auto_delivery_files(task: dict[str, Any] | None) -> list[str]:
     finder = preflight.get("shipinhao_media_transcript") if isinstance(preflight.get("shipinhao_media_transcript"), dict) else {}
     candidates = [
         Path(str(finder.get("delivery_media_path") or "")).expanduser(),
-        Path(str(finder.get("delivery_transcript_path") or "")).expanduser(),
     ]
+    if finder.get("transcript_usable") is not False:
+        candidates.append(Path(str(finder.get("delivery_transcript_path") or "")).expanduser())
     return unique_strings(
         [str(candidate.resolve()) for candidate in candidates if candidate.is_file()]
     )
@@ -13374,7 +13394,8 @@ def verified_shipinhao_delivery_record(task: dict[str, Any] | None) -> dict[str,
 
 
 def shipinhao_transcript_for_agent(finder: dict[str, Any]) -> str:
-    if str(finder.get("status") or "") not in {"transcribed", "cached"}:
+    if (str(finder.get("status") or "") not in {"transcribed", "cached"}
+            or finder.get("transcript_usable") is False):
         return ""
     context_path = Path(str(finder.get("agent_context_path") or "")).expanduser()
     text = ""
@@ -13410,6 +13431,8 @@ def fallback_shipinhao_delivery_message(
             f"已下载并核验{source_label}，视频文件已附上。该文件经媒体探测确认没有音轨，"
             "因此没有生成转写；这次没有公开发布。"
         )
+    if finder.get("transcript_usable") is False:
+        return f"已取回{source_label}的原视频。自动转写不可靠，这次没有附上未经核对的文字稿。"
     transcript = shipinhao_transcript_for_agent(finder)
     excerpt = re.sub(r"\[[0-9:. -]+\]", "", transcript)
     excerpt = collapse_context_text(excerpt, max_len=110).strip("，。；; ")
@@ -13518,12 +13541,14 @@ Decide whether the exact clip is sufficient for a useful answer. Set `continue_r
 
 When `continue_research=false`, write one concise, natural reply in the requester's language. Identify the video, summarize the actual speech in one or two useful sentences, and say that the requested video and timestamped transcript are attached when those delivery flags are true. When `continue_research=true`, keep `message` empty and put the precise evidence question in `research_focus`; the persistent research worker will continue from the exact transcript and attach the same verified files. In either case, do not mention models, private paths, IDs, checksums, internal routing, or diagnostics. Do not claim that the whole lecture/paper/source was watched or read unless it is present in the packet. Do not claim public publication; this task is read-only download and content understanding.
 
+Review transcript usability before treating it as evidence. Set `transcript_usable=false` for unintelligible text, degenerative repetition or clear recognition failure; language alone is not grounds for rejection. Do not invent corrected speech from the title. In that case the host will keep the raw recognition private and attach only the verified video: explain this briefly, without promising a transcript attachment. Source identity and successful ASR execution do not prove transcription quality.
+
 Bounded exact-source packet:
 ```json
 {json.dumps(packet, ensure_ascii=False, indent=2)}
 ```
 
-Return JSON only: {{"message":"...","files":[],"confirmation":"","continue_research":false,"research_focus":""}}.
+Return JSON only: {{"message":"...","files":[],"confirmation":"","transcript_usable":true,"continue_research":false,"research_focus":""}}.
 """
     backend = select_agent_backend(task)
     low_policy = load_worker_model_policy("low")
@@ -13564,6 +13589,9 @@ Return JSON only: {{"message":"...","files":[],"confirmation":"","continue_resea
             continue
         raw_agent_message = str(agent_result.get("message") or "")
         payload = extract_worker_json_payload(raw_agent_message) or {}
+        if payload.get("transcript_usable") is False:
+            finder["transcript_usable"] = False
+            delivery_files = shipinhao_auto_delivery_files(task)
         if payload.get("continue_research") is True:
             mark_shipinhao_extended_research(
                 task,
@@ -17995,6 +18023,36 @@ def worker_result_claims_lazyedit_action(result: dict[str, Any]) -> bool:
     return False
 
 
+def enforce_read_only_source_result(task: dict[str, Any], result: dict[str, Any]) -> None:
+    """Do not turn an identified read-only source into a user resend gate."""
+    confirmation = str(result.get("confirmation") or "").strip()
+    if not confirmation or result_is_no_reply(result):
+        return
+    route = task_route_decision(task)
+    if (route.get("public_publish_allowed") or is_video_publish_task(task)
+            or shipinhao_public_yuanbao_requested(task)):
+        return
+    research = task_is_research_summary(task)
+    if not research and route.get("route_kind") != "file_download_or_save":
+        return
+    preflight = task.get("preflight") if isinstance(task.get("preflight"), dict) else {}
+    source_recovery = preflight.get("wechat_source_recovery")
+    profile = shipinhao_profile_for_task(task)
+    identified_card = bool(profile.get("detected") and profile.get("object_id"))
+    if not (identified_card or (research and isinstance(source_recovery, dict) and source_recovery)):
+        return
+    message = str(result.get("message") or "").strip()
+    if not message or message == confirmation:
+        message = "原始分享已保留，但这次还没取得可核对的完整内容；目前不能提供完整转录或下载文件。"
+    result["message"] = message
+    result["confirmation"] = ""
+    data = result.get("data") if isinstance(result.get("data"), dict) else {}
+    result["data"] = {**data, "source_read_quality": data.get("source_read_quality") or "evidence_limited"}
+    if "confirmation" in result["data"]:
+        result["data"]["confirmation"] = ""
+    result["contract_guard"] = "read_only_source_never_waits_for_verification"
+
+
 def enforce_worker_result_contract(task: dict[str, Any], result: dict[str, Any], raw_text: str) -> dict[str, Any]:
     if is_passive_video_intake_task(task):
         return canonical_passive_video_intake_result(task, result)
@@ -18021,27 +18079,8 @@ def enforce_worker_result_contract(task: dict[str, Any], result: dict[str, Any],
         guarded["confirmation"] = ""
         guarded["contract_guard"] = "grant_completion_gates_pending"
         return guarded
-    preflight = task.get("preflight") if isinstance(task.get("preflight"), dict) else {}
-    source_recovery = preflight.get("wechat_source_recovery") if isinstance(preflight.get("wechat_source_recovery"), dict) else {}
-    if (
-        task_is_research_summary(task)
-        and source_recovery
-        and str(result.get("confirmation") or "").strip()
-        and not shipinhao_public_yuanbao_requested(task)
-    ):
-        guarded = dict(result)
-        message = str(result.get("message") or "").strip()
-        if not message:
-            message = (
-                "这次只恢复到有限证据，尚未取得可核对的完整正文、视频或评论。"
-                "我没有把卡片标题或验证页当成完整内容，也不会要求你为只读研究去验证页面。"
-            )
-        guarded["message"] = message
-        guarded["confirmation"] = ""
-        data = guarded.get("data") if isinstance(guarded.get("data"), dict) else {}
-        guarded["data"] = {**data, "source_read_quality": data.get("source_read_quality") or "evidence_limited"}
-        guarded["contract_guard"] = "read_only_source_never_waits_for_verification"
-        return guarded
+    result = dict(result)
+    enforce_read_only_source_result(task, result)
     if not is_generate_video_task(task):
         return result
     stages = generated_video_stage_permissions(task)

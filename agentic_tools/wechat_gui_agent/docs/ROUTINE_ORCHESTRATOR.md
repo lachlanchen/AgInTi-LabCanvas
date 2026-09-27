@@ -53,6 +53,12 @@ truncated display previews are not identities. The
 [Windows card-only recovery runbook](../../../references/windows-wechat-channels-originals-and-send-reconciliation.md#full-identity-not-preview-text)
 records the long-caption false rejection and its live original-download test.
 
+Retained cards remain sufficient after a failure or client recovery. Apply the
+same read-only source contract to research, download, and replayed replies;
+never turn an internal retrieval failure into a request to resend the card.
+See [saved-card recovery](../../../references/wechat-saved-card-recovery-2026-09-27.md)
+for popup isolation, owned-tab cleanup, and the end-to-end verification.
+
 ## Routine Registry
 
 The registry lives in:

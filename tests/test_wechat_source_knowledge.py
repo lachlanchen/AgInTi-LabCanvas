@@ -54,6 +54,16 @@ class SourceKnowledgeTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             knowledge.knowledge_context({**self.task, "chat": "other"}, "optical", db=self.db)
 
+    def test_rejected_recognition_is_retained_but_not_reused_as_knowledge(self):
+        self.store(result={"message": "Optical summary"})
+        self.task["preflight"]["shipinhao_media_transcript"]["transcript_usable"] = False
+        self.assertEqual(self.store()["inserted"], 0)
+        self.assertEqual(knowledge.knowledge_context(self.task, "optical", db=self.db), {})
+        with sqlite3.connect(self.db) as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM source_knowledge").fetchone()[0], 2)
+            self.assertEqual({r[0] for r in conn.execute("SELECT evidence_status FROM source_knowledge")},
+                             {"transcript_rejected"})
+
     def test_chinese_search_and_bounded_context(self):
         self.store()
         found = knowledge.knowledge_context(self.task, "请解释之前的光谱分析文章", db=self.db, char_budget=500)
