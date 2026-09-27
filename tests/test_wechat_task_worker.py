@@ -169,6 +169,15 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertIn("This overrides old transport notes in the resumed session", text)
         self.assertIn("An unavailable media adapter is not evidence of logout", text)
 
+    def test_aginti_content_worker_cannot_restart_chat_client(self):
+        worker = load_worker()
+        prompt = worker.build_aginti_worker_prompt({
+            "id": "native-blocked", "chat": "Shares", "request": "Download this Channels card",
+        })
+        self.assertIn(worker.CHAT_CLIENT_PRESERVATION, prompt)
+        self.assertIn("stop GUI mutation", prompt)
+        self.assertIn("separate explicit current operator maintenance instruction", prompt)
+
     def test_source_knowledge_is_available_to_both_worker_backends(self) -> None:
         worker = load_worker()
         task = {"id": "memory-test", "chat": "test-chat", "source": {"chat": "test-chat"},
@@ -5407,6 +5416,7 @@ stderr: noisy internal trace
         self.assertIn("fragment or follow-up", str(calls[0]["prompt"]))
         self.assertIn("Central orchestrator handoff", str(calls[0]["prompt"]))
         self.assertIn("WeChat is only the message transport", str(calls[0]["prompt"]))
+        self.assertIn(worker.CHAT_CLIENT_PRESERVATION, str(calls[0]["prompt"]))
         self.assertIn("Execution contract", str(calls[0]["prompt"]))
         self.assertIn("message_transport_only", str(calls[0]["prompt"]))
         self.assertIn("resume_per_chat_worker_session", str(calls[0]["prompt"]))

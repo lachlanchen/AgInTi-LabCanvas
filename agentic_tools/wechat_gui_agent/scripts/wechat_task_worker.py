@@ -94,6 +94,17 @@ DEFAULT_QUEUE = PRIVATE / "wechat_task_queue.jsonl"
 DEFAULT_SEND_TARGETS = PRIVATE / "wechat_send_targets.local.json"
 DEFAULT_MEMORY_DB = PRIVATE / "wechat_memory.sqlite"
 GUI_SEND_LOCK = PRIVATE / "wechat_gui_send.lock"
+CHAT_CLIENT_PRESERVATION = (
+    "Chat client lifecycle is operator-owned, not a content-recovery tool. "
+    "A request to read/download media, answer, generate artifacts, or deliver a reply does not "
+    "authorize killing or restarting Weixin/WeChat/WXWork, logging out, switching accounts, "
+    "changing profiles, or replacing the active transport. Do not do these through PowerShell, "
+    "SSH, taskkill, scheduled tasks, or a fallback script. Only a separate explicit current "
+    "operator maintenance instruction can authorize a client restart. On an unresponsive "
+    "client or login/entry gate, stop GUI mutation, preserve exact-source artifacts and "
+    "pending delivery, and return the real blocker. Never bypass the existing native guard "
+    "with raw coordinates or repeated retries; a frozen window is not proof of logout."
+)
 SHIPINHAO_COMMENT_INTEL_SCRIPT = ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "shipinhao_comment_intel.py"
 SHIPINHAO_MEDIA_TRANSCRIBE_SCRIPT = ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "shipinhao_media_transcribe.py"
 SHIPINHAO_GUI_AUDIO_CAPTURE_SCRIPT = ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "shipinhao_gui_audio_capture.py"
@@ -10388,6 +10399,8 @@ AGINTI_EVIDENCE_SCOPE_JSON: {evidence_scope}
 
 LabCanvas already owns message intake, exact-chat isolation, scheduling, deterministic preflight, routine selection, queue state, and delivery. Do not redesign those systems. Work inside the current AgenticApp repository, follow AGENTS.md, and read the selected routine contract files in the packet before acting. Use established scripts and CLI entrypoints from that contract. The agent supplies judgment; deterministic routines supply repeatable mechanics.
 
+{CHAT_CLIENT_PRESERVATION}
+
 {matched_routine_note}
 
 Treat the current request and later same-chat interruptions as authoritative. Keep every source and artifact scoped to this task and chat. Do not use nearby media or another group's context. Do not repeat completed stages. Never retry a payment, public publication, external send, destructive change, or other irreversible action without the packet's explicit gate and current authorization. Persist long work through the existing routine instead of holding a model call.
@@ -10918,6 +10931,7 @@ def run_worker_agent_session(task: dict[str, Any], policy: dict[str, Any]) -> st
     prompt = f"""You are the slower worker agent for a WeChat or WeCom LabCanvas chat.
 Handle the task using available local files/tools. Save downloaded or generated artifacts under the repo's ignored private/output folders when possible.
 WeChat is only the message transport: it receives user messages and returns safe files/messages. Official WeCom tasks follow the same transport-only contract. Backend execution belongs to the routine orchestrator and the selected per-chat worker agent session.
+{CHAT_CLIENT_PRESERVATION}
 You are being resumed by the central routine orchestrator. Treat the routine contract and orchestrator handoff as the execution center: inspect current stage, use mature routine entrypoints first, repair blockers, and only invent a new approach if no routine stage applies.
 The task may be a fragment or follow-up from an ongoing WeChat thread. Use the task's source and context fields to resolve pronouns, repeated requests, "same/again/this/that/last one", and incomplete messages.
 {response_policy_instruction}

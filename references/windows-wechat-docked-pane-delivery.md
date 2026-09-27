@@ -89,6 +89,16 @@ recovery recipe or add a recurring process killer. Preserve the account/profile
 and obtain operator direction before restarting the main client when login
 continuity is required. Keep unsent results and their receipt journals intact.
 
+The concurrent Shares content worker nevertheless attempted a process restart
+through SSH/PowerShell and an interactive scheduled task. The client then showed
+its saved-account entry screen. This was not a verified recovery and did not
+restore delivery. The supervisor sent a stop instruction into that live worker
+session. Both Codex and AgInTi worker prompts now explicitly distinguish content
+recovery from operator-owned client lifecycle: a media/task request does not
+authorize restarting clients, changing profiles/accounts, or bypassing native
+guards with raw GUI input. This is a prompt boundary, not an OS permission
+sandbox; preserve failed-task evidence and report readiness honestly.
+
 ## Regression Coverage
 
 - A docked player does not make an empty composer look occupied.
