@@ -239,7 +239,9 @@ class Tiny11WeChatBridge(Tiny11WeComGuiBridge):
         # send based solely on a partial/truncated sidebar name.
         target = self.config['targets'][chat]
         search = target.get('search_name') or target.get('query') or target.get('expected_title') or chat
-        self.click(window.x + 133, window.y + 54)
+        # A narrow sidebar collapses the search field to an icon. Native search
+        # avoids clicking an obsolete field coordinate after a dock is closed.
+        self.key('ctrl+f')
         self.set_clipboard(search)
         self.key('ctrl+a')
         self.key('ctrl+v')

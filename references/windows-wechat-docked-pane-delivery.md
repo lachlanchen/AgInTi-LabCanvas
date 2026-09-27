@@ -99,6 +99,18 @@ authorize restarting clients, changing profiles/accounts, or bypassing native
 guards with raw GUI input. This is a prompt boundary, not an OS permission
 sandbox; preserve failed-task evidence and report readiness honestly.
 
+After explicit operator approval, the existing saved-account Enter Weixin
+button restored the client without another restart or QR scan. Its narrow
+sidebar had collapsed the search field into an icon, so the fixed search-box
+coordinate no longer opened search. The personal sender now uses native
+`Ctrl+F`, then retains the native contact-category and exact-title checks.
+
+Live verification after account entry showed all seven personal-chat monitors
+ready and caught up. The normal sender recovered both stored Shares replies,
+with native outgoing-row receipts. These were explicitly limited summaries:
+the original Channels media and audio transcription were not recovered. Do not
+equate restored message delivery with completion of those media stages.
+
 ## Regression Coverage
 
 - A docked player does not make an empty composer look occupied.

@@ -171,6 +171,7 @@ function Invoke-Key {
     param([string]$Keys)
     $mapping = @{
         "ctrl+a" = "^a"
+        "ctrl+f" = "^f"
         "ctrl+c" = "^c"
         "ctrl+v" = "^v"
         "alt+s" = "%s"

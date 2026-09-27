@@ -317,6 +317,10 @@ class Tiny11WeChatTests(unittest.TestCase):
                 self.assertRaisesRegex(RuntimeError, 'no web search'):
             client.ensure_chat('Shares')
         self.assertNotIn(mock.call('Return'), client.key.call_args_list)
+        self.assertEqual(client.key.call_args_list[0], mock.call('ctrl+f'))
+        self.assertNotIn(mock.call(233, 54), client.click.call_args_list)
+        helper = (ROOT / 'agentic_tools/wecom_agent/windows/WeComBridge.ps1').read_text()
+        self.assertIn('"ctrl+f" = "^f"', helper)
 
     def test_title_separator_recovery_does_not_alias_chinese_names(self):
         self.assertTrue(bridge.title_matches('MEMO一外语', 'MEMO—外语'))
