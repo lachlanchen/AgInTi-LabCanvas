@@ -15,7 +15,7 @@ import re
 import shutil
 import tempfile
 import time
-from typing import Any, Iterable
+from typing import Any, Iterable, Iterator
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -156,6 +156,7 @@ def mark_codex_account_runtime_unavailable(
     cache_path: Path = DEFAULT_POOL_CACHE,
     reason: str = "runtime_quota_rejection",
     ttl_seconds: float = 1800.0,
+    quota_pool: str = "regular",
 ) -> None:
     if not ACCOUNT_RE.fullmatch(str(account or "")):
         return
@@ -163,9 +164,12 @@ def mark_codex_account_runtime_unavailable(
     accounts = payload.get("accounts") if isinstance(payload.get("accounts"), dict) else {}
     status = accounts.get(account) if isinstance(accounts.get(account), dict) else {}
     status = dict(status)
-    status["codex_available"] = False
-    status["runtime_unavailable_reason"] = reason
-    status["runtime_unavailable_until"] = time.time() + max(60.0, ttl_seconds)
+    if quota_pool == "reserve":
+        status["reserve_runtime_unavailable_until"] = time.time() + max(60.0, ttl_seconds)
+    else:
+        status["codex_available"] = False
+        status["runtime_unavailable_reason"] = reason
+        status["runtime_unavailable_until"] = time.time() + max(60.0, ttl_seconds)
     accounts = dict(accounts)
     accounts[account] = status
     payload = dict(payload)
@@ -249,3 +253,66 @@ def best_cached_codex_status(
             # Account identity stays private; callers need only quota state.
             return dict(status)
     return {}
+
+
+def codex_reserve_candidates(
+    *,
+    cache_path: Path = DEFAULT_POOL_CACHE,
+    profile_root: Path = DEFAULT_PROFILE_ROOT,
+    max_age_seconds: float = DEFAULT_CACHE_MAX_AGE_SECONDS,
+) -> list[dict[str, str]]:
+    """Use only an observed reserve allowance, never infer one from exhaustion."""
+    if not account_pool_enabled():
+        return []
+    from .backends import load_model_policy
+
+    policy = load_model_policy().get("codex", {})
+    if not policy.get("reserve_enabled", False):
+        return []
+    reserve_model = str(policy.get("reserve_model") or "gpt-5.6-luna")
+    statuses = load_account_pool_cache(cache_path).get("accounts", {})
+    pinned = configured_pinned_account()
+    now = time.time()
+    candidates = []
+    for account in discover_agentshell_accounts(profile_root):
+        if pinned and pinned != account:
+            continue
+        status = statuses.get(account) or {}
+        reserve = status.get("reserve") or {}
+        age = now - float(status.get("observed_at_epoch") or 0)
+        if not status.get("ok") or not 0 <= age <= max_age_seconds:
+            continue
+        # A quota rejection may precede the next cache refresh. It blocks the
+        # normal pool, not the independently metered reserve pool.
+        rejected = (
+            float(status.get("runtime_unavailable_until") or 0) > now
+            and status.get("runtime_unavailable_reason") == "runtime_quota_rejection"
+        )
+        if float(status.get("remaining_percent") or 0) > 0 and not rejected:
+            continue
+        if float(status.get("reserve_runtime_unavailable_until") or 0) > now:
+            continue
+        reset_at = (reserve.get("window") or {}).get("resets_at")
+        if isinstance(reset_at, (int, float)) and reset_at <= now:
+            continue
+        if (reserve.get("model") != reserve_model or not reserve.get("available")
+                or float(reserve.get("remaining_percent") or 0) <= 0):
+            continue
+        candidates.append((float(reserve["remaining_percent"]), account))
+    candidates.sort(reverse=True)
+    return [{"account": account, "model": reserve_model, "quota_pool": "reserve"}
+            for _, account in candidates]
+
+
+def codex_account_attempts(accounts: list[str], model: str) -> Iterator[dict[str, str]]:
+    """Normal accounts first, then reserve after safe runtime quota rejections."""
+    if not accounts:
+        reserves = codex_reserve_candidates()
+        if reserves:
+            yield from reserves
+            return
+    for account in accounts or [""]:
+        yield {"account": account, "model": model, "quota_pool": "regular"}
+    # Evaluate lazily: callers record quota rejection before asking for the
+    # next attempt. They must stop iterating if an answer or tool has started.
+    yield from codex_reserve_candidates()

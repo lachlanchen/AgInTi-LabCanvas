@@ -485,7 +485,7 @@ def run_single_backend_attempt(
         )
         result["backend"] = "codex"
     result["backend"] = selected
-    result["model"] = model
+    result["model"] = str(result.get("model") or model)
     result["reasoning_effort"] = reasoning_effort
     return result
 
@@ -543,6 +543,11 @@ def quota_aware_codex_preference(
     """
     selected_model = str(model or "")
     selected_effort = str(reasoning_effort or "")
+    codex_policy = backend_specific_config(backend_config, "codex", primary_backend=backend)
+    if codex_policy.get("reserve_enabled"):
+        # Regular account selection and eligible reserve fallback happen
+        # together in codex_accounts; low regular quota alone is not reserve.
+        return selected_model, selected_effort, None
     if normalize_backend(backend) != "codex" or is_spark_model(selected_model):
         return selected_model, selected_effort, None
     fallback_config = fallback_config_dict(backend_config)

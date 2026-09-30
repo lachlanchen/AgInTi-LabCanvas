@@ -321,7 +321,7 @@ def normalize_rate_limit_response(
     credits = snapshot.get("credits")
     credits = credits if isinstance(credits, dict) else {}
     remaining = float(active["remaining_percent"])
-    return add_availability_fields({
+    normalized = add_availability_fields({
         "ok": True,
         "source": "codex_app_server_account_rate_limits",
         "observed_at_epoch": observed,
@@ -343,6 +343,25 @@ def normalize_rate_limit_response(
             "balance": str(credits.get("balance") or ""),
         },
     })
+    reserve = snapshots.get("base_model_inference") if isinstance(snapshots, dict) else None
+    if isinstance(reserve, dict) and reserve.get("normalModelSlug") == "gpt-5.6-luna":
+        try:
+            reserve_status = normalize_rate_limit_response(
+                {"rateLimits": reserve}, threshold_percent=threshold_percent,
+                observed_at=observed,
+            )
+        except QuotaProbeError:
+            # An optional, incomplete reserve bucket must not hide normal quota.
+            return normalized
+        normalized["reserve"] = {
+            "model": reserve["normalModelSlug"],
+            "limit_id": reserve_status["limit_id"],
+            "remaining_percent": reserve_status["remaining_percent"],
+            "window": reserve_status["window"],
+            "windows": reserve_status["windows"],
+            "available": reserve_status["remaining_percent"] > 0,
+        }
+    return normalized
 
 
 def probe_status(
@@ -409,6 +428,9 @@ def probe_account_pool(
                 previous_status.get("runtime_unavailable_reason") or "runtime_rejection"
             )
             status["runtime_unavailable_until"] = runtime_unavailable_until
+        reserve_until = float(previous_status.get("reserve_runtime_unavailable_until") or 0)
+        if reserve_until > now_epoch():
+            status["reserve_runtime_unavailable_until"] = reserve_until
         statuses[account] = status
     payload = {
         "ok": bool(statuses) and any(status.get("ok") for status in statuses.values()),

@@ -75,7 +75,7 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(code, 0)
         self.assertEqual(payload["policy"]["backend"], "codex")
-        self.assertEqual(payload["policy"]["model"], "gpt-5.6-sol")
+        self.assertEqual(payload["policy"]["model"], "gpt-6-astra")
         self.assertEqual(payload["policy"]["reasoning_effort"], "medium")
         self.assertIn("Shapr3D", payload["prompt"])
 

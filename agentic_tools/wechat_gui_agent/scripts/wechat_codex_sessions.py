@@ -29,6 +29,7 @@ if str(SRC) not in sys.path:
 from agenticapp.codex_accounts import (  # noqa: E402
     agentshell_codex_command,
     codex_account_candidates,
+    codex_account_attempts,
     mark_codex_account_runtime_unavailable,
 )
 
@@ -135,7 +136,7 @@ def run_codex_session(
                 chat_name,
                 role,
                 result,
-                model,
+                str(result.get("model") or model),
                 reasoning_effort,
                 sandbox,
                 workdir,
@@ -202,11 +203,12 @@ def run_codex_across_accounts(
     accounts = codex_account_candidates()
     attempts: list[dict[str, Any]] = []
     result: dict[str, Any] = {}
-    for account in accounts or [""]:
+    for candidate in codex_account_attempts(accounts, model):
+        account = candidate["account"]
         result = run_codex_with_startup_retries(
             prompt,
             thread_id=thread_id,
-            model=model,
+            model=candidate["model"],
             reasoning_effort=reasoning_effort,
             sandbox=sandbox,
             timeout_seconds=timeout_seconds,
@@ -215,9 +217,13 @@ def run_codex_across_accounts(
             agentshell_account=account,
         )
         result["agentshell_account"] = account
+        result["model"] = candidate["model"]
+        result["quota_pool"] = candidate["quota_pool"]
         attempts.append(
             {
                 "account": account,
+                "model": candidate["model"],
+                "quota_pool": candidate["quota_pool"],
                 "ok": bool(result.get("ok")),
                 "returncode": result.get("returncode"),
                 "execution_started": bool(result.get("execution_started")),
@@ -225,7 +231,10 @@ def run_codex_across_accounts(
             }
         )
         if account and codex_account_quota_rejected(result):
-            mark_codex_account_runtime_unavailable(account)
+            if candidate["quota_pool"] == "reserve":
+                mark_codex_account_runtime_unavailable(account, quota_pool="reserve")
+            else:
+                mark_codex_account_runtime_unavailable(account)
         if result.get("ok") or not codex_account_switch_retryable(result):
             break
     result["account_attempts"] = attempts

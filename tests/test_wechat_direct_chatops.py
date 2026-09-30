@@ -22,6 +22,28 @@ import wechat_chat_profiles as chat_profiles  # noqa: E402
 
 
 class WeChatDirectChatopsPolicyTests(unittest.TestCase):
+    def test_shared_model_policy_updates_models_without_changing_chat_settings(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "chat.json"
+            original = {
+                "chat_name": "Example", "message_table": "Msg_example",
+                "codex": {"model": "explicit-model", "timeout_seconds": 45},
+                "agent_router": {"default_model": "explicit-chat", "risky_model": "explicit-task",
+                                 "sandbox": "read-only"},
+            }
+            path.write_text(json.dumps(original), encoding="utf-8")
+            self.assertEqual(direct_chatops.load_config(path)["codex"]["model"], "explicit-model")
+            path.write_text(json.dumps({**original, "use_shared_model_policy": True}), encoding="utf-8")
+            with mock.patch.object(direct_chatops, "model_policy_for_effort", side_effect=[
+                {"model": "shared-chat"}, {"model": "shared-task"},
+            ]):
+                config = direct_chatops.load_config(path)
+            self.assertEqual(config["codex"], {"model": "shared-chat", "timeout_seconds": 45})
+            self.assertEqual(config["agent_router"]["default_model"], "shared-chat")
+            self.assertEqual(config["agent_router"]["risky_model"], "shared-task")
+            self.assertEqual(config["agent_router"]["sandbox"], "read-only")
+            self.assertEqual(config["chat_name"], "Example")
+
     def test_source_request_allows_agent_ack_without_default_receipt(self) -> None:
         config = {"immediate_ack_enabled": True}
         self.assertEqual(direct_chatops.worker_task_ack(config, {}, source_share=True), "")
@@ -4835,7 +4857,7 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
                 handle.flush()
                 config = direct_chatops.load_config(Path(handle.name))
 
-        self.assertEqual(config["codex"]["model"], "gpt-5.6-sol")
+        self.assertEqual(config["codex"]["model"], "gpt-6-astra")
         self.assertEqual(config["agent_backend"], "codex")
         self.assertEqual(config["codex"]["reasoning_effort"], "low")
         self.assertEqual(config["codex"]["timeout_seconds"], 25)

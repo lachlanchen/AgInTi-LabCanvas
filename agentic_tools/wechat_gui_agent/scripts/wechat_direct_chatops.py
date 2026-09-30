@@ -32,6 +32,7 @@ from wechat_agent_backend import (
     select_agent_backend,
     user_facing_backend_message,
 )
+from agenticapp.backends import model_policy_for_effort
 from wechat_memory import organize_messages
 from wechat_source_knowledge import DEFAULT_DB as DEFAULT_SOURCE_KNOWLEDGE_DB, knowledge_context
 from wechat_message_policy import (
@@ -220,6 +221,8 @@ def direct_result_is_idle(result: dict[str, Any]) -> bool:
 
 def load_config(path: Path) -> dict[str, Any]:
     raw = json.loads(path.read_text(encoding="utf-8"))
+    chat_policy = model_policy_for_effort("low")
+    task_policy = model_policy_for_effort("medium")
     defaults = {
         "chat_name": "wechat-chat",
         "chatroom_id": "",
@@ -249,15 +252,15 @@ def load_config(path: Path) -> dict[str, Any]:
             "fallback_to_aginti": True,
             "fallback_on_timeout": False,
         },
-        "codex": {"model": "gpt-5.6-sol", "reasoning_effort": "low", "sandbox": "read-only", "timeout_seconds": 25},
+        "codex": {"model": chat_policy["model"], "reasoning_effort": "low", "sandbox": "read-only", "timeout_seconds": 25},
         "codex_session_reuse": True,
         "agent_bridge_mode": False,
         "agent_route_enabled": True,
         "agent_route_prefilter": "agent_first",
         "agent_router": {
-            "default_model": "gpt-5.6-sol",
+            "default_model": chat_policy["model"],
             "default_reasoning_effort": "low",
-            "risky_model": "gpt-5.5",
+            "risky_model": task_policy["model"],
             "risky_reasoning_effort": "medium",
             "sandbox": "read-only",
             "timeout_seconds": 25,
@@ -444,6 +447,13 @@ def load_config(path: Path) -> dict[str, Any]:
     raw.setdefault("session_scope", profile["session_scope"])
     raw.setdefault("chat_title_aliases", profile["aliases"])
     merge_default_list_items(raw, defaults, "slow_task_keywords")
+    if raw.get("use_shared_model_policy"):
+        raw["codex"] = {**raw["codex"], "model": chat_policy["model"]}
+        raw["agent_router"] = {
+            **raw["agent_router"],
+            "default_model": chat_policy["model"],
+            "risky_model": task_policy["model"],
+        }
     if not raw["message_table"]:
         raise SystemExit(f"Missing message_table in private config: {path}")
     return raw

@@ -5,6 +5,7 @@ import unittest
 from unittest.mock import patch
 
 from agenticapp.workspace_agent import (
+    _run_codex_account_pool,
     _aginti_machine_command,
     _aginti_provider_chain,
     _parse_aginti_machine_result,
@@ -32,6 +33,32 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class WorkspaceAgentTests(unittest.TestCase):
+    def test_workspace_reserve_fallback_preserves_session_and_stops_after_tools(self):
+        candidates = [
+            {"account": "lab", "model": "gpt-6-astra", "quota_pool": "regular"},
+            {"account": "company", "model": "gpt-5.6-luna", "quota_pool": "reserve"},
+        ]
+        for tool_activity in (False, True):
+            with self.subTest(tool_activity=tool_activity), tempfile.TemporaryDirectory() as directory:
+                with patch("agenticapp.workspace_agent.codex_account_candidates", return_value=["lab"]), \
+                     patch("agenticapp.workspace_agent.codex_account_attempts", return_value=iter(candidates)), \
+                     patch("agenticapp.workspace_agent.mark_codex_account_runtime_unavailable"), \
+                     patch("agenticapp.workspace_agent._run_codex_process", side_effect=[
+                         {"ok": False, "error": "usage limit", "tool_activity": tool_activity},
+                         {"ok": True, "message": "done", "thread_id": "same-thread"},
+                     ]) as run:
+                    result = _run_codex_account_pool(
+                        "continue", codex_bin="codex", thread_id="same-thread",
+                        policy={"model": "gpt-6-astra", "reasoning_effort": "low"},
+                        task_dir=Path(directory), root=ROOT, pid_callback=None,
+                    )
+                self.assertEqual(run.call_count, 1 if tool_activity else 2)
+                self.assertEqual(result["quota_pool"], "regular" if tool_activity else "reserve")
+                if not tool_activity:
+                    self.assertEqual(result["model"], "gpt-5.6-luna")
+                    self.assertEqual(run.call_args.kwargs["thread_id"], "same-thread")
+                    self.assertEqual(run.call_args.kwargs["policy"]["model"], "gpt-5.6-luna")
+
     def test_codex_model_unavailable_classifier_matches_real_cli_errors(self):
         unsupported = {
             "stderr_tail": (
@@ -138,18 +165,19 @@ class WorkspaceAgentTests(unittest.TestCase):
             policy["aginti"]["provider_models_by_effort"]["localllm"]["medium"],
             "localllm-deep",
         )
-        self.assertEqual(policy["chat"], {"model": "gpt-5.6-sol", "reasoning_effort": "low"})
-        self.assertEqual(policy["task"], {"model": "gpt-5.6-sol", "reasoning_effort": "medium"})
+        self.assertEqual(policy["chat"], {"model": "gpt-6-astra", "reasoning_effort": "low"})
+        self.assertEqual(policy["task"], {"model": "gpt-6-astra", "reasoning_effort": "medium"})
         self.assertEqual(policy["fallback"]["chat"]["model"], "gpt-5.6-sol")
         self.assertEqual(policy["fallback"]["task"]["model"], "gpt-5.6-sol")
-        self.assertEqual(policy["high"], {"model": "gpt-5.6-sol", "reasoning_effort": "high"})
-        self.assertEqual(policy["xhigh"], {"model": "gpt-5.6-sol", "reasoning_effort": "xhigh"})
+        self.assertEqual(policy["high"], {"model": "gpt-6-astra", "reasoning_effort": "high"})
+        self.assertEqual(policy["xhigh"], {"model": "gpt-6-astra", "reasoning_effort": "xhigh"})
+        self.assertTrue(policy["codex"]["reserve_enabled"])
 
     def test_dynamic_policy_uses_codex_medium_for_tool_work(self):
         policy = select_agent_policy("Design and render a clean KiCad PCB and CAD holder")
 
         self.assertEqual(policy["backend"], "codex")
-        self.assertEqual(policy["model"], "gpt-5.6-sol")
+        self.assertEqual(policy["model"], "gpt-6-astra")
         self.assertEqual(policy["reasoning_effort"], "medium")
         self.assertEqual(policy["sandbox"], "danger-full-access")
 
@@ -184,11 +212,11 @@ class WorkspaceAgentTests(unittest.TestCase):
         self.assertIn("Do not create `agent-result.json`", prompt)
         self.assertNotIn("At the end, write", prompt)
 
-    def test_protein_structure_work_uses_sol_medium(self):
+    def test_protein_structure_work_uses_shared_primary_medium(self):
         policy = select_agent_policy("Use AlphaFold to predict COL1A1 and assess inhibitor evidence")
 
         self.assertEqual(policy["backend"], "codex")
-        self.assertEqual(policy["model"], "gpt-5.6-sol")
+        self.assertEqual(policy["model"], "gpt-6-astra")
         self.assertEqual(policy["reasoning_effort"], "medium")
         self.assertEqual(policy["effort_label"], "medium")
 
@@ -220,7 +248,7 @@ class WorkspaceAgentTests(unittest.TestCase):
             policy = select_agent_policy("Create a polished PowerPoint presentation with editable slides")
 
         self.assertEqual(policy["backend"], "codex")
-        self.assertEqual(policy["model"], "gpt-5.6-sol")
+        self.assertEqual(policy["model"], "gpt-6-astra")
         self.assertEqual(policy["reasoning_effort"], "xhigh")
         self.assertEqual(policy["timeout_seconds"], 10800)
         knowledge = selected_packaged_knowledge("Create an editable PPTX presentation")

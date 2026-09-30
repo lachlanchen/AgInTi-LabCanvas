@@ -108,6 +108,22 @@ class CodexQuotaStatusTests(unittest.TestCase):
 
         self.assertFalse(status["warning"])
 
+    def test_luna_reserve_is_separate_from_regular_quota(self) -> None:
+        module = load_module()
+        response = self.sample_response(codex_used=100)
+        response["rateLimitsByLimitId"]["base_model_inference"] = {
+            "limitId": "base_model_inference", "normalModelSlug": "gpt-5.6-luna",
+            "primary": {"usedPercent": 30, "windowDurationMins": 10080,
+                        "resetsAt": int(time.time()) + 3600},
+        }
+        status = module.normalize_rate_limit_response(response)
+        self.assertFalse(status["codex_available"])
+        self.assertEqual(status["remaining_percent"], 0)
+        self.assertTrue(status["reserve"]["available"])
+        self.assertEqual(status["reserve"]["remaining_percent"], 70)
+        self.assertEqual(status["reserve"]["model"], "gpt-5.6-luna")
+        self.assertNotIn("reserve", module.normalize_rate_limit_response(self.sample_response()))
+
     def test_warning_matches_request_language_and_includes_reset(self) -> None:
         module = load_module()
         status = module.normalize_rate_limit_response(self.sample_response())
@@ -118,6 +134,17 @@ class CodexQuotaStatusTests(unittest.TestCase):
         self.assertIn("仅剩 3%", chinese)
         self.assertIn("HKT", chinese)
         self.assertIn("3% remaining", english)
+
+    def test_incomplete_reserve_does_not_discard_regular_quota(self) -> None:
+        module = load_module()
+        response = self.sample_response(codex_used=10)
+        response["rateLimitsByLimitId"]["base_model_inference"] = {
+            "normalModelSlug": "gpt-5.6-luna",
+        }
+        status = module.normalize_rate_limit_response(response)
+        self.assertTrue(status["codex_available"])
+        self.assertEqual(status["remaining_percent"], 90)
+        self.assertNotIn("reserve", status)
 
     def test_large_purchased_balance_suppresses_weekly_warning(self) -> None:
         module = load_module()

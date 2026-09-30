@@ -681,6 +681,31 @@ class WeChatCodexSessionTests(unittest.TestCase):
         self.assertEqual(run.call_count, 2)
         mark_unavailable.assert_called_once_with("lab")
 
+    def test_reserve_fallback_retains_thread_and_records_actual_model(self) -> None:
+        sessions = load_sessions()
+        choices = [
+            {"account": "company", "model": "gpt-6-astra", "quota_pool": "regular"},
+            {"account": "company", "model": "gpt-5.6-luna", "quota_pool": "reserve"},
+        ]
+        with (
+            mock.patch.object(sessions, "codex_account_attempts", return_value=iter(choices)),
+            mock.patch.object(sessions, "mark_codex_account_runtime_unavailable"),
+            mock.patch.object(sessions, "run_codex_with_startup_retries", side_effect=[
+                {"ok": False, "returncode": 1, "error": "usage limit", "tool_activity": False},
+                {"ok": True, "message": "done", "returncode": 0, "thread_id": "same-thread"},
+            ]) as run,
+        ):
+            result = sessions.run_codex_across_accounts(
+                "continue", thread_id="same-thread", model="gpt-6-astra",
+                reasoning_effort="low", sandbox="read-only", timeout_seconds=30,
+                workdir=ROOT, web_search=False,
+            )
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["model"], "gpt-5.6-luna")
+        self.assertEqual(result["quota_pool"], "reserve")
+        self.assertEqual([c.kwargs["thread_id"] for c in run.call_args_list], ["same-thread"] * 2)
+        self.assertEqual(run.call_args_list[1].kwargs["model"], "gpt-5.6-luna")
+
     def test_account_pool_does_not_switch_after_tool_activity(self) -> None:
         sessions = load_sessions()
         failure = {

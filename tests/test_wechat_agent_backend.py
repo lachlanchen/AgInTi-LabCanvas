@@ -112,12 +112,23 @@ class WeChatAgentBackendTests(unittest.TestCase):
                 sandbox="read-only",
                 timeout_seconds=30,
                 workdir=ROOT,
+                backend_config={"codex": {"reserve_enabled": False}},
             )
 
         self.assertTrue(result["ok"])
         self.assertEqual(calls[0]["model"], "gpt-5.3-codex-spark")
         self.assertEqual(calls[0]["reasoning_effort"], "low")
         self.assertEqual(result["backend_attempts"][0]["model"], "gpt-5.3-codex-spark")
+
+    def test_reserve_policy_does_not_switch_model_at_low_regular_percentage(self) -> None:
+        backend = load_backend()
+        with mock.patch.object(backend, "current_codex_quota_status") as probe:
+            selected = backend.quota_aware_codex_preference(
+                backend="codex", model="gpt-6-astra", reasoning_effort="low",
+                role="route", backend_config={"codex": {"reserve_enabled": True}},
+            )
+        self.assertEqual(selected, ("gpt-6-astra", "low", None))
+        probe.assert_not_called()
 
     def test_low_quota_preference_is_strict_cache_only_and_keeps_five_percent(self) -> None:
         backend = load_backend()
@@ -127,7 +138,7 @@ class WeChatAgentBackendTests(unittest.TestCase):
                 model="gpt-5.6-sol",
                 reasoning_effort="medium",
                 role="worker",
-                backend_config={},
+                backend_config={"codex": {"reserve_enabled": False}},
             )
         self.assertEqual(unchanged, ("gpt-5.6-sol", "medium", None))
         with mock.patch.object(
@@ -140,7 +151,7 @@ class WeChatAgentBackendTests(unittest.TestCase):
                 model="gpt-5.6-sol",
                 reasoning_effort="low",
                 role="fast",
-                backend_config={},
+                backend_config={"codex": {"reserve_enabled": False}},
             )
         self.assertEqual(threshold, ("gpt-5.6-sol", "low", None))
         self.assertFalse(quota.call_args.kwargs["refresh"])
@@ -157,7 +168,7 @@ class WeChatAgentBackendTests(unittest.TestCase):
                 model="gpt-5.6-sol",
                 reasoning_effort="medium",
                 role="worker",
-                backend_config={},
+                backend_config={"codex": {"reserve_enabled": False}},
             )
 
         self.assertEqual(selected[0], "gpt-5.3-codex-spark")

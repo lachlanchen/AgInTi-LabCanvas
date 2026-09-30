@@ -13,6 +13,11 @@ BIORENDER_MCP_URL = "https://mcp.services.biorender.com/mcp"
 MODEL_POLICY_PATH = Path(__file__).resolve().parents[2] / "configs" / "model-policy.json"
 DEFAULT_MODEL_POLICY: dict[str, Any] = {
     "primary_backend": "codex",
+    "codex": {
+        "primary_model": "gpt-6-astra",
+        "reserve_enabled": True,
+        "reserve_model": "gpt-5.6-luna",
+    },
     "aginti": {
         "primary_provider": "deepseek",
         "provider_chain": ["deepseek", "localllm"],
@@ -30,10 +35,10 @@ DEFAULT_MODEL_POLICY: dict[str, Any] = {
         },
         "session_policy": "resume one durable session per conversation and role",
     },
-    "chat": {"model": "gpt-5.6-sol", "reasoning_effort": "low"},
-    "task": {"model": "gpt-5.6-sol", "reasoning_effort": "medium"},
-    "high": {"model": "gpt-5.6-sol", "reasoning_effort": "high"},
-    "xhigh": {"model": "gpt-5.6-sol", "reasoning_effort": "xhigh"},
+    "chat": {"model": "gpt-6-astra", "reasoning_effort": "low"},
+    "task": {"model": "gpt-6-astra", "reasoning_effort": "medium"},
+    "high": {"model": "gpt-6-astra", "reasoning_effort": "high"},
+    "xhigh": {"model": "gpt-6-astra", "reasoning_effort": "xhigh"},
     "fallback": {
         "chat": {"model": "gpt-5.6-sol", "reasoning_effort": "low"},
         "task": {"model": "gpt-5.6-sol", "reasoning_effort": "medium"},
@@ -46,7 +51,7 @@ DEFAULT_BACKEND_SETTINGS: dict[str, Any] = {
     "agent": {
         "enabled": True,
         "backend": "auto",
-        "model": "gpt-5.6-sol",
+        "model": "gpt-6-astra",
         "reasoning_effort": "auto",
         "mode": "execute",
         "dynamic_routing": True,

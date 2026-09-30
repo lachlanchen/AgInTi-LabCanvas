@@ -23,6 +23,7 @@ from .backends import load_backend_settings, load_model_policy, model_policy_for
 from .codex_accounts import (
     agentshell_codex_command,
     codex_account_candidates,
+    codex_account_attempts,
     mark_codex_account_runtime_unavailable,
 )
 
@@ -1262,7 +1263,7 @@ def run_codex_turn(
             registry[key] = {
                 "thread_id": result["thread_id"],
                 "conversation_id": conversation_id,
-                "model": policy.get("model"),
+                "model": result.get("model") or policy.get("model"),
                 "reasoning_effort": policy.get("reasoning_effort"),
                 "created_at": previous.get("created_at") or utc_now(),
                 "last_used_at": utc_now(),
@@ -1322,21 +1323,26 @@ def _run_codex_account_pool(
     accounts = codex_account_candidates()
     attempts: list[dict[str, Any]] = []
     result: dict[str, Any] = {}
-    for account in accounts or [""]:
+    for candidate in codex_account_attempts(accounts, str(policy.get("model") or "")):
+        account = candidate["account"]
         result = _run_codex_process(
             prompt,
             codex_bin=codex_bin,
             thread_id=thread_id,
-            policy=policy,
+            policy={**policy, "model": candidate["model"]},
             task_dir=task_dir,
             root=root,
             pid_callback=pid_callback,
             agentshell_account=account,
         )
         result["agentshell_account"] = account
+        result["model"] = candidate["model"]
+        result["quota_pool"] = candidate["quota_pool"]
         attempts.append(
             {
                 "account": account,
+                "model": candidate["model"],
+                "quota_pool": candidate["quota_pool"],
                 "ok": bool(result.get("ok")),
                 "returncode": result.get("returncode"),
                 "execution_started": bool(result.get("execution_started")),
@@ -1344,7 +1350,10 @@ def _run_codex_account_pool(
             }
         )
         if account and codex_account_quota_rejected(result):
-            mark_codex_account_runtime_unavailable(account)
+            if candidate["quota_pool"] == "reserve":
+                mark_codex_account_runtime_unavailable(account, quota_pool="reserve")
+            else:
+                mark_codex_account_runtime_unavailable(account)
         if result.get("ok") or not codex_account_switch_retryable(result):
             break
     result["account_attempts"] = attempts

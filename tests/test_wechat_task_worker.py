@@ -2746,7 +2746,7 @@ stderr: noisy internal trace
         worker = load_worker()
         policy = worker.choose_worker_policy({"request": "design a PCB and render the CAD in Blender"})
 
-        self.assertEqual(policy["model"], "gpt-5.6-sol")
+        self.assertEqual(policy["model"], "gpt-6-astra")
         self.assertEqual(policy["reasoning_effort"], "high")
         self.assertEqual(policy["sandbox"], "danger-full-access")
         self.assertEqual(policy["timeout_seconds"], 600)
@@ -2769,7 +2769,7 @@ stderr: noisy internal trace
         worker = load_worker()
         policy = worker.choose_worker_policy({"request": "fully implement this WeChat automation, commit and push"})
 
-        self.assertEqual(policy["model"], "gpt-5.6-sol")
+        self.assertEqual(policy["model"], "gpt-6-astra")
         self.assertEqual(policy["reasoning_effort"], "xhigh")
         self.assertEqual(policy["timeout_seconds"], 1200)
 
@@ -4921,7 +4921,7 @@ stderr: noisy internal trace
 
         self.assertIsNotNone(next_policy)
         assert next_policy is not None
-        self.assertEqual(next_policy["model"], "gpt-5.6-sol")
+        self.assertEqual(next_policy["model"], "gpt-6-astra")
         self.assertEqual(next_policy["reasoning_effort"], "xhigh")
         self.assertEqual(next_policy["timeout_seconds"], 1200)
 
@@ -4947,7 +4947,7 @@ stderr: noisy internal trace
             )
         self.assertIsNone(maximum)
 
-    def test_worker_policy_uses_sol_xhigh_for_presentation_routine(self) -> None:
+    def test_worker_policy_uses_shared_xhigh_for_presentation_routine(self) -> None:
         worker = load_worker()
         policy = worker.choose_worker_policy(
             {
@@ -4956,7 +4956,7 @@ stderr: noisy internal trace
             }
         )
 
-        self.assertEqual(policy["model"], "gpt-5.6-sol")
+        self.assertEqual(policy["model"], "gpt-6-astra")
         self.assertEqual(policy["reasoning_effort"], "xhigh")
         self.assertEqual(policy["timeout_seconds"], 1200)
 
@@ -10568,7 +10568,7 @@ stderr: noisy internal trace
         policy = worker.choose_worker_policy(task)
         next_policy = worker.escalated_policy(policy, "已提交 Xiaoyunque 生成，正在生成中。", task=task)
 
-        self.assertEqual(policy["model"], "gpt-5.6-sol")
+        self.assertEqual(policy["model"], "gpt-6-astra")
         self.assertEqual(policy["reasoning_effort"], "medium")
         self.assertIsNone(next_policy)
 
