@@ -118,6 +118,22 @@ class WeChatSessionPreservationTests(unittest.TestCase):
             self.assertFalse(result['human_action_required'])
             self.assertEqual(result['reason'], 'wechat_client_unresponsive')
 
+    def test_absent_client_is_not_confused_with_bridge_or_login_failure(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            config = root / 'config.json'
+            config.write_text(json.dumps({'delivery_verified': True}))
+            (root / 'status.json').write_text(json.dumps({'ok': True,
+                'client_ready': False, 'client_state': 'client_unavailable', 'last_sync_epoch': 1000}))
+            for now, reason in ((1001, 'wechat_client_not_running'), (1061, 'native_transport_not_ready')):
+                with mock.patch.object(selection, 'CONFIG', config), \
+                     mock.patch.object(selection, 'STORE', root / 'store.db'), \
+                     mock.patch.object(selection.time, 'time', return_value=now):
+                    result = selection.tiny11_health()
+                self.assertFalse(result['available'])
+                self.assertFalse(result['human_action_required'])
+                self.assertEqual(result['reason'], reason)
+
     def test_only_fresh_native_login_evidence_requests_human_action(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

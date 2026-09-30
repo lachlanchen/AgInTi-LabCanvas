@@ -4392,6 +4392,33 @@ stderr: noisy internal trace
         capture.assert_called_once()
         self.assertTrue(result["native_capture_fallback"]["visual_identity_verified"])
 
+    def test_shipinhao_resolver_failure_is_not_reported_as_native_player_failure(self) -> None:
+        worker = load_worker()
+        card = (
+            '<finderFeed><objectId>resolver-test</objectId><nickname>Author</nickname>'
+            '<desc>Exact title</desc><mediaList><media>'
+            '<url>https://wxapp.tc.qq.com/video?id=expired</url></media></mediaList></finderFeed>'
+        )
+        task = {'id': 'resolver-failure', 'chat': 'Shares',
+                'source': {'local_id': 77, 'kind': 'file/link', 'local_type': 219043332145},
+                'routine': {'id': 'research_summary'},
+                'request': 'Current coalesced request:\nsummarize this video',
+                'context': [{'local_id': 77, 'content': card}]}
+        failure = {'status': 'failed', 'failure_stage': 'share_resolver',
+                   'error_code': 'get feed info: unavailable', 'native_link_copied': True,
+                   'failure_origin': 'download_resolver_not_native_player',
+                   'share_url': 'https://weixin.qq.com/sph/private'}
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(worker, 'run_shipinhao_media_transcriber', return_value={
+                    'status': 'failed', 'failure_stage': 'download', 'read_only': True}), \
+                mock.patch.object(worker, 'run_automatic_shipinhao_gui_capture', return_value=failure), \
+                mock.patch.object(worker, 'discover_verified_shipinhao_capture', return_value=None):
+            result = worker.prepare_shipinhao_media_transcript_preflight(task, Path(tmp))
+        self.assertTrue(result['native_capture_fallback']['native_link_copied'])
+        self.assertNotIn('share_url', result['native_capture_fallback'])
+        self.assertIn('separate download resolver', result['agent_next_action'])
+        self.assertIn('Do not ask the user to resend', result['agent_next_action'])
+
     def test_shipinhao_media_preflight_retries_native_copied_share_link(self) -> None:
         worker = load_worker()
         exact_card = (

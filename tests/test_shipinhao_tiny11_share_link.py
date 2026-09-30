@@ -198,6 +198,80 @@ class NativeChannelsLinkTests(unittest.TestCase):
             native.close_owned_player(bridge, window, (1900, 80, 400, 1200))
         self.assertEqual(bridge.click.call_args_list, [mock.call(1300, 40), mock.call(2000, 55)])
 
+    def test_cleanup_checks_new_window_bounds_after_dock_shrinks(self):
+        bridge = mock.Mock()
+        old_window = SimpleNamespace(x=1000, y=0, width=1280)
+        new_window = SimpleNamespace(x=1000, y=0, width=835)
+        bridge.find_window.return_value = new_window
+        with mock.patch.object(native, 'player_tab_close_point', return_value=(2000, 55)), \
+                mock.patch.object(native, 'player_box', return_value=None) as detect, \
+                mock.patch.object(native.time, 'sleep'):
+            native.close_owned_player(bridge, old_window, (1900, 80, 400, 1200))
+        self.assertIs(detect.call_args.args[1], new_window)
+
+    def test_copied_link_survives_cleanup_failure_but_not_identity_mismatch(self):
+        from contextlib import ExitStack
+        import json
+
+        for mismatch in (False, True):
+            with self.subTest(mismatch=mismatch), tempfile.TemporaryDirectory() as folder, ExitStack() as patches:
+                root = Path(folder)
+                (root / '1234').mkdir()
+                Image.new('RGB', (30, 30)).save(root / '1234/card-cover.jpg')
+                bridge = mock.MagicMock()
+                bridge.tiny11.health.return_value = {'ok': True}
+                window = SimpleNamespace(x=1000, y=0, width=1280, height=1392)
+                bridge.ensure_chat.return_value = window
+                bridge.find_window.return_value = window
+                bridge.history_surface.return_value = (1300, 100, 600, 900)
+                bridge.set_clipboard.side_effect = lambda text: setattr(bridge.get_clipboard, 'return_value', text)
+                profile = {'object_id': '1234', 'title': 'Exact title', 'author': 'Author'}
+                patches.enter_context(mock.patch.object(native, 'DEFAULT_CACHE_ROOT', root))
+                patches.enter_context(mock.patch.object(native, 'extract_shipinhao_media_profile', return_value=profile))
+                patches.enter_context(mock.patch.dict(sys.modules, {'cv2': mock.Mock()}))
+                patches.enter_context(mock.patch.object(native.time, 'sleep'))
+                patches.enter_context(mock.patch.object(native, 'player_box', side_effect=[None] + [(1900, 80, 400, 1200)] * 3))
+                patches.enter_context(mock.patch.object(native, 'card_candidates', return_value=[{'center_x': 80, 'center_y': 80, 'match_confidence': .99}]))
+                patches.enter_context(mock.patch.object(native, 'match_menu', return_value=(1400, 200)))
+                patches.enter_context(mock.patch.object(native, 'verify_player_title', return_value=True))
+                patches.enter_context(mock.patch.object(native, 'wait_copied_link', return_value='https://weixin.qq.com/sph/ABcd123'))
+                patches.enter_context(mock.patch.object(native, 'close_owned_player', side_effect=RuntimeError('native_owned_tab_close_not_confirmed')))
+                verify = patches.enter_context(mock.patch.object(native, 'verify_resolved_card', return_value=profile))
+                if mismatch:
+                    verify.side_effect = ValueError('native_link_resolved_title_mismatch')
+                    with self.assertRaisesRegex(ValueError, 'title_mismatch'):
+                        native.recover('Shares', 'source', root / 'run', bridge=bridge)
+                    self.assertFalse((root / 'run/native-share-link.json').exists())
+                else:
+                    result = native.recover('Shares', 'source', root / 'run', bridge=bridge)
+                    self.assertTrue(result['content_identity_verified'])
+                    self.assertIn('cleanup_warning', result)
+                    self.assertEqual(json.loads((root / 'run/native-share-link.json').read_text()), result)
+                candidate = json.loads((root / 'run/native-share-candidate.json').read_text())
+                self.assertFalse(candidate['content_identity_verified'])
+                self.assertEqual(candidate['status'], 'identity_pending')
+
+    def test_pending_candidate_retries_resolver_without_reopening_client(self):
+        import json
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            profile = {'object_id': '1234', 'title': 'Exact title', 'author': 'Author'}
+            candidate = {**profile, 'source_chat': 'Shares', 'status': 'identity_pending',
+                         'content_identity_verified': False, 'share_url': 'https://weixin.qq.com/sph/ABcd123'}
+            (root / 'native-share-candidate.json').write_text(json.dumps(candidate))
+            bridge = mock.MagicMock()
+            with mock.patch.object(native, 'extract_shipinhao_media_profile', return_value=profile), \
+                    mock.patch.object(native, 'verify_resolved_card', side_effect=RuntimeError('resolver unavailable')):
+                with self.assertRaisesRegex(RuntimeError, 'resolver unavailable'):
+                    native.recover('Shares', 'source', root, bridge=bridge)
+            self.assertFalse((root / 'native-share-link.json').exists())
+            with mock.patch.object(native, 'extract_shipinhao_media_profile', return_value=profile), \
+                    mock.patch.object(native, 'verify_resolved_card', return_value=profile):
+                result = native.recover('Shares', 'source', root, bridge=bridge)
+            self.assertTrue(result['content_identity_verified'])
+            self.assertTrue(result['reused'])
+            bridge.serialized_gui.assert_not_called()
+
     def test_missing_card_identity_never_operates_gui(self):
         bridge = mock.Mock()
         with self.assertRaisesRegex(ValueError, "identity_missing"):

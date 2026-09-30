@@ -13800,6 +13800,14 @@ def prepare_shipinhao_media_transcript_preflight(task: dict[str, Any], artifact_
             result["native_capture_fallback"] = safe_capture
             if result.get("status") in {"transcribed", "cached", "no_audio"}:
                 result.pop("agent_next_action", None)
+            elif safe_capture.get("failure_stage") == "share_resolver" and safe_capture.get("native_link_copied"):
+                result["agent_next_action"] = (
+                    "The exact native card was opened and its share link copied successfully. "
+                    "The separate download resolver could not validate/resolve that link; its error is NOT "
+                    "a message observed in the native WeChat player and does not prove the video is deleted. "
+                    "The candidate link is retained privately for retry. Do not ask the user to resend the "
+                    "card or paste a link, and do not claim the video was watched, downloaded, or silent."
+                )
             elif safe_capture.get("error_code") == "finder_player_unavailable":
                 result["agent_next_action"] = (
                     "The exact same-chat Finder card was identified, but this Linux WeChat client did not open "
@@ -14058,6 +14066,8 @@ def safe_shipinhao_capture_result(result: dict[str, Any]) -> dict[str, Any]:
             "error_code",
             "failure_stage",
             "source_card_found",
+            "native_link_copied",
+            "failure_origin",
             "transport",
         )
         if result.get(key) not in {None, ""}

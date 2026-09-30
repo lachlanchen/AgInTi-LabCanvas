@@ -33,10 +33,12 @@ def tiny11_health():
     ready = bool(state.get('ok') and age < 60 and config.get('delivery_verified')
                  and state.get('client_ready') is True and not unresponsive)
     entry_required = bool(not ready and age < 60 and state.get('client_state') == 'entry_required')
+    client_absent = bool(not ready and age < 60 and state.get('client_state') == 'client_unavailable')
     return {'ok': ready, 'available': ready, 'known': True, 'transport': 'wechat_tiny11',
             'status': 'unlocked' if ready else 'entry_required' if entry_required else 'transport_unavailable',
             'reason': ('native_store_and_delivery_ready' if ready else
                        'wechat_login_required' if entry_required else
+                       'wechat_client_not_running' if client_absent else
                        'wechat_client_unresponsive' if unresponsive else 'native_transport_not_ready'),
             'client_ready': state.get('client_ready') is True and not unresponsive,
             'client_state': state.get('client_state', 'unknown'),

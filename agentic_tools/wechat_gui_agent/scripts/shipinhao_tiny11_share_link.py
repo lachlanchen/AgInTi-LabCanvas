@@ -137,9 +137,14 @@ def close_owned_player(bridge, window, player):
     if point is None:
         raise RuntimeError('native_owned_tab_close_unavailable')
     bridge.click(*point)
-    time.sleep(.3)
-    if player_box(bridge.capture_screen('channels-owned-tab-closed'), window):
-        raise RuntimeError('native_owned_tab_close_not_confirmed')
+    # Closing the dock shrinks the app. Its old bounds include the desktop,
+    # whose dark background can otherwise be mistaken for a remaining player.
+    for _ in range(8):
+        time.sleep(.3)
+        current_window = bridge.find_window()
+        if not player_box(bridge.capture_screen('channels-owned-tab-closed'), current_window):
+            return
+    raise RuntimeError('native_owned_tab_close_not_confirmed')
 
 
 def recover(chat, source_text, output_dir, *, bridge=None, max_scrolls=48):
@@ -153,6 +158,7 @@ def recover(chat, source_text, output_dir, *, bridge=None, max_scrolls=48):
         write_private_json(output_dir / 'stage.json', {
             'stage': name, 'object_id': profile['object_id'],
             'observed_at': datetime.now(timezone.utc).isoformat(), **fields})
+    stage('source_preparation')
     saved = output_dir / 'native-share-link.json'
     if saved.is_file():
         try:
@@ -164,6 +170,30 @@ def recover(chat, source_text, output_dir, *, bridge=None, max_scrolls=48):
                 return {**prior, 'reused': True}
         except (ValueError, OSError, KeyError, RuntimeError):
             pass
+    candidate_path = output_dir / 'native-share-candidate.json'
+    if candidate_path.is_file():
+        try:
+            candidate = json.loads(candidate_path.read_text())
+        except (OSError, ValueError):
+            candidate = {}
+        if (candidate.get('source_chat') == chat and candidate.get('object_id') == profile['object_id']
+                and candidate.get('title') == profile['title']
+                and candidate.get('author') == profile.get('author', '') and candidate.get('share_url')):
+            stage('verify_resolved_identity', reused_candidate=True)
+            # A provider outage is not a reason to reopen the client or ask for
+            # another card. This candidate is still unusable until verified.
+            try:
+                resolved = verify_resolved_card(profile, candidate['share_url'])
+            except ValueError:
+                pass  # A mismatched candidate must be reacquired, never trusted.
+            else:
+                result = {**candidate, 'status': 'share_link_recovered',
+                          'content_identity_verified': True, 'reused': True,
+                          'identity_method': 'exact_card_cover_and_resolved_title_author'}
+                write_private_json(output_dir / 'resolved-profile.json', resolved)
+                write_private_json(saved, result)
+                stage('share_link_recovered', reused_candidate=True)
+                return result
     cover = DEFAULT_CACHE_ROOT / safe_component(profile['object_id']) / 'card-cover.jpg'
     if not cover.is_file():
         cover.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -183,6 +213,7 @@ def recover(chat, source_text, output_dir, *, bridge=None, max_scrolls=48):
     player = None
     opened = False
     menu_open = False
+    cleanup_error = None
     with b.serialized_gui():
         try:
             w = b.ensure_chat(chat)
@@ -286,8 +317,9 @@ def recover(chat, source_text, output_dir, *, bridge=None, max_scrolls=48):
                       'cover_sha256': hashlib.sha256(cover.read_bytes()).hexdigest(),
                       'cover_match_confidence': found['match_confidence'],
                       'observed_at': datetime.now(timezone.utc).isoformat()}
+            write_private_json(candidate_path, {**result, 'status': 'identity_pending',
+                                               'content_identity_verified': False})
         finally:
-            failed = sys.exc_info()[0] is not None
             try:
                 if opened and not player:
                     w = b.find_window()
@@ -299,14 +331,16 @@ def recover(chat, source_text, output_dir, *, bridge=None, max_scrolls=48):
                 elif menu_open:
                     b.dismiss_transient_overlays(b.find_window())
             except Exception as exc:
-                write_private_json(output_dir / 'cleanup-error.json', {
-                    'error_type': type(exc).__name__, 'error_code': str(exc)[:250]})
-                if not failed:
-                    raise
+                cleanup_error = {'error_type': type(exc).__name__, 'error_code': str(exc)[:250]}
+                write_private_json(output_dir / 'cleanup-error.json', cleanup_error)
+                # Cleanup is separate from source recovery. Never mask the
+                # original error or discard a copied link before identity checks.
     stage('verify_resolved_identity')
     resolved = verify_resolved_card(profile, url)
     result['content_identity_verified'] = True
     result['identity_method'] = 'exact_card_cover_and_resolved_title_author'
+    if cleanup_error:
+        result['cleanup_warning'] = cleanup_error
     write_private_json(output_dir / 'resolved-profile.json', resolved)
     write_private_json(output_dir / 'native-share-link.json', result)
     stage('share_link_recovered')
@@ -322,8 +356,17 @@ def main():
     try:
         result = recover(args.chat, args.source_text_file.read_text(), args.output_dir)
     except Exception as exc:
-        result = {'status': 'failed', 'transport': 'wechat_tiny11', 'failure_stage': 'share_link',
+        try:
+            stage = json.loads((args.output_dir / 'stage.json').read_text()).get('stage')
+        except (OSError, ValueError):
+            stage = None
+        resolver_failed = stage == 'verify_resolved_identity'
+        result = {'status': 'failed', 'transport': 'wechat_tiny11',
+                  'failure_stage': 'share_resolver' if resolver_failed else 'share_link',
                   'error_code': str(exc)[:250], 'error_type': type(exc).__name__}
+        if resolver_failed:
+            result['native_link_copied'] = True
+            result['failure_origin'] = 'download_resolver_not_native_player'
     print(json.dumps(result, ensure_ascii=False))
     return 0 if result['status'] == 'share_link_recovered' else 2
 
