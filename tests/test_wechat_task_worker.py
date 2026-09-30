@@ -681,11 +681,6 @@ class WeChatTaskWorkerTests(unittest.TestCase):
             ) as repair_agent,
             mock.patch.object(
                 worker,
-                "completion_repair_result_usable",
-                return_value=False,
-            ),
-            mock.patch.object(
-                worker,
                 "recover_completed_research_artifacts",
                 return_value=recovered,
             ) as recover,
@@ -1345,6 +1340,111 @@ This hypothesis still needs validation.
             stored["worker_error"]["type"],
             "transient_backend_unavailable",
         )
+
+    def test_process_one_delivers_verified_repair_after_exhausted_backend(self) -> None:
+        worker = load_worker()
+        answer = "Here is the requested explanation, with the missing details covered."
+        raw = json.dumps({"message": answer, "files": [], "confirmation": ""})
+        audits = []
+
+        def audit(task, _result):
+            expected = worker.completion_expected_item_ids(task)
+            complete = bool(audits)
+            audits.append(complete)
+            return {
+                "status": "checked",
+                "coverage_complete": complete,
+                "expected_item_ids": expected,
+                "covered_item_ids": expected if complete else [],
+                "missing": [] if complete else [
+                    {"item_id": expected[0], "kind": "reply", "requirement": "Explain."}
+                ],
+                "repair_recommended": not complete,
+                "complexity": "low",
+            }
+
+        def fail(task):
+            task["worker_result_exhausted"] = True
+            return "Worker failed via codex: request timed out"
+
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            worker.write_tasks(queue, [{
+                "id": "recovered-backend",
+                "chat": "Research",
+                "request": "Explain the subject in detail.",
+                "status": "pending",
+                "artifact_dir": tmp,
+                "source": {"local_id": 42, "message_table": "messages"},
+                "route_decision": {"route_kind": "other_worker"},
+            }])
+            with (
+                mock.patch.object(worker, "run_worker_codex", side_effect=fail),
+                mock.patch.object(worker, "run_completion_audit", side_effect=audit),
+                mock.patch.object(worker, "run_worker_agent_session", return_value=raw),
+                mock.patch.object(worker, "record_event"),
+                mock.patch.object(worker, "send_result_with_retries", return_value=[]) as sender,
+            ):
+                worker.process_one(queue, "Research", send=True, log_idle=False)
+            stored = worker.find_task(queue, "recovered-backend")
+
+        self.assertEqual(stored["status"], "done")
+        self.assertEqual(sender.call_count, 1)
+        self.assertEqual(sender.call_args.args[0]["message"], answer)
+        self.assertNotIn("private_failure", stored["result"])
+        self.assertNotIn("worker_error", stored)
+        self.assertFalse(stored["worker_result_exhausted"])
+        self.assertTrue(stored["worker_failure_recovery"]["previous_exhausted"])
+        self.assertTrue(stored["completion_audit"]["repair_succeeded"])
+        self.assertFalse(stored.get("terminal_failure_feedback"))
+
+    def test_completion_repair_keeps_failure_when_recovery_is_not_verified(self) -> None:
+        worker = load_worker()
+        failure = worker.parse_worker_result("Worker failed via codex: request timed out")
+        for scenario in ("failed_correction", "unchecked_audit", "missing_artifact"):
+            with self.subTest(scenario=scenario):
+                task = {
+                    "id": "unrecovered",
+                    "chat": "Research",
+                    "request": "Explain the subject.",
+                    "worker_result_exhausted": True,
+                }
+                missing = [{"item_id": "task:unrecovered", "kind": "reply", "requirement": "Explain."}]
+                first = {
+                    "status": "checked", "coverage_complete": False,
+                    "expected_item_ids": ["task:unrecovered"], "covered_item_ids": [],
+                    "missing": missing, "repair_recommended": True,
+                }
+                second = {
+                    **first, "repair_recommended": False,
+                    "status": "unavailable" if scenario == "unchecked_audit" else "checked",
+                    "missing": [] if scenario == "unchecked_audit" else [
+                        {"item_id": "task:unrecovered", "kind": "artifact", "requirement": "Attach file."}
+                    ],
+                }
+                raw = failure["raw"] if scenario == "failed_correction" else json.dumps({
+                    "message": "An explanation, still requiring verification.", "files": [],
+                })
+                with (
+                    mock.patch.object(worker, "run_completion_audit", side_effect=[first, second]),
+                    mock.patch.object(worker, "run_worker_agent_session", return_value=raw),
+                ):
+                    result = worker.audit_and_repair_worker_completion(task, failure)
+                self.assertTrue(task["worker_result_exhausted"])
+                self.assertFalse(task["completion_audit"]["repair_succeeded"])
+                self.assertNotIn("worker_failure_recovery", task)
+                if scenario == "failed_correction":
+                    self.assertEqual(result["private_failure"], failure["private_failure"])
+
+    def test_completion_repair_rejects_current_private_failure_with_text(self) -> None:
+        worker = load_worker()
+        correction = {
+            "message": "A superficially useful answer.", "files": [],
+            "private_failure": {"kind": "unverified_research_claims"},
+        }
+        self.assertFalse(worker.completion_repair_result_usable(correction))
+        merged = worker.merge_completion_results({"message": "old"}, correction)
+        self.assertEqual(merged["private_failure"], correction["private_failure"])
 
     def test_process_one_sends_one_safe_terminal_feedback_for_interactive_failure(self) -> None:
         worker = load_worker()
@@ -7210,6 +7310,8 @@ stderr: noisy internal trace
                             "raw": raw,
                             "contract_guard": "blocked_public_publish_claim_for_generate_video",
                         },
+                        "worker_result_exhausted": True,
+                        "worker_error": {"type": "WorkerAttemptsExhausted"},
                     }
                 ],
             )
@@ -7256,6 +7358,8 @@ stderr: noisy internal trace
             "sent",
         )
         self.assertFalse(first["stored_contract_repair"]["model_invoked"])
+        self.assertFalse(first["worker_result_exhausted"])
+        self.assertNotIn("worker_error", first)
         self.assertFalse(
             first["stored_contract_repair"]["external_task_action_invoked"]
         )

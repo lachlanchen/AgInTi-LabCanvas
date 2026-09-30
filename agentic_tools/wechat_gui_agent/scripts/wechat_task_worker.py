@@ -912,7 +912,7 @@ def repair_stored_result_contract(
                 and not message_only_research_evidence_issues(task, repaired)
             ),
         )
-        if not worker_result_has_delivery_content(repaired):
+        if not completion_repair_result_usable(repaired):
             raise SystemExit(f"Task {task_id} raw result has no repairable delivery content")
         if (
             (
@@ -977,7 +977,7 @@ def repair_stored_result_contract(
                 ]
             ),
         }
-        task.pop("worker_error", None)
+        clear_superseded_worker_failure(task, stage="stored_result_contract_repair")
         task.pop("send_suppressed_reason", None)
         task.pop("send_suppressed_at", None)
         tasks[task_index] = task
@@ -11742,7 +11742,13 @@ def audit_and_repair_worker_completion(
             final = recovered_audit
             repaired = repaired or recovered_ok
     repair_attempted = pre_recovery_attempted or correction_attempted
-    repair_succeeded = bool(repair_attempted and not final.get("missing"))
+    repair_succeeded = bool(
+        repair_attempted
+        and repaired
+        and final.get("coverage_complete")
+        and not final.get("missing")
+        and completion_repair_result_usable(combined)
+    )
     coverage = completion_message_coverage(
         task,
         final,
@@ -11758,6 +11764,8 @@ def audit_and_repair_worker_completion(
     task["message_coverage"] = coverage
     if coverage["unresolved_item_ids"]:
         combined = disclose_unresolved_completion(combined, coverage)
+    elif repair_succeeded:
+        clear_superseded_worker_failure(task, stage="completion_audit_repair")
     return combined
 
 
@@ -11943,12 +11951,25 @@ def completion_repair_policy(
 
 
 def completion_repair_result_usable(result: dict[str, Any]) -> bool:
-    if result_is_no_reply(result):
+    if result_is_no_reply(result) or result.get("private_failure"):
         return False
     message = str(result.get("message") or "").strip()
     if worker_result_is_explicit_failure(message):
         return False
     return worker_result_has_delivery_content(result)
+
+
+def clear_superseded_worker_failure(task: dict[str, Any], *, stage: str) -> None:
+    """Retain attempt evidence without letting a failed attempt veto its repair."""
+    if task.get("worker_result_exhausted") or task.get("worker_error"):
+        task["worker_failure_recovery"] = {
+            "stage": stage,
+            "at": datetime.now().isoformat(timespec="seconds"),
+            "previous_exhausted": bool(task.get("worker_result_exhausted")),
+            "previous_worker_error": task.get("worker_error"),
+        }
+    task["worker_result_exhausted"] = False
+    task.pop("worker_error", None)
 
 
 def merge_completion_results(
@@ -11979,6 +12000,10 @@ def merge_completion_results(
     merged["data"] = {**original_data, **correction_data}
     merged["raw"] = str(correction.get("raw") or original.get("raw") or "")
     merged["no_reply"] = False
+    # Failure belongs to the result that produced it, not to the whole task.
+    merged.pop("private_failure", None)
+    if correction.get("private_failure"):
+        merged["private_failure"] = correction["private_failure"]
     if correction.get("skipped_files"):
         merged["skipped_files"] = correction["skipped_files"]
     return merged
