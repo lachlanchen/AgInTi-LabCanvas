@@ -1,6 +1,8 @@
 import json
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -981,6 +983,52 @@ class WorkspaceAgentTests(unittest.TestCase):
         self.assertEqual(command.count("resume"), 1)
         self.assertNotIn("stale", command)
         self.assertEqual(command[command.index("--provider") + 1], "localllm")
+
+    def test_aginti_new_and_resumed_turns_disable_wrapper_delegation(self):
+        for previous_id in ("", "saved-session"):
+            with self.subTest(previous_id=previous_id):
+                command = _aginti_machine_command(
+                    ["aginti", "--allow-wrappers", "--no-wrappers"],
+                    previous_id=previous_id,
+                    new_session_id="new-session",
+                    provider="deepseek",
+                )
+                self.assertEqual(command.count("--no-wrappers"), 1)
+                self.assertNotIn("--allow-wrappers", command)
+
+    def test_concurrent_aginti_chats_keep_both_session_registry_entries(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            storage = root / "output" / "webapp"
+            barrier = threading.Barrier(2)
+
+            def fake_process(command, **_kwargs):
+                session_id = command[command.index("--session-id") + 1]
+                barrier.wait(timeout=5)
+                return {
+                    "ok": True, "returncode": 0,
+                    "message": json.dumps({"ok": True, "sessionId": session_id, "result": "done"}),
+                }
+
+            def run_chat(chat):
+                return run_aginti_turn(
+                    "Summarize this chat only", policy={}, conversation_id=chat,
+                    task_dir=storage / chat, storage_dir=storage, root=root,
+                    pid_callback=None,
+                )
+
+            with (
+                patch("agenticapp.workspace_agent.aginti_supports_stdin_run", return_value=True),
+                patch("agenticapp.workspace_agent._communicate_process", side_effect=fake_process),
+                ThreadPoolExecutor(max_workers=2) as pool,
+            ):
+                results = list(pool.map(run_chat, ("chat-a", "chat-b")))
+            registry = json.loads(
+                (storage / "agent" / "sessions" / "aginti-sessions.json").read_text()
+            )
+            self.assertEqual(set(registry), {"chat-a", "chat-b"})
+            self.assertEqual(len({entry["session_id"] for entry in registry.values()}), 2)
+            self.assertTrue(all(result["ok"] for result in results))
 
     def test_aginti_legacy_fallback_uses_private_prompt_file(self):
         with tempfile.TemporaryDirectory() as tmp:

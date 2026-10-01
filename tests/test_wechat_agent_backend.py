@@ -992,6 +992,7 @@ class WeChatAgentBackendTests(unittest.TestCase):
         self.assertNotIn("--allow-file-tools", command)
         self.assertNotIn("--allow-auxiliary-tools", command)
         self.assertNotIn("--allow-wrappers", command)
+        self.assertEqual(command.count("--no-wrappers"), 1)
         self.assertIn("--provider", command)
         self.assertIn("deepseek", command)
 
@@ -1129,6 +1130,111 @@ class WeChatAgentBackendTests(unittest.TestCase):
             record = next(iter(registry.values()))
             self.assertEqual(record["thread_id"], "web-agent-reused")
             self.assertEqual(record["turn_count"], 2)
+
+    def test_aginti_resumed_turn_cannot_reenable_wrappers(self) -> None:
+        backend = load_backend()
+        command = backend.aginti_command(
+            model="aginti", role="worker", sandbox="danger-full-access",
+            session_id="saved-session", provider="deepseek",
+            backend_config={
+                "command": ["aginti", "--allow-wrappers"],
+                "args": ["--no-wrappers", "--allow-wrappers"],
+            },
+        )
+        self.assertEqual(command[1:3], ["resume", "saved-session"])
+        self.assertEqual(command.count("--no-wrappers"), 1)
+        self.assertNotIn("--allow-wrappers", command)
+
+    def test_aginti_timeout_preserves_saved_work_and_resumes_next_turn(self) -> None:
+        backend = load_backend()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            registry_dir = root / "registry"
+            source = root / "input.txt"
+            source.write_text("keep this input unchanged")
+
+            def fake_process(command, **_kwargs):
+                if command[1] == "run":
+                    session_id = command[command.index("--session-id") + 1]
+                    state_dir = root / "states" / session_id
+                    state_dir.mkdir(parents=True)
+                    (state_dir / "state.json").write_text(json.dumps({"sessionId": session_id}))
+                    pointer = root / ".aginti-sessions" / session_id / "session.json"
+                    pointer.parent.mkdir(parents=True)
+                    pointer.write_text(json.dumps({
+                        "sessionId": session_id, "commandCwd": str(root),
+                        "sessionDir": str(state_dir),
+                    }))
+                    (root / "partial-report.txt").write_text("already created")
+                    raise subprocess.TimeoutExpired(command, 30)
+                return subprocess.CompletedProcess(command, 0, stdout=json.dumps({
+                    "ok": True, "sessionId": command[2], "result": "CHAT: finished",
+                }), stderr="")
+
+            with (
+                mock.patch.object(backend, "AGINTI_SESSION_DIR", registry_dir),
+                mock.patch.object(backend, "AGINTI_REGISTRY", registry_dir / "sessions.json"),
+                mock.patch.object(backend, "resolve_command_executable", return_value="aginti"),
+                mock.patch.object(backend, "run_process_group", side_effect=fake_process) as run,
+            ):
+                args = dict(
+                    chat_name="test-chat", role="worker", model="aginti",
+                    reasoning_effort="low", sandbox="danger-full-access",
+                    timeout_seconds=30, workdir=root,
+                    backend_config={"provider_chain": ["deepseek"]},
+                )
+                failed = backend.run_aginti_session("Create the report", **args)
+                registry = json.loads((registry_dir / "sessions.json").read_text())
+                resumed = backend.run_aginti_session("Continue without repeating completed work", **args)
+
+            self.assertFalse(failed["ok"])
+            self.assertEqual(failed["returncode"], 124)
+            record = next(iter(registry.values()))
+            self.assertEqual(record["thread_id"], failed["thread_id"])
+            self.assertEqual(record["last_status"], "failed")
+            self.assertEqual(run.call_args_list[1].args[0][1:3], ["resume", failed["thread_id"]])
+            self.assertTrue(resumed["ok"])
+            self.assertEqual(source.read_text(), "keep this input unchanged")
+            self.assertEqual((root / "partial-report.txt").read_text(), "already created")
+
+    def test_failed_aginti_without_durable_state_is_not_registered(self) -> None:
+        backend = load_backend()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            registry_dir = root / "registry"
+            with (
+                mock.patch.object(backend, "AGINTI_SESSION_DIR", registry_dir),
+                mock.patch.object(backend, "AGINTI_REGISTRY", registry_dir / "sessions.json"),
+                mock.patch.object(backend, "resolve_command_executable", return_value="aginti"),
+                mock.patch.object(backend, "run_process_group", side_effect=subprocess.TimeoutExpired("aginti", 1)),
+            ):
+                result = backend.run_aginti_session(
+                    "Create a report", chat_name="test-chat", role="worker", model="aginti",
+                    reasoning_effort="low", sandbox="danger-full-access",
+                    timeout_seconds=1, workdir=root,
+                    backend_config={"provider_chain": ["deepseek"]},
+                )
+            self.assertFalse(result["ok"])
+            self.assertFalse((registry_dir / "sessions.json").exists())
+
+    def test_aginti_durable_pointer_rejects_wrong_workspace_and_missing_state(self) -> None:
+        backend = load_backend()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            session_id = "test-session"
+            state_dir = root / "states" / session_id
+            state_dir.mkdir(parents=True)
+            pointer = root / ".aginti-sessions" / session_id / "session.json"
+            pointer.parent.mkdir(parents=True)
+            payload = {"sessionId": session_id, "commandCwd": str(root), "sessionDir": str(state_dir)}
+            pointer.write_text(json.dumps(payload))
+            self.assertFalse(backend.aginti_durable_session_exists(session_id, workdir=root))
+            (state_dir / "state.json").write_text(json.dumps({"sessionId": session_id}))
+            self.assertTrue(backend.aginti_durable_session_exists(session_id, workdir=root))
+            payload["commandCwd"] = str(root / "other-chat")
+            pointer.write_text(json.dumps(payload))
+            self.assertFalse(backend.aginti_durable_session_exists(session_id, workdir=root))
+            self.assertFalse(backend.aginti_durable_session_exists("../other-chat", workdir=root))
 
     def test_backend_specific_prompt_replaces_oversized_codex_prompt_for_aginti(self) -> None:
         backend = load_backend()

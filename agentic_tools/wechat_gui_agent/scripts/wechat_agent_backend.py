@@ -106,6 +106,7 @@ AGINTI_MANAGED_FLAG_ARGS = {
     "--parallel-scouts",
     "--no-parallel-scouts",
     "--allow-wrappers",
+    "--no-wrappers",
     "--docker-sandbox",
     "--scs",
     "--enable-scs",
@@ -1006,7 +1007,11 @@ def run_aginti_session(
                     result["context_session_recovered"] = True
             if context_session_rotated:
                 result["context_session_rotated"] = True
-            if reuse and result.get("ok") and result.get("thread_id"):
+            durable_session = aginti_durable_session_exists(
+                str(result.get("thread_id") or ""),
+                workdir=aginti_workdir_from_config(backend_config, workdir),
+            )
+            if reuse and result.get("thread_id") and (result.get("ok") or durable_session):
                 persist_aginti_session(
                     key,
                     chat_name=chat_name,
@@ -1197,11 +1202,11 @@ def run_aginti_provider_once(
         return {
             "ok": False,
             "message": "AgInTi failed: timed out before completing the turn.",
-            "thread_id": "",
+            "thread_id": session_id or new_session_id,
             "returncode": 124,
             "stderr_tail": "timeout",
             "stdout_tail": "",
-            "resumed": False,
+            "resumed": bool(session_id),
             "fallback_started": False,
             "backend": "aginti",
         }
@@ -1581,6 +1586,7 @@ def aginti_command(
                 "--stdin",
                 "--json",
                 "--no-auto-update",
+                "--no-wrappers",
                 "--routing",
                 "manual",
                 "--no-scs",
@@ -2028,6 +2034,7 @@ Original prompt:
 {evidence_scope}Treat the exact current request as the authoritative continuation of this chat. Use relevant same-chat session memory and repository instructions, but never continue an unrelated task, reuse an unrelated artifact, or substitute a nearby workspace request.
 Preserve the requested output shape exactly. If the original prompt asks for JSON, return only valid JSON. If it asks for CHAT:/ACK:/TASK:, follow that protocol.
 Use the same source-isolation, safety, artifact-return, and chat-purpose rules in the original prompt. Do not invent unavailable files or claim browser/platform work completed without evidence.
+Reuse the established repository routines and their verified artifacts before writing replacements. You are the fallback agent: do not delegate back to Codex, Claude, or another unavailable agent wrapper.
 Do not expose plans, SCS/validator contracts, runtime metadata, model/sandbox details, tool logs, stack traces, or internal diagnostics. For ordinary chat, answer directly without tools or files. For research, use traceable sources and distinguish evidence from inference. For artifact work, create only the requested current-task artifacts.
 If you cannot complete the task from the available local tools/context, return one concise task-specific limitation and exact safe next action.
 
@@ -2185,6 +2192,29 @@ def read_aginti_session_id(key: str) -> str:
             return str(entry.get("thread_id") or "")
 
 
+def aginti_durable_session_exists(session_id: str, *, workdir: Path) -> bool:
+    """Keep interrupted work only when an exact workspace pointer has saved state."""
+    if not re.fullmatch(r"[0-9A-Za-z_-]+", session_id):
+        return False
+    pointer = workdir / ".aginti-sessions" / session_id / "session.json"
+    payload = load_json_dict(pointer)
+    if payload.get("sessionId") != session_id:
+        return False
+    cwd = str(payload.get("commandCwd") or payload.get("projectRoot") or "")
+    directory = str(payload.get("sessionDir") or "")
+    if not cwd or not directory:
+        return False
+    try:
+        if Path(cwd).resolve() != workdir.resolve():
+            return False
+        state_dir = Path(directory).resolve()
+        if state_dir.name != session_id:
+            return False
+        return load_json_dict(state_dir / "state.json").get("sessionId") == session_id
+    except (OSError, ValueError):
+        return False
+
+
 def persist_aginti_session(
     key: str,
     *,
@@ -2214,6 +2244,8 @@ def persist_aginti_session(
                 "created_at": previous.get("created_at") or datetime.now().isoformat(timespec="seconds"),
                 "last_used_at": datetime.now().isoformat(timespec="seconds"),
                 "turn_count": int(previous.get("turn_count") or 0) + 1,
+                "last_status": "completed" if result.get("ok") else "failed",
+                "last_reason": str(result.get("reason") or result.get("stderr_tail") or "")[:200],
             }
             write_private_json_atomic(AGINTI_REGISTRY, registry)
 

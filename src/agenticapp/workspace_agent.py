@@ -1530,17 +1530,20 @@ def run_aginti_turn(
         session_id = str(result.get("thread_id") or "")
         durable_session = _aginti_session_pointer_exists(workspace, session_id)
         if session_id and (result.get("ok") or durable_session):
-            registry[key] = {
-                "session_id": session_id,
-                "conversation_id": conversation_id,
-                "provider": result.get("provider"),
-                "created_at": previous.get("created_at") or utc_now(),
-                "last_used_at": utc_now(),
-                "turn_count": int(previous.get("turn_count") or 0) + 1,
-                "last_status": "completed" if result.get("ok") else "failed",
-                "last_reason": str(result.get("reason") or ""),
-            }
-            _write_json_atomic(registry_path, registry)
+            # Other conversations may finish while this turn is running.
+            with file_lock(sessions_dir / "aginti-registry.lock"):
+                registry = _load_json_dict(registry_path)
+                registry[key] = {
+                    "session_id": session_id,
+                    "conversation_id": conversation_id,
+                    "provider": result.get("provider"),
+                    "created_at": previous.get("created_at") or utc_now(),
+                    "last_used_at": utc_now(),
+                    "turn_count": int(previous.get("turn_count") or 0) + 1,
+                    "last_status": "completed" if result.get("ok") else "failed",
+                    "last_reason": str(result.get("reason") or ""),
+                }
+                _write_json_atomic(registry_path, registry)
         result["invocation"] = "machine-resume" if previous_id else "machine-run"
         return result
 
@@ -1655,6 +1658,7 @@ def _aginti_machine_command(
             "--stdin",
             "--json",
             "--no-auto-update",
+            "--no-wrappers",
             "--provider",
             provider,
             "--routing",
@@ -1732,7 +1736,7 @@ def _sanitize_aginti_base_command(base_command: list[str]) -> list[str]:
     clean: list[str] = []
     index = 0
     value_args = {"--session-id", "--provider"}
-    flag_args = {"--stdin", "--json", "--no-auto-update"}
+    flag_args = {"--stdin", "--json", "--no-auto-update", "--allow-wrappers", "--no-wrappers"}
     while index < len(base_command):
         value = str(base_command[index])
         normalized = value.casefold()
