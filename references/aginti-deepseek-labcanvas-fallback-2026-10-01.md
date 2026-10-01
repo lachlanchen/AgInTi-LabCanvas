@@ -127,6 +127,14 @@ turns finished. No browser/client/profile restart was needed, and WeCom remains
 paused. Local installation and npm registry publication are separate checks;
 never infer registry availability from a working installed copy.
 
+Trusted publication run
+[36822456579](https://github.com/lazyingart/AgInTiFlow/actions/runs/36822456579)
+passed and reported `+ @lazyingart/agintiflow@0.20.339-integration.0` at
+06:09:28 UTC. At 06:13 UTC, the public version metadata and tarball still
+returned HTTP 404 from this workstation, so public install availability remains
+unverified. The local checked installation works; do not repeat an accepted
+publication or claim registry availability until a fresh lookup succeeds.
+
 These tests establish a useful simple-task fallback, not equivalence to Codex or
 proof of every CAD, research, media, publication, or live delivery workflow.
 Provider transport, model quality, missing tools, login, and permission failures
