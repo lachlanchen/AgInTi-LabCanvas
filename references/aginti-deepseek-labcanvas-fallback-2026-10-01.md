@@ -35,7 +35,11 @@ preserve their own output, session, routine, and safety contracts.
    genuine source/artifact quality repairs.
 5. AgInTi recognizes postfix read-only input declarations. Its source-free
    claim gate also distinguishes “do not invent revenue forecasts” from actually
-   making a forecast; a real claim later in the same sentence remains gated.
+   making a forecast, and pending verification from completed validation; a real
+   claim later in the same sentence remains gated. Coordinated preservation
+   instructions exclude every named input from output requirements, while an
+   output requested after that clause remains required. This prevents needless
+   input-copy deliverables as well as input edits.
 
 The first three fixes belong to LabCanvas. The latter two are general AgInTi
 behavior, not WeChat-specific task branches. Docker/host permissions were not
@@ -82,10 +86,37 @@ Initial live runs exposed false completion gates, unwanted temporary input edits
 and stalled no-op repair loops. Their reports are retained under ignored
 `output/aginti-fallback-acceptance/`; failed evidence was not deleted.
 
-After correction, all four candidate cases passed in
-`20261001T051917Z-26bac660/report.json`: about 2.4 s for grouped chat, 3.8 s for
-memo generation/compilation, 31.4 s for both routine turns, and 34.3 s for both
-Studio turns. The PDF preview was also visually inspected.
+The first passing candidate was not treated as sufficient: an installed-package
+repeat exposed a stale repair phase. A further run also exposed an unnecessary
+input-copy requirement. Both were fixed generally and given regression tests.
+
+All four final candidate cases passed in
+`20261001T055237Z-508d7993/report.json`, including the no-input-copy assertion;
+the PDF preview was visually inspected. The checked package was then installed
+as `0.20.339-integration.0` and repeated through the actual installed CLI in
+`20261001T055451Z-5bcffd22/report.json`. All four passed again:
+
+| Case | Installed-package time |
+| --- | ---: |
+| Grouped chat and quote | 3.50 s |
+| Memo generation and local PDF compilation | 5.22 s |
+| Existing routine, validation, and resumed edit | 43.68 s |
+| Studio source summary and resumed update | 22.45 s |
+
+Saved provider/tool history proves DeepSeek execution without external agent
+wrappers. Input hashes, attempted writes, actual artifact parsing, and session
+IDs are checked independently. The installed runtime source hashes match the
+tested package. These timings are observations, not latency guarantees.
+
+Final local regression checks passed: LabCanvas `npm test` ran 2,264 tests
+(16 skipped), and AgInTi's full `npm test` passed. Core changes are committed
+in `e513190` and `ca213e3`; the LabCanvas adapter changes are in `b273751`.
+LabCanvas's adapter CI run `36821105616` also passed.
+
+The adapter changes were reloaded into WeChat workers only after active Codex
+turns finished. No browser/client/profile restart was needed, and WeCom remains
+paused. Local installation and npm registry publication are separate checks;
+never infer registry availability from a working installed copy.
 
 These tests establish a useful simple-task fallback, not equivalence to Codex or
 proof of every CAD, research, media, publication, or live delivery workflow.

@@ -242,6 +242,8 @@ Return one strict JSON object with message and files. No rendering or publicatio
         require("法语" in summary and ("底" in summary or "最下" in summary), "Studio lost subtitle context")
         require(first["thread_id"] == second["thread_id"], "Studio did not resume")
         require([digest(note), digest(risk)] == hashes, "Studio edited read-only inputs")
+        require(not (task_dir / note.name).exists() and not (task_dir / risk.name).exists(),
+                "Studio fabricated unnecessary input-copy deliverables")
         evidence = session_evidence(workspace, second["thread_id"])
         require(not any(Path(path).name in {note.name, risk.name} for path in evidence["file_writes"]),
                 "Studio temporarily edited an input before restoring it")
