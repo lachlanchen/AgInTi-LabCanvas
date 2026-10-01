@@ -22,7 +22,7 @@ sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "agentic_tools/wechat_gui_agent/scripts"))
 
 from agenticapp.scene_spec import built_in_scene_template, load_scene_spec
-from agenticapp.workspace_agent import build_agent_prompt, run_aginti_turn
+from agenticapp.workspace_agent import build_agent_prompt, run_backend_turn
 
 
 def require(condition: bool, message: str) -> None:
@@ -224,16 +224,24 @@ Return one strict JSON object with message and files. No rendering or publicatio
         )
 
         def turn(prompt):
-            policy = {"timeout_seconds": args.timeout, "mode": "execute", "backend": "aginti",
+            policy = {"timeout_seconds": args.timeout, "mode": "execute", "backend": "codex",
+                      "fallback_to_aginti": True,
                       "model": "provider-default", "reasoning_effort": "low"}
             packet = build_agent_prompt(prompt, root=workspace, task_dir=task_dir, policy=policy,
                                         conversation_id="acceptance-studio")
-            result = run_aginti_turn(
-                packet, policy=policy,
-                conversation_id="acceptance-studio", task_dir=task_dir,
-                storage_dir=storage, root=workspace, pid_callback=None,
-            )
+            with patch("agenticapp.workspace_agent.run_codex_turn", return_value={
+                "ok": False, "backend": "codex", "returncode": 1,
+                "stderr_tail": "You have hit your usage limit.",
+            }) as unavailable:
+                result = run_backend_turn(
+                    packet, policy=policy,
+                    conversation_id="acceptance-studio", task_dir=task_dir,
+                    storage_dir=storage, root=workspace, pid_callback=None,
+                )
+            require(unavailable.call_count == 1, "Codex-first routing was bypassed")
             require(result.get("ok"), str(result.get("reason") or result.get("stderr_tail")))
+            require([item.get("backend") for item in result.get("attempts", [])] == ["codex", "aginti"],
+                    "Automatic unavailable-Codex fallback was not used")
             return result
 
         first = turn("Read notes.txt and risks.txt. Create artifacts/fallback-summary.md with a short summary and next safe step. Leave both inputs untouched. Do not publish or pay.")
@@ -247,7 +255,7 @@ Return one strict JSON object with message and files. No rendering or publicatio
         evidence = session_evidence(workspace, second["thread_id"])
         require(not any(Path(path).name in {note.name, risk.name} for path in evidence["file_writes"]),
                 "Studio temporarily edited an input before restoring it")
-        return {"summary": summary, **evidence}
+        return {"summary": summary, "automatic_fallback": True, **evidence}
 
     with ExitStack() as stack:
         stack.enter_context(patch.object(backend, "AGINTI_SESSION_DIR", output / "chat-registry"))

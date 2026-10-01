@@ -74,6 +74,9 @@ The four cases check:
   resolution. Do not rewrite the CLI or run Blender.
 - Studio: summarize named inputs, resume after a resolved login blocker, retain
   language/publication/payment constraints, and preserve source files.
+  The first-choice Codex call is mocked as quota-unavailable; the real host
+  fallback invokes DeepSeek for both turns. This tests automatic failover
+  without spending Codex quota or altering an account's real quota state.
 
 Evidence checks use saved provider/tool history, real artifact parsing, original
 input hashes, and attempted file writes, not just the agent's success sentence.
@@ -107,6 +110,12 @@ Saved provider/tool history proves DeepSeek execution without external agent
 wrappers. Input hashes, attempted writes, actual artifact parsing, and session
 IDs are checked independently. The installed runtime source hashes match the
 tested package. These timings are observations, not latency guarantees.
+
+The additional installed run `20261001T060142Z-58a17c91/report.json` passed all
+four cases with the Studio turns going through automatic Codex-to-AgInTi
+failover. Only Codex's unavailability is mocked; the fallback model, tool calls,
+artifact validation, and resumed session are real. The report records
+`automatic_fallback=true` and checks both backend attempts.
 
 Final local regression checks passed: LabCanvas `npm test` ran 2,264 tests
 (16 skipped), and AgInTi's full `npm test` passed. Core changes are committed
