@@ -74,6 +74,24 @@ class Tiny11WeComTransportTests(unittest.TestCase):
                 client.environment()
             run.assert_not_called()
 
+    def test_environment_incidents_are_bounded_and_opt_in(self):
+        client = transport.Tiny11Transport(config())
+        with mock.patch.object(client, 'powershell', return_value='{"ok":true}') as run, \
+                mock.patch.object(client, 'stage_file', return_value=r'C:\LabCanvas\audit.ps1'):
+            client.environment(incident_days=30)
+            self.assertTrue(run.call_args.args[0].endswith("-Mode 'Status' -IncidentDays 30"))
+        for invalid in (-1, 31, '30; Restart-Computer', True, 1.5):
+            with self.subTest(value=invalid), mock.patch.object(client, 'stage_file') as stage:
+                with self.assertRaisesRegex(transport.Tiny11TransportError, 'incident days'):
+                    client.environment(incident_days=invalid)
+                stage.assert_not_called()
+        source = transport.GUEST_HELPER.with_name('Test-ChatClientEnvironment.ps1').read_text()
+        self.assertIn('if ($IncidentDays -gt 0)', source)
+        self.assertIn('-MaxEvents 200', source)
+        self.assertIn('available=$false', source)
+        self.assertIn('limit_reached=($events.Count -eq 200)', source)
+        self.assertNotIn('$event.Message', source)
+
     def test_environment_script_limits_repairs_and_preserves_security(self):
         source = transport.GUEST_HELPER.with_name('Test-ChatClientEnvironment.ps1').read_text()
         self.assertIn("[string]$Mode = 'Status'", source)
@@ -204,6 +222,20 @@ class Tiny11WeComTransportTests(unittest.TestCase):
             self.assertFalse(state['chat_ready'])
             self.assertEqual(state['closed_loop_state'], 'system_dialog_blocked')
             self.assertFalse(bridge.health()['ok'])
+
+    def test_paused_status_keeps_current_native_state_separate_from_old_security(self):
+        bridge = object.__new__(gui.Tiny11WeComGuiBridge)
+        bridge.tiny11 = mock.Mock()
+        bridge.tiny11.health.return_value = {
+            'ok': True, 'client_state': 'ready', 'input_ready': True, 'input_blocker': ''}
+        with mock.patch.object(base.WeComGuiBridge, 'status', return_value={
+            'ok': True, 'enabled': False, 'chat_ready': False, 'closed_loop_state': 'paused',
+            'auth_blocker': 'device_environment_abnormal', 'capabilities': {}}):
+            state = bridge.status()
+        self.assertEqual(state['closed_loop_state'], 'paused')
+        self.assertEqual(state['tiny11_helper']['client_state'], 'ready')
+        self.assertEqual(state['auth_blocker'], 'device_environment_abnormal')
+        bridge.tiny11.invoke.assert_not_called()
 
     def test_system_dialog_poll_pauses_without_input_and_recovers_normally(self):
         bridge = object.__new__(gui.Tiny11WeComGuiBridge)

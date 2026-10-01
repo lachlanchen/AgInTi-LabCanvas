@@ -4709,6 +4709,46 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertEqual(blocked["closed_loop_state"], "security_verification_required")
         self.assertFalse(blocked["chat_ready"])
 
+    def test_gui_paused_status_does_not_mislabel_old_security_as_a_live_alert(self) -> None:
+        module = load_gui_bridge()
+        with tempfile.TemporaryDirectory() as temporary:
+            state_db = Path(temporary) / "state.sqlite"
+            module.init_state_db(state_db)
+            bridge = object.__new__(module.WeComGuiBridge)
+            bridge.state_db = state_db
+            bridge.config = {"enabled": False}
+            bridge.display = ":92"
+            bridge.target_groups = ["LabAgent"]
+            bridge.find_window = mock.Mock(return_value=module.Window("1", 0, 0, 1000, 650))
+            module.set_runtime(state_db, "chat_ready:LabAgent", "1")
+            module.set_runtime(state_db, "auth_blocker", "device_environment_abnormal")
+            module.set_runtime(state_db, "auth_blocker_observed_at", "2026-09-18T06:11:54")
+
+            paused = bridge.status()
+            self.assertEqual(paused["closed_loop_state"], "paused")
+            self.assertFalse(paused["chat_ready"])
+            self.assertEqual(paused["auth_blocker_evidence"], "cached_observation")
+            self.assertEqual(paused["auth_blocker_observed_at"], "2026-09-18T06:11:54")
+            self.assertEqual(module.get_runtime(state_db, "auth_blocker"), "device_environment_abnormal")
+            with self.assertRaisesRegex(RuntimeError, "WECOM_GUI_AUTH_REQUIRED"):
+                bridge.require_gui_input_allowed()
+
+    def test_gui_observed_security_blocker_records_time_without_replay_refresh(self) -> None:
+        module = load_gui_bridge()
+        with tempfile.TemporaryDirectory() as temporary:
+            state_db = Path(temporary) / "state.sqlite"
+            module.init_state_db(state_db)
+            bridge = object.__new__(module.WeComGuiBridge)
+            bridge.state_db = state_db
+            bridge.config = {}
+            bridge.target_groups = ["LabAgent"]
+            with mock.patch.object(module, "now_iso", return_value="2026-10-01T09:30:00"):
+                bridge.activate_auth_quarantine("security_verification_required")
+            bridge.quarantine_from_exception(
+                "WECOM_GUI_AUTH_REQUIRED: security_verification_required (cooldown 100s)"
+            )
+            self.assertEqual(module.get_runtime(state_db, "auth_blocker_observed_at"), "2026-10-01T09:30:00")
+
     def test_gui_failed_chat_uses_bounded_backoff_without_blocking_other_chat(self) -> None:
         module = load_gui_bridge()
         bridge = object.__new__(module.WeComGuiBridge)

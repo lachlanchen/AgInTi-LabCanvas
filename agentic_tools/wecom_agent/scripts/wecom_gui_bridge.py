@@ -300,7 +300,8 @@ class WeComGuiBridge:
                 conn.execute(
                     "SELECT key, value FROM runtime WHERE key IN "
                     "('auth_blocker', 'auth_quarantine_until_epoch', 'chat_ready', "
-                    "'last_error', 'last_poll_at', 'last_ready_at', 'last_active_poll_epoch')"
+                    "'auth_blocker_observed_at', 'last_error', 'last_poll_at', "
+                    "'last_ready_at', 'last_active_poll_epoch')"
                 ).fetchall()
             )
         last_error = str(runtime.get("last_error") or "")[:500]
@@ -311,14 +312,18 @@ class WeComGuiBridge:
             if get_runtime(self.state_db, f"chat_ready:{safe_slug(chat)}") == "1"
         ]
         security_cooldown = seconds_until_epoch(runtime.get("auth_quarantine_until_epoch"))
+        enabled = bool(self.config.get("enabled", True))
         chat_ready = (
-            bool(window)
+            enabled
+            and bool(window)
             and len(ready_chats) == len(self.target_groups)
             and not auth_blocker
             and security_cooldown <= 0
         )
         closed_loop_state = (
-            "ready"
+            "paused"
+            if not enabled
+            else "ready"
             if chat_ready
             else "degraded_ready"
             if window and ready_chats and not auth_blocker and security_cooldown <= 0
@@ -331,7 +336,7 @@ class WeComGuiBridge:
         return {
             "ok": True,
             "api_version": 1,
-            "enabled": bool(self.config.get("enabled", True)),
+            "enabled": enabled,
             "client_visible": bool(window),
             "chat_ready": chat_ready,
             "ready_chat_count": len(ready_chats),
@@ -340,6 +345,9 @@ class WeComGuiBridge:
             "target_groups": self.target_groups,
             "seeded_groups": [{"chat": row[0], "updated_at": row[1]} for row in rows],
             "auth_blocker": auth_blocker,
+            # Status reads durable state; it does not freshly inspect an alert.
+            "auth_blocker_observed_at": str(runtime.get("auth_blocker_observed_at") or ""),
+            "auth_blocker_evidence": "cached_observation" if auth_blocker else "none",
             "security_cooldown_remaining_seconds": security_cooldown,
             "last_error": last_error,
             "last_poll_at": str(runtime.get("last_poll_at") or ""),
@@ -507,6 +515,7 @@ class WeComGuiBridge:
         if current_until <= now:
             current_until = now + duration
         set_runtime(self.state_db, "auth_blocker", str(blocker)[:200])
+        set_runtime(self.state_db, "auth_blocker_observed_at", now_iso())
         set_runtime(self.state_db, "auth_quarantine_until_epoch", str(current_until))
         set_runtime(self.state_db, "auth_recovery_candidate_since_epoch", "")
         set_runtime(self.state_db, "reconnect_ready_since_epoch", "")

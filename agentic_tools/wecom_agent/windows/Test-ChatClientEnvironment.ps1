@@ -1,5 +1,6 @@
 param(
     [ValidateSet('Status', 'RepairTime', 'RestoreTime')][string]$Mode = 'Status',
+    [ValidateRange(0, 30)][int]$IncidentDays = 0,
     [string]$ExpectedComputer = 'LABCANVAS-PC',
     [string]$BackupPath = 'C:\LabCanvas\EnvironmentHealth\time-before.json'
 )
@@ -46,6 +47,62 @@ function Read-Clients {
     }
 }
 
+function Read-IncidentEvents([string]$Log, [int[]]$Ids, [DateTime]$Since) {
+    try {
+        $events = @(Get-WinEvent -FilterHashtable @{LogName=$Log; Id=$Ids; StartTime=$Since} -MaxEvents 200 -ErrorAction Stop)
+    } catch {
+        if ($_.FullyQualifiedErrorId -notmatch '^NoMatchingEventsFound') {
+            return [ordered]@{ available=$false; events=@(); limit=200; limit_reached=$false }
+        }
+        $events = @()
+    }
+    $records = @(foreach ($event in $events) {
+        [xml]$xml = $event.ToXml()
+        $data = @{}
+        foreach ($entry in $xml.Event.EventData.Data) { $data[[string]$entry.Name] = [string]$entry.'#text' }
+        $application = [string]$data.AppName
+        if ($Log -eq 'Application' -and $application -notin @('Weixin.exe','WeChat.exe','WXWork.exe','WeChatAppEx.exe','dwm.exe')) { continue }
+        # Never serialize raw event messages, file paths, or PowerShell objects.
+        $record = [ordered]@{
+            time=$event.TimeCreated.ToString('o'); id=$event.Id
+            application=$application; version=[string]$data.AppVersion
+            module=[string]$data.ModuleName; exception=[string]$data.ExceptionCode
+        }
+        if ($Log -eq 'System' -and $event.Id -eq 2004) {
+            $record.largest_committers = @($xml.SelectNodes('//*[local-name()="ProcessInfo"]/*') | Select-Object -First 3 | ForEach-Object {
+                [ordered]@{
+                    name=[IO.Path]::GetFileName($_.SelectSingleNode('./*[local-name()="Name"]').InnerText)
+                    committed_bytes=[long]$_.SelectSingleNode('./*[local-name()="CommitCharge"]').InnerText
+                }
+            })
+        }
+        $record
+    })
+    [ordered]@{ available=$true; events=$records; limit=200; limit_reached=($events.Count -eq 200) }
+}
+
+function Read-Incidents {
+    $since = (Get-Date).AddDays(-$IncidentDays)
+    $memory = Get-CimInstance Win32_PerfFormattedData_PerfOS_Memory
+    $processes = @(Get-CimInstance Win32_Process)
+    [ordered]@{
+        since=$since.ToString('o'); observed_at=[DateTimeOffset]::Now.ToString('o')
+        application=Read-IncidentEvents 'Application' @(1000,1002) $since
+        resource_exhaustion=Read-IncidentEvents 'System' @(2004) $since
+        defender_detections=Read-IncidentEvents 'Microsoft-Windows-Windows Defender/Operational' @(1116,1117) $since
+        memory=[ordered]@{ available_mb=$memory.AvailableMBytes; committed_bytes=$memory.CommittedBytes; commit_limit_bytes=$memory.CommitLimit }
+        helpers=@(Get-Process powershell -ErrorAction SilentlyContinue | ForEach-Object {
+            [ordered]@{ process_id=$_.Id; session_id=$_.SessionId; private_bytes=$_.PrivateMemorySize64 }
+        })
+        web_runtime_count=@($processes | Where-Object { $_.Name -eq 'WeChatAppEx.exe' }).Count
+        bridge_tasks=@(Get-ScheduledTask | Where-Object { $_.TaskName -like 'LabCanvas-*' } | ForEach-Object {
+            $info = Get-ScheduledTaskInfo $_
+            [ordered]@{ name=$_.TaskName; state=[string]$_.State; run_level=[string]$_.Principal.RunLevel; last_run=$info.LastRunTime.ToString('o'); last_result=$info.LastTaskResult }
+        })
+        vendor_security_trigger='not_exposed_by_windows_event_logs'
+    }
+}
+
 $clientsBefore = @(Read-Clients)
 $before = Read-TimeService
 $resyncExitCode = $null
@@ -82,6 +139,8 @@ if ($Mode -eq 'RepairTime') {
 
 $issues = New-Object 'System.Collections.Generic.List[string]'
 $console = [LabCanvasEnvironment.Console]::WTSGetActiveConsoleSessionId()
+$incidents = $null
+if ($IncidentDays -gt 0) { $incidents = Read-Incidents }
 $clientsAfter = @(Read-Clients)
 $defender = $null
 try {
@@ -123,4 +182,5 @@ if (-not $clientsUnchanged) { $issues.Add('client_processes_changed_during_audit
     time_backup = $(if ($Mode -ne 'Status') { $BackupPath } else { $null })
     applications_restarted = $false; reboot_performed = $false
     security_prompts_suppressed = $false
+    incidents = $incidents
 } | ConvertTo-Json -Depth 8 -Compress

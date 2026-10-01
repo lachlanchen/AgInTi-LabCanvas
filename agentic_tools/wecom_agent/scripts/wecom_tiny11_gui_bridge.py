@@ -40,6 +40,8 @@ class Tiny11WeComGuiBridge(WeComGuiBridge):
                 "transport": "wecom_tiny11_gui",
                 "tiny11_helper": {
                     "ok": bool(helper.get("ok")),
+                    "client_state": str(helper.get("client_state") or "unknown"),
+                    "input_ready": bool(helper.get("input_ready")),
                     "session_id": helper.get("session_id"),
                     "wecom_running": bool(helper.get("wecom_running")),
                     "input_blocker": str(helper.get("input_blocker") or ""),
@@ -49,7 +51,7 @@ class Tiny11WeComGuiBridge(WeComGuiBridge):
         payload["capabilities"]["artifact_transport"] = "verified_sftp"
         if payload.get("chat_ready"):
             payload["last_error"] = ""
-        if helper.get("input_blocker"):
+        if helper.get("input_blocker") and payload.get("enabled", True):
             payload.update(chat_ready=False, closed_loop_state="system_dialog_blocked",
                            last_error="LABCANVAS_GUI_SYSTEM_DIALOG_BLOCKED: " + str(helper["input_blocker"]))
         return payload
