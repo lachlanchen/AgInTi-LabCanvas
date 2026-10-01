@@ -139,6 +139,68 @@ The private audit is
 mode `0600`. Its client identity check remained unchanged across collection.
 No Android actions or group test messages were performed.
 
+## Follow-Up Fix: Native Input Readiness
+
+The remaining transport review found two concrete defects, independent of
+Tencent's undocumented security decision:
+
+- The helper checked personal WeChat responsiveness but treated any visible
+  WeCom window as ready. Python health and exact-chat navigation could also
+  rely on window geometry or a cached ready flag despite a native hang.
+- A skipped native poll could pass into outbox recovery using previously
+  cached chat readiness. The recovery path also needed an explicit disabled
+  configuration gate.
+
+Both clients now use the bounded `WM_NULL` responsiveness probe before input.
+The helper additionally reads `IsWindowEnabled` before changing focus, typing,
+clicking, or restoring a hidden window. A disabled main window returns
+`app_modal_dialog`; it is not re-enabled and no dialog button is guessed.
+Windows documents this input-state distinction in
+[IsWindowEnabled](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-iswindowenabled)
+and [EnableWindow](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-enablewindow).
+The helper only observes that state; it never calls `EnableWindow`.
+
+Python status now distinguishes native unresponsiveness, modal blocking,
+login-required state, missing clients, and unavailable input. A cached ready
+flag cannot override those observations. Personal WeChat checks readiness
+before accepting even an already-open exact chat. Blocked polls set
+`input_ready=false`; outbox recovery resets its readiness-stabilization timer
+without draining pending deliveries. An explicitly disabled relay does not
+recover its outbox. Once native input is usable again, ordinary exact-chat
+verification and existing recovery rules apply; this fix neither clears the
+security quarantine nor authorizes duplicate sends.
+
+Visible `activate` requests reuse the guarded focus path instead of toggling
+WeChat with its hotkey. Ordinary native file delivery remains the existing
+verified SFTP plus clipboard route, which does not open a file dialog. An
+unrelated modal dialog deliberately suspends chat input until the user closes
+it. A verification overlay that leaves the main window enabled still requires
+the existing visible-alert detector; disabled-window detection is not a
+universal classifier for every Tencent notice.
+
+Validation and deployment:
+
+- `npm test`: 2,255 tests passed, 16 skipped.
+- `tests/windows/Test-ChatInputGuards.ps1` executed in Windows: eight synthetic
+  cases covering both clients, healthy input, hangs, disabled windows, and OS
+  dialogs. Zero focus injections; no real client state was changed by the test.
+- The helper scripts were checksum-verified and deployed while holding the
+  existing shared GUI lock. Only the helper scheduled task was restarted.
+- Both Tencent client process identities were unchanged after deployment and
+  both native health probes reported ready. WeCom automation stayed disabled.
+- No Android control, group messages, client restart, profile change, VM reboot,
+  security-prompt approval, or vendor binary patch was performed.
+
+Private deployment evidence (mode `0600`):
+`agentic_tools/wecom_agent/.private/environment-health/2026-10-01-input-guard-deployment.json`.
+The helper retains a timestamped script-only rollback copy in its existing
+Windows installation directory. The project-owned console remains
+`http://127.0.0.1:6143/`; no additional GUI stack was created.
+
+This fixes avoidable automation input and false readiness. It does not prove
+which remote-operation signal Tencent uses or guarantee that its account
+verification notices will never recur.
+
 ## Operational Decision
 
 Keep the current login/profile, single native console, cached-key database

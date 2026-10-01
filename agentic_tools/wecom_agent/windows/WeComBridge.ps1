@@ -123,6 +123,16 @@ function Get-SystemInputBlocker {
     return ''
 }
 
+function Get-AppInputBlocker {
+    param($Window)
+    # A disabled main window can belong to a modal verification dialog. Do not
+    # focus behind it or guess its buttons; native file delivery uses clipboard.
+    if ($null -ne $Window -and -not [LabCanvasDesktop.NativeWindows]::IsWindowEnabled($Window.Handle)) {
+        return 'app_modal_dialog'
+    }
+    return ''
+}
+
 function Focus-WeCom {
     $window = Get-WeComWindow
     if ($null -eq $window) {
@@ -131,9 +141,8 @@ function Focus-WeCom {
         }
         throw "No visible WeCom window was found in the interactive session."
     }
-    if ($script:TargetApp -eq 'wechat' -and
-        -not [LabCanvasDesktop.NativeWindows]::IsResponding($window.Handle)) {
-        throw 'WECHAT_CLIENT_UNRESPONSIVE: native window message loop is not responding.'
+    if (-not [LabCanvasDesktop.NativeWindows]::IsResponding($window.Handle)) {
+        throw ($script:TargetApp.ToUpperInvariant() + '_CLIENT_UNRESPONSIVE: native window message loop is not responding.')
     }
     # Preserve the current size. Exact-chat OCR and the following click must
     # use the same frame; resizing between those two steps invalidates the
@@ -145,6 +154,8 @@ function Focus-WeCom {
     # steal focus or send input behind it, and never approve it automatically.
     $inputBlocker = Get-SystemInputBlocker $foregroundProcessId
     if ($inputBlocker) { throw ('LABCANVAS_GUI_SYSTEM_DIALOG_BLOCKED: ' + $inputBlocker) }
+    $inputBlocker = Get-AppInputBlocker $window
+    if ($inputBlocker) { throw ('LABCANVAS_GUI_APP_MODAL_BLOCKED: ' + $inputBlocker) }
     # GA_ROOTOWNER keeps WeCom's file picker or owned dialog active. Neither
     # polling nor an already-focused input sequence needs another focus event.
     if ($foreground -ne $window.Handle -and
@@ -216,12 +227,25 @@ function Invoke-BridgeAction {
             if ((Get-PersonalWeChatState $main) -eq 'entry_required') {
                 throw 'WECHAT_ENTRY_REQUIRED: personal WeChat is at its login screen.'
             }
-            if ($kind -eq 'restore' -and $null -ne $main) { return $true }
+            if ($null -ne $main) {
+                if ($kind -eq 'activate') { Focus-WeCom | Out-Null }
+                return $true
+            }
             $ids = @(Get-Process -Name @('Weixin','WeChat') -ErrorAction SilentlyContinue | ForEach-Object Id)
             $candidates = @([LabCanvasDesktop.NativeWindows]::Snapshot([int[]]$ids, $true) |
                 Where-Object { $_.Name -in @('Weixin','WeChat','微信') -and
                     $_.ClassName -eq 'Qt51514QWindowIcon' -and $_.Width -ge 700 -and $_.Height -ge 500 })
             if ($candidates.Count -ne 1) { throw 'No unique existing WeChat main window to restore.' }
+            $foreground = [LabCanvasWin32]::GetForegroundWindow()
+            [uint32]$foregroundProcessId = 0
+            [LabCanvasWin32]::GetWindowThreadProcessId($foreground, [ref]$foregroundProcessId) | Out-Null
+            $inputBlocker = Get-SystemInputBlocker $foregroundProcessId
+            if ($inputBlocker) { throw ('LABCANVAS_GUI_SYSTEM_DIALOG_BLOCKED: ' + $inputBlocker) }
+            $inputBlocker = Get-AppInputBlocker $candidates[0]
+            if ($inputBlocker) { throw ('LABCANVAS_GUI_APP_MODAL_BLOCKED: ' + $inputBlocker) }
+            if (-not [LabCanvasDesktop.NativeWindows]::IsResponding($candidates[0].Handle)) {
+                throw 'WECHAT_CLIENT_UNRESPONSIVE: refusing to restore a hung window.'
+            }
             # Ask the running client to restore through its normal hotkey.
             # ShowWindow leaves a tray-hidden Qt surface white; starting the
             # executable can open another account login instead of restoring it.
@@ -398,9 +422,12 @@ try {
                 [uint32]$foregroundProcessId = 0
                 [LabCanvasWin32]::GetWindowThreadProcessId($foreground, [ref]$foregroundProcessId) | Out-Null
                 $inputBlocker = Get-SystemInputBlocker $foregroundProcessId
+                if (-not $inputBlocker) { $inputBlocker = Get-AppInputBlocker $window }
                 $clientState = if ($script:TargetApp -eq 'wechat') {
                     Get-PersonalWeChatState $window
-                } elseif ($null -ne $window) { 'ready' } else { 'window_unavailable' }
+                } elseif ($null -eq $window) { 'window_unavailable'
+                } elseif (-not [LabCanvasDesktop.NativeWindows]::IsResponding($window.Handle)) { 'unresponsive'
+                } else { 'ready' }
                 $payload = [ordered]@{
                     ok = ($null -ne $window)
                     helper_ready = $true

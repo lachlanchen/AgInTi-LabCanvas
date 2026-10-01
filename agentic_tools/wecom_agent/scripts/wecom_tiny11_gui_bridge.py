@@ -25,6 +25,25 @@ from wecom_gui_bridge import (
 from wecom_tiny11_transport import Tiny11Transport, Tiny11TransportError
 
 
+def native_input_problem(helper: dict[str, Any]) -> tuple[str, str] | None:
+    blocker = str(helper.get("input_blocker") or "")
+    if blocker:
+        if blocker == "app_modal_dialog":
+            return "app_modal_blocked", "LABCANVAS_GUI_APP_MODAL_BLOCKED: " + blocker
+        return "system_dialog_blocked", "LABCANVAS_GUI_SYSTEM_DIALOG_BLOCKED: " + blocker
+    state = str(helper.get("client_state") or "")
+    app = "WECHAT" if helper.get("app") == "wechat" else "WECOM"
+    if state == "unresponsive":
+        return "client_unresponsive", app + "_CLIENT_UNRESPONSIVE: native message loop is not responding"
+    if state == "entry_required":
+        return "login_required", app + "_ENTRY_REQUIRED: native client is at its login screen"
+    if not helper.get("ok") or state in {"window_hidden", "window_unavailable", "client_unavailable"}:
+        return "client_unavailable", app + "_WINDOW_UNAVAILABLE: native chat window is unavailable"
+    if helper.get("input_ready") is False:
+        return "client_input_unavailable", "LABCANVAS_GUI_INPUT_NOT_READY: native input is unavailable"
+    return None
+
+
 class Tiny11WeComGuiBridge(WeComGuiBridge):
     def __init__(self, config: dict[str, Any], *, config_path: Path = DEFAULT_CONFIG) -> None:
         super().__init__(config, config_path=config_path)
@@ -51,16 +70,17 @@ class Tiny11WeComGuiBridge(WeComGuiBridge):
         payload["capabilities"]["artifact_transport"] = "verified_sftp"
         if payload.get("chat_ready"):
             payload["last_error"] = ""
-        if helper.get("input_blocker") and payload.get("enabled", True):
-            payload.update(chat_ready=False, closed_loop_state="system_dialog_blocked",
-                           last_error="LABCANVAS_GUI_SYSTEM_DIALOG_BLOCKED: " + str(helper["input_blocker"]))
+        problem = native_input_problem(helper)
+        if problem and payload.get("enabled", True):
+            payload.update(chat_ready=False, closed_loop_state=problem[0], last_error=problem[1])
         return payload
 
     def health(self) -> dict[str, Any]:
         status = self.status()
         return {
             "ok": (bool(status.get("ok")) and bool(status.get("tiny11_helper", {}).get("ok"))
-                   and not status.get("tiny11_helper", {}).get("input_blocker")),
+                   and bool(status.get("tiny11_helper", {}).get("input_ready"))
+                   and native_input_problem(status.get("tiny11_helper", {})) is None),
             "api_version": status.get("api_version"),
             "client_visible": status.get("client_visible"),
             "chat_ready": status.get("chat_ready"),
@@ -71,15 +91,26 @@ class Tiny11WeComGuiBridge(WeComGuiBridge):
         }
 
     def poll_cycle(self) -> dict[str, Any]:
+        if not getattr(self, "config", {}).get("enabled", True):
+            return super().poll_cycle()
         helper = self.tiny11.health()
-        if helper.get("input_blocker"):
+        problem = native_input_problem(helper)
+        if problem:
             set_runtime(self.state_db, "last_poll_at", now_iso())
-            return {"ok": True, "processed": 0, "skipped": "system_dialog_blocked",
-                    "input_blocker": str(helper["input_blocker"])}
+            return {"ok": True, "processed": 0, "skipped": problem[0], "reason": problem[1],
+                    "input_ready": False}
         return super().poll_cycle()
+
+    def require_native_input_ready(self) -> None:
+        problem = native_input_problem(self.tiny11.health())
+        if problem:
+            raise RuntimeError(problem[1])
 
     def find_window(self, *, required: bool = True) -> Window | None:
         helper = self.tiny11.health()
+        problem = native_input_problem(helper) if required else None
+        if problem:
+            raise RuntimeError(problem[1])
         raw = helper.get("window") if isinstance(helper, dict) else None
         if isinstance(raw, dict):
             try:

@@ -133,6 +133,8 @@ class Tiny11WeChatBridge(Tiny11WeComGuiBridge):
             window = super().find_window(required=False)
         if window is None and required:
             raise RuntimeError('WECHAT_WINDOW_UNAVAILABLE: no existing personal WeChat main window')
+        if window is not None and required:
+            self.require_native_input_ready()
         return window
 
     @staticmethod

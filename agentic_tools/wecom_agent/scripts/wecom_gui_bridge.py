@@ -1635,11 +1635,13 @@ class WeComGuiBridge:
         poll_result: dict[str, Any],
     ) -> dict[str, Any]:
         """Recover deferred work only after exact-chat GUI readiness is proven."""
+        if not getattr(self, "config", {}).get("enabled", True):
+            return {"ok": True, "recovered_count": 0, "skipped": "disabled"}
         if not client_visible:
             self._client_was_visible = False
             set_runtime(self.state_db, "reconnect_ready_since_epoch", "")
             return {"ok": True, "recovered_count": 0, "skipped": "client_not_visible"}
-        if not poll_result.get("ok"):
+        if not poll_result.get("ok") or poll_result.get("input_ready") is False:
             # A full-size cached/post-login window is not enough. Keep the
             # reconnect edge armed until every allowlisted chat can be opened
             # and title-verified by the normal poll path.

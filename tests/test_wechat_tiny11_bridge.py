@@ -515,6 +515,7 @@ class Tiny11WeChatTests(unittest.TestCase):
     def test_hidden_window_restores_once_without_restarting_client(self):
         client = object.__new__(bridge.Tiny11WeChatBridge)
         client.tiny11 = mock.Mock()
+        client.tiny11.health.return_value = {'ok': True, 'input_ready': True, 'client_state': 'ready'}
         window = SimpleNamespace(width=1276, height=1392)
         with mock.patch.object(bridge.Tiny11WeComGuiBridge, 'find_window', side_effect=[None, window]):
             self.assertIs(client.find_window(), window)
@@ -523,6 +524,27 @@ class Tiny11WeChatTests(unittest.TestCase):
         with mock.patch.object(bridge.Tiny11WeComGuiBridge, 'find_window', return_value=window):
             self.assertIs(client.find_window(), window)
         client.tiny11.invoke.assert_not_called()
+
+    def test_personal_chat_refuses_unhealthy_input_before_cached_title_or_search(self):
+        for extra, error in (({'client_state': 'unresponsive'}, 'WECHAT_CLIENT_UNRESPONSIVE'),
+                             ({'input_blocker': 'app_modal_dialog'}, 'LABCANVAS_GUI_APP_MODAL_BLOCKED')):
+            with self.subTest(extra=extra):
+                client = object.__new__(bridge.Tiny11WeChatBridge)
+                client.config = {'targets': {'Shares': {}}}
+                client.target_groups = ['Shares']
+                client.tiny11 = mock.Mock()
+                client.tiny11.health.return_value = {
+                    'ok': True, 'app': 'wechat', 'client_state': 'ready', 'input_ready': False,
+                    'window': {'process_id': 42, 'x': 0, 'y': 0, 'width': 1276, 'height': 1392}, **extra}
+                client.current_title_matches = mock.Mock(return_value=True)
+                client.capture_screen = mock.Mock()
+                client.key = mock.Mock()
+                with self.assertRaisesRegex(RuntimeError, error):
+                    client.ensure_chat('Shares')
+                client.current_title_matches.assert_not_called()
+                client.capture_screen.assert_not_called()
+                client.key.assert_not_called()
+                client.tiny11.invoke.assert_not_called()
 
     def test_native_restore_never_launches_or_terminates_a_chat_process(self):
         script = (ROOT / 'agentic_tools/wecom_agent/windows/WeComBridge.ps1').read_text()

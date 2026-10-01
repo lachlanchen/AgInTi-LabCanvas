@@ -18,6 +18,7 @@ namespace LabCanvasDesktop {
         private struct Rect { public int Left, Top, Right, Bottom; }
         [DllImport("user32.dll")] private static extern bool EnumWindows(EnumProc proc, IntPtr arg);
         [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr window);
+        [DllImport("user32.dll")] public static extern bool IsWindowEnabled(IntPtr window);
         [DllImport("user32.dll")] private static extern bool IsIconic(IntPtr window);
         [DllImport("user32.dll")] private static extern IntPtr GetWindow(IntPtr window, uint command);
         [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr window, out uint pid);

@@ -188,11 +188,114 @@ class Tiny11WeComTransportTests(unittest.TestCase):
         self.assertIn("return 'unresponsive'", detector)
         self.assertIn('::IsResponding($MainWindow.Handle)', detector)
         focus = source.split('function Focus-WeCom {', 1)[1].split('function Invoke-Key {', 1)[0]
-        self.assertLess(focus.index('WECHAT_CLIENT_UNRESPONSIVE'), focus.index('SetForegroundWindow'))
+        self.assertLess(focus.index('_CLIENT_UNRESPONSIVE:'), focus.index('SetForegroundWindow'))
+        self.assertNotIn("$script:TargetApp -eq 'wechat' -and\n        -not", focus)
         self.assertIn("-and $clientState -eq 'ready'", source)
         native = transport.GUEST_HELPER.with_name('NativeWindows.ps1').read_text()
         self.assertIn('SendMessageTimeout(window, 0, UIntPtr.Zero, IntPtr.Zero,', native)
         self.assertIn('2, 2000, out result)', native)
+
+    def test_modal_guard_precedes_input_and_restore_does_not_dismiss_it(self):
+        source = transport.GUEST_HELPER.read_text()
+        focus = source.split('function Focus-WeCom {', 1)[1].split('function Invoke-Key {', 1)[0]
+        self.assertLess(focus.index('Get-AppInputBlocker'), focus.index('SetForegroundWindow'))
+        self.assertLess(focus.index('Get-AppInputBlocker'), focus.index('SendWait'))
+        restore = source.split("{ $_ -in @('restore', 'activate') }", 1)[1].split('"click"', 1)[0]
+        for guard in ('Get-SystemInputBlocker', 'Get-AppInputBlocker', 'IsResponding'):
+            self.assertLess(restore.index(guard), restore.index('SendWait'))
+        native = transport.GUEST_HELPER.with_name('NativeWindows.ps1').read_text()
+        self.assertIn('public static extern bool IsWindowEnabled(IntPtr window)', native)
+        self.assertNotIn('EnableWindow(', native)
+
+    def test_native_not_ready_overrides_cached_ready_without_restart_or_input(self):
+        cases = (
+            ({'client_state': 'unresponsive'}, 'client_unresponsive', 'WECOM_CLIENT_UNRESPONSIVE'),
+            ({'client_state': 'unresponsive', 'app': 'wechat'}, 'client_unresponsive', 'WECHAT_CLIENT_UNRESPONSIVE'),
+            ({'input_blocker': 'app_modal_dialog'}, 'app_modal_blocked', 'LABCANVAS_GUI_APP_MODAL_BLOCKED'),
+            ({'input_ready': False}, 'client_input_unavailable', 'LABCANVAS_GUI_INPUT_NOT_READY'),
+            ({'client_state': 'entry_required', 'app': 'wechat'}, 'login_required', 'WECHAT_ENTRY_REQUIRED'),
+            ({'ok': False}, 'client_unavailable', 'WECOM_WINDOW_UNAVAILABLE'),
+        )
+        for extra, state, error in cases:
+            with self.subTest(state=state, extra=extra):
+                bridge = object.__new__(gui.Tiny11WeComGuiBridge)
+                bridge.config = {'enabled': True}
+                bridge._client_was_visible = True
+                bridge.state_db = Path('unused')
+                bridge.tiny11 = mock.Mock()
+                bridge.tiny11.health.return_value = {
+                    'ok': True, 'input_ready': True, 'client_state': 'ready',
+                    'window': {'x': 0, 'y': 0, 'width': 1276, 'height': 1392}, **extra}
+                with mock.patch.object(base.WeComGuiBridge, 'status', return_value={
+                        'ok': True, 'chat_ready': True, 'closed_loop_state': 'ready', 'capabilities': {}}):
+                    status = bridge.status()
+                    self.assertFalse(status['chat_ready'])
+                    self.assertEqual(status['closed_loop_state'], state)
+                    self.assertIn(error, status['last_error'])
+                    self.assertFalse(bridge.health()['ok'])
+                self.assertIsNotNone(bridge.find_window(required=False))
+                with self.assertRaisesRegex(RuntimeError, error):
+                    bridge.find_window()
+                with mock.patch.object(gui, 'set_runtime'), \
+                        mock.patch.object(base.WeComGuiBridge, 'poll_cycle') as poll:
+                    result = bridge.poll_cycle()
+                    self.assertEqual(result['skipped'], state)
+                    self.assertFalse(result['input_ready'])
+                    poll.assert_not_called()
+                with mock.patch.object(base, 'set_runtime') as checkpoint, \
+                        mock.patch.object(bridge, 'recover_expired_outbox') as recover:
+                    self.assertEqual(bridge.recover_outbox_after_ready_poll(
+                        client_visible=True, poll_result=result)['skipped'], 'chat_poll_not_ready')
+                    self.assertFalse(bridge._client_was_visible)
+                    checkpoint.assert_called_once_with(bridge.state_db, 'reconnect_ready_since_epoch', '')
+                    recover.assert_not_called()
+                bridge.tiny11.invoke.assert_not_called()
+
+    def test_visible_hung_window_is_not_healthy(self):
+        bridge = object.__new__(gui.Tiny11WeComGuiBridge)
+        bridge.tiny11 = mock.Mock()
+        bridge.tiny11.health.return_value = {
+            'ok': True, 'client_state': 'unresponsive', 'input_ready': False}
+        with mock.patch.object(base.WeComGuiBridge, 'status', return_value={
+                'ok': True, 'chat_ready': True, 'closed_loop_state': 'ready', 'capabilities': {}}):
+            self.assertFalse(bridge.health()['ok'])
+
+    def test_disabled_poll_stays_paused_even_when_native_client_is_blocked(self):
+        bridge = object.__new__(gui.Tiny11WeComGuiBridge)
+        bridge.config = {'enabled': False}
+        bridge.tiny11 = mock.Mock()
+        with mock.patch.object(base.WeComGuiBridge, 'poll_cycle',
+                               return_value={'ok': True, 'skipped': 'disabled'}) as poll:
+            self.assertEqual(bridge.poll_cycle()['skipped'], 'disabled')
+            poll.assert_called_once()
+        bridge.tiny11.health.assert_not_called()
+        with mock.patch.object(bridge, 'recover_expired_outbox') as recover:
+            self.assertEqual(bridge.recover_outbox_after_ready_poll(
+                client_visible=True, poll_result={'ok': True})['skipped'], 'disabled')
+            recover.assert_not_called()
+
+    def test_blocked_native_status_does_not_override_explicit_pause(self):
+        bridge = object.__new__(gui.Tiny11WeComGuiBridge)
+        bridge.tiny11 = mock.Mock()
+        bridge.tiny11.health.return_value = {
+            'ok': True, 'client_state': 'unresponsive', 'input_ready': False}
+        with mock.patch.object(base.WeComGuiBridge, 'status', return_value={
+                'ok': True, 'enabled': False, 'chat_ready': False, 'closed_loop_state': 'paused',
+                'auth_blocker': 'device_environment_abnormal', 'capabilities': {}}):
+            self.assertEqual(bridge.status()['closed_loop_state'], 'paused')
+
+    def test_native_input_recovers_when_blocker_clears_without_state_reset(self):
+        bridge = object.__new__(gui.Tiny11WeComGuiBridge)
+        bridge.state_db = Path('unused')
+        bridge.tiny11 = mock.Mock()
+        bridge.tiny11.health.return_value = {'ok': True, 'input_blocker': 'app_modal_dialog'}
+        with mock.patch.object(gui, 'set_runtime'), \
+                mock.patch.object(base.WeComGuiBridge, 'poll_cycle', return_value={'ok': True}) as poll:
+            self.assertEqual(bridge.poll_cycle()['skipped'], 'app_modal_blocked')
+            bridge.tiny11.health.return_value = {'ok': True, 'client_state': 'ready', 'input_ready': True}
+            self.assertTrue(bridge.poll_cycle()['ok'])
+            poll.assert_called_once()
+        bridge.tiny11.invoke.assert_not_called()
 
     def test_system_dialog_blocks_input_before_focus_and_remains_visible_in_health(self):
         source = (ROOT / 'agentic_tools/wecom_agent/windows/WeComBridge.ps1').read_text()
