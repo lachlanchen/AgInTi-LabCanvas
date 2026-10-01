@@ -101,8 +101,64 @@ class Tiny11WeChatTests(unittest.TestCase):
             client.capture_screen = mock.Mock(return_value=path)
             with mock.patch.object(bridge.time, 'sleep'):
                 client.scroll_chat_to_bottom(mock.Mock())
-        self.assertEqual(client.tiny11.invoke.call_count, 2)
+        self.assertEqual(client.tiny11.invoke.call_count, 1)
+        self.assertEqual(len(client.tiny11.invoke.call_args.args[0]['actions']), 8)
         self.assertTrue(all(action['delta'] < 0 for action in client.tiny11.invoke.call_args.args[0]['actions']))
+        self.assertTrue(all(0 <= action['x'] < 100 for action in client.tiny11.invoke.call_args.args[0]['actions']))
+
+    def test_scroll_to_tail_continues_when_the_viewport_moves(self):
+        client = object.__new__(bridge.Tiny11WeChatBridge)
+        client.history_surface = mock.Mock(return_value=(0, 0, 100, 100))
+        client.tiny11 = mock.Mock()
+        with tempfile.TemporaryDirectory() as folder:
+            paths = []
+            for index, color in enumerate(('white', 'grey', 'black')):
+                path = Path(folder) / f'history-{index}.png'
+                Image.new('RGB', (100, 100), color).save(path)
+                paths.append(path)
+            client.capture_screen = mock.Mock(side_effect=[*paths, paths[-1]])
+            with mock.patch.object(bridge.time, 'sleep'):
+                client.scroll_chat_to_bottom(mock.Mock())
+        self.assertEqual(client.tiny11.invoke.call_count, 3)
+        self.assertEqual(client.capture_screen.call_count, 4)
+
+    def test_scroll_to_tail_preserves_bounded_old_history_budget(self):
+        client = object.__new__(bridge.Tiny11WeChatBridge)
+        client.history_surface = mock.Mock(return_value=(0, 0, 100, 100))
+        client.tiny11 = mock.Mock()
+        with tempfile.TemporaryDirectory() as folder:
+            paths = []
+            for index in range(25):
+                path = Path(folder) / f'history-{index}.png'
+                Image.new('RGB', (100, 100), (index, index, index)).save(path)
+                paths.append(path)
+            client.capture_screen = mock.Mock(side_effect=paths)
+            with mock.patch.object(bridge.time, 'sleep'):
+                client.scroll_chat_to_bottom(mock.Mock())
+        self.assertEqual(client.tiny11.invoke.call_count, 24)
+        self.assertEqual(sum(len(call.args[0]['actions']) for call in client.tiny11.invoke.call_args_list), 192)
+
+    def test_invalid_history_surface_never_sends_input(self):
+        client = object.__new__(bridge.Tiny11WeChatBridge)
+        client.history_surface = mock.Mock(return_value=(0, 0, 20, 0))
+        client.tiny11 = mock.Mock()
+        client.capture_screen = mock.Mock()
+        with self.assertRaisesRegex(RuntimeError, 'HISTORY_SURFACE_INVALID'):
+            client.scroll_chat_to_bottom(mock.Mock())
+        client.tiny11.invoke.assert_not_called()
+        client.capture_screen.assert_not_called()
+
+    def test_out_of_frame_history_never_sends_input(self):
+        client = object.__new__(bridge.Tiny11WeChatBridge)
+        client.history_surface = mock.Mock(return_value=(50, 0, 100, 100))
+        client.tiny11 = mock.Mock()
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'history.png'
+            Image.new('RGB', (100, 100), 'white').save(path)
+            client.capture_screen = mock.Mock(return_value=path)
+            with self.assertRaisesRegex(RuntimeError, 'HISTORY_SURFACE_INVALID'):
+                client.scroll_chat_to_bottom(mock.Mock())
+        client.tiny11.invoke.assert_not_called()
 
     def test_native_remux_alias_recorded_without_resending(self):
         client = object.__new__(bridge.Tiny11WeChatBridge)

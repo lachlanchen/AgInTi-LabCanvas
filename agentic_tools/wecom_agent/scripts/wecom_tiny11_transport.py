@@ -235,6 +235,26 @@ Write-Output 'installed'
         except Tiny11TransportError as exc:
             return {"ok": False, "error": str(exc)}
 
+    def environment(self, mode: str = "Status") -> dict[str, Any]:
+        if mode not in {"Status", "RepairTime", "RestoreTime"}:
+            raise Tiny11TransportError("unsupported environment operation")
+        remote = self.stage_file(
+            GUEST_HELPER.with_name("Test-ChatClientEnvironment.ps1"), "environment-audit"
+        )
+        # SFTP avoids Windows SSH command-line limits and verifies the script
+        # identity before execution, without installing/restarting the helper.
+        output = self.powershell(
+            f"& ([scriptblock]::Create([IO.File]::ReadAllText({ps_quote(remote)}))) "
+            f"-Mode {ps_quote(mode)}", timeout=90
+        )
+        try:
+            payload = json.loads(first_json_line(output))
+        except json.JSONDecodeError as exc:
+            raise Tiny11TransportError("Tiny11 environment audit returned invalid JSON") from exc
+        if not isinstance(payload, dict) or not isinstance(payload.get("ok"), bool):
+            raise Tiny11TransportError("Tiny11 environment audit returned an invalid result")
+        return payload
+
     def screenshot(self) -> bytes:
         req = request.Request(
             self.helper_url + "/screenshot",
@@ -408,15 +428,20 @@ def clean_powershell_error(value: str) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
-    parser.add_argument("command", choices=["install", "status", "supervise", "tunnel", "screenshot"])
+    parser.add_argument("command", choices=["install", "status", "environment", "supervise", "tunnel", "screenshot"])
+    parser.add_argument("--environment-mode", choices=["Status", "RepairTime", "RestoreTime"], default="Status")
     parser.add_argument("--output", type=Path)
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
+    if args.command != "environment" and args.environment_mode != "Status":
+        parser.error("--environment-mode requires the environment command")
     transport = Tiny11Transport(load_config(args.config))
     if args.command == "install":
         payload = transport.install()
     elif args.command == "status":
         payload = transport.health()
+    elif args.command == "environment":
+        payload = transport.environment(args.environment_mode)
     elif args.command == "tunnel":
         os.execvp(transport.tunnel_command()[0], transport.tunnel_command())
     elif args.command == "supervise":

@@ -153,17 +153,26 @@ class Tiny11WeChatBridge(Tiny11WeComGuiBridge):
         return left, top, width, window.y + window.height - 150 - top
 
     def scroll_chat_to_bottom(self, window):
-        # Four wheel events do not reach the tail after browsing older cards.
-        # Observe a stable viewport instead of assuming a fixed scroll distance.
+        # Stop as soon as the viewport is stable; retain the old total distance
+        # budget for older histories without issuing 24-event blind bursts.
         left, top, width, height = self.history_surface(window)
-        previous = None
-        for _ in range(8):
-            actions = [{'action': 'wheel', 'x': left + 100, 'y': top + height//2, 'delta': -720}
-                       for _ in range(24)]
+        if width <= 20 or height <= 0:
+            raise RuntimeError('WECHAT_HISTORY_SURFACE_INVALID')
+
+        def viewport_signature():
+            with Image.open(self.capture_screen('history-tail-check')) as image:
+                if (left < 0 or top < 0 or left + width > image.width
+                        or top + height > image.height):
+                    raise RuntimeError('WECHAT_HISTORY_SURFACE_INVALID')
+                return hashlib.sha256(image.crop((left, top, left + width - 20, top + height)).tobytes()).digest()
+
+        previous = viewport_signature()
+        for _ in range(24):
+            actions = [{'action': 'wheel', 'x': left + min(100, (width - 20)//2), 'y': top + height//2, 'delta': -720}
+                       for _ in range(8)]
             self.tiny11.invoke({'action': 'macro', 'actions': actions})
             time.sleep(.2)
-            with Image.open(self.capture_screen('history-tail-check')) as image:
-                signature = hashlib.sha256(image.crop((left, top, left + width - 20, top + height)).tobytes()).digest()
+            signature = viewport_signature()
             if signature == previous:
                 return
             previous = signature

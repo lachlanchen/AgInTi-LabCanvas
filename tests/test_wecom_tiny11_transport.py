@@ -36,6 +36,61 @@ def config(**tiny11):
 
 
 class Tiny11WeComTransportTests(unittest.TestCase):
+    def test_environment_audit_is_read_only_by_default_and_never_installs(self):
+        client = transport.Tiny11Transport(config())
+        with mock.patch.object(client, 'powershell', return_value='{"ok":true,"mode":"Status"}') as run, \
+                mock.patch.object(client, 'stage_file', return_value=r'C:\LabCanvas\audit.ps1') as stage, \
+                mock.patch.object(client, 'ensure_vm') as start, \
+                mock.patch.object(client, 'install') as install:
+            self.assertEqual(client.environment(), {'ok': True, 'mode': 'Status'})
+        self.assertTrue(run.call_args.args[0].endswith("-Mode 'Status'"))
+        self.assertEqual(run.call_args.kwargs, {'timeout': 90})
+        stage.assert_called_once_with(transport.GUEST_HELPER.with_name('Test-ChatClientEnvironment.ps1'), 'environment-audit')
+        start.assert_not_called()
+        install.assert_not_called()
+
+    def test_environment_modes_are_explicit_and_validate_result_shape(self):
+        client = transport.Tiny11Transport(config())
+        for mode in ('RepairTime', 'RestoreTime'):
+            with mock.patch.object(client, 'powershell', return_value='{"ok":false,"issues":["time_resync_failed"]}') as run, \
+                    mock.patch.object(client, 'stage_file', return_value=r'C:\LabCanvas\audit.ps1'):
+                self.assertFalse(client.environment(mode)['ok'])
+                self.assertTrue(run.call_args.args[0].endswith(f"-Mode '{mode}'"))
+        with mock.patch.object(client, 'powershell') as run:
+            with self.assertRaisesRegex(transport.Tiny11TransportError, 'unsupported'):
+                client.environment('Status; Restart-Computer')
+            run.assert_not_called()
+        for value in ('not JSON', '[]', '{}', '{"ok":"true"}'):
+            with mock.patch.object(client, 'powershell', return_value=value), \
+                    mock.patch.object(client, 'stage_file', return_value=r'C:\LabCanvas\audit.ps1'):
+                with self.assertRaises(transport.Tiny11TransportError):
+                    client.environment()
+
+    def test_environment_does_not_execute_when_staging_verification_fails(self):
+        client = transport.Tiny11Transport(config())
+        with mock.patch.object(client, 'stage_file', side_effect=transport.Tiny11TransportError('identity mismatch')), \
+                mock.patch.object(client, 'powershell') as run:
+            with self.assertRaisesRegex(transport.Tiny11TransportError, 'identity mismatch'):
+                client.environment()
+            run.assert_not_called()
+
+    def test_environment_script_limits_repairs_and_preserves_security(self):
+        source = transport.GUEST_HELPER.with_name('Test-ChatClientEnvironment.ps1').read_text()
+        self.assertIn("[string]$Mode = 'Status'", source)
+        self.assertIn("$env:COMPUTERNAME -ne $ExpectedComputer", source)
+        self.assertIn("if ($Mode -eq 'RepairTime')", source)
+        self.assertIn("Set-Service -Name W32Time -StartupType Automatic", source)
+        self.assertIn("& w32tm.exe /resync", source)
+        self.assertIn("Get-AuthenticodeSignature", source)
+        self.assertIn("Get-MpComputerStatus", source)
+        self.assertIn("WTSGetActiveConsoleSessionId", source)
+        self.assertIn("client_processes_unchanged = $clientsUnchanged", source)
+        self.assertIn("security_prompts_suppressed = $false", source)
+        for forbidden in ('Stop-Process', 'Start-Process', 'Restart-Computer', 'SendWait',
+                          'Set-MpPreference', 'Set-ItemProperty', '/manualpeerlist',
+                          'Set-TimeZone', 'Rename-Computer'):
+            self.assertNotIn(forbidden, source)
+
     def test_helper_http_error_retains_login_reason_without_token(self):
         client = transport.Tiny11Transport(config(app='wechat'))
         for operation in (lambda: client.invoke({'action': 'restore'}), client.screenshot):
