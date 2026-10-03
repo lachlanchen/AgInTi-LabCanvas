@@ -754,11 +754,20 @@ def _sync_once(config=None):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command', choices=['status', 'sync', 'probe-chat', 'send'])
+    parser.add_argument('command', choices=['status', 'sync', 'probe-chat', 'send',
+                                            'audit-client-launch', 'start-client'])
     parser.add_argument('--request-file', type=Path)
     parser.add_argument('--chat')
     parser.add_argument('--loop', action='store_true')
     args = parser.parse_args()
+    if args.command in {'audit-client-launch', 'start-client'}:
+        client = Tiny11WeChatBridge()
+        live = args.command == 'start-client'
+        with client.serialized_gui():
+            result = client.tiny11.wechat_launch_task(apply=live, start_missing=live)
+        result['helper'] = client.tiny11.health()
+        print(json.dumps(result))
+        return 0 if result['ok'] else 1
     if args.command == 'send':
         try:
             payload = json.loads(args.request_file.read_text())

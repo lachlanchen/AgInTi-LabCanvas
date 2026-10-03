@@ -20,6 +20,20 @@ snapshot = importlib.import_module('wechat_store_snapshot')
 
 
 class Tiny11WeChatTests(unittest.TestCase):
+    def test_start_client_repairs_owned_task_under_gui_lock_without_restarting_helper(self):
+        for command, live in [('audit-client-launch', False), ('start-client', True)]:
+            with self.subTest(command=command), mock.patch.object(bridge, 'Tiny11WeChatBridge') as factory, \
+                    mock.patch.object(sys, 'argv', ['bridge', command]), \
+                    mock.patch('builtins.print'):
+                client = factory.return_value
+                client.tiny11.wechat_launch_task.return_value = {'ok': True, 'started': False}
+                client.tiny11.health.return_value = {'ok': True, 'client_state': 'ready'}
+                self.assertEqual(bridge.main(), 0)
+                client.serialized_gui.return_value.__enter__.assert_called_once()
+                client.tiny11.wechat_launch_task.assert_called_once_with(apply=live, start_missing=live)
+                client.tiny11.install.assert_not_called()
+                client.tiny11.invoke.assert_not_called()
+
     def test_title_badge_filter_preserves_monochrome_identity_text(self):
         source = Image.new('RGB', (4, 1))
         pixels = [(20, 20, 20), (140, 140, 140), (0, 133, 252), (244, 200, 0)]

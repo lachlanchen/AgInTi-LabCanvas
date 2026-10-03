@@ -36,6 +36,62 @@ def config(**tiny11):
 
 
 class Tiny11WeComTransportTests(unittest.TestCase):
+    def test_wechat_launch_task_audit_is_explicit_and_does_not_install_helper(self):
+        client = transport.Tiny11Transport(config(app='wechat'))
+        with mock.patch.object(client, 'stage_file', return_value=r'C:\LabCanvas\launch.ps1') as stage, \
+                mock.patch.object(client, 'powershell', return_value='{"ok":true}') as run, \
+                mock.patch.object(client, 'ensure_vm') as vm, \
+                mock.patch.object(client, 'install') as install:
+            self.assertTrue(client.wechat_launch_task()['ok'])
+        stage.assert_called_once_with(transport.GUEST_HELPER.with_name('Repair-WeChatLaunchTask.ps1'),
+                                      'wechat-launch-task')
+        self.assertNotIn('-Apply', run.call_args.args[0])
+        self.assertNotIn('-StartMissing', run.call_args.args[0])
+        vm.assert_not_called()
+        install.assert_not_called()
+
+    def test_wechat_launch_requires_scope_and_explicit_apply(self):
+        for app, arguments in [('wecom', {}), ('wechat', {'start_missing': True}),
+                               ('wechat', {'apply': 'yes'}), ('wechat', {'start_missing': 1})]:
+            client = transport.Tiny11Transport(config(app=app))
+            with mock.patch.object(client, 'stage_file') as stage:
+                with self.assertRaises(transport.Tiny11TransportError):
+                    client.wechat_launch_task(**arguments)
+                stage.assert_not_called()
+        client = transport.Tiny11Transport(config(app='wechat'))
+        with mock.patch.object(client, 'stage_file', return_value=r'C:\LabCanvas\launch.ps1'), \
+                mock.patch.object(client, 'powershell', return_value='{"ok":true}') as run:
+            client.wechat_launch_task(apply=True, start_missing=True)
+        self.assertTrue(run.call_args.args[0].endswith(' -Apply -StartMissing'))
+
+    def test_wechat_launch_invalid_result_and_staging_failure_are_not_success(self):
+        client = transport.Tiny11Transport(config(app='wechat'))
+        for output in ('not JSON', '[]', '{}', '{"ok":"true"}'):
+            with mock.patch.object(client, 'stage_file', return_value=r'C:\LabCanvas\launch.ps1'), \
+                    mock.patch.object(client, 'powershell', return_value=output):
+                with self.assertRaises(transport.Tiny11TransportError):
+                    client.wechat_launch_task()
+        with mock.patch.object(client, 'stage_file', side_effect=transport.Tiny11TransportError('mismatch')), \
+                mock.patch.object(client, 'powershell') as run:
+            with self.assertRaises(transport.Tiny11TransportError):
+                client.wechat_launch_task(apply=True)
+            run.assert_not_called()
+
+    def test_wechat_launch_script_preserves_task_and_never_restarts_running_client(self):
+        source = transport.GUEST_HELPER.with_name('Repair-WeChatLaunchTask.ps1').read_text()
+        self.assertIn('$env:COMPUTERNAME -ne $ExpectedComputer', source)
+        self.assertIn('$task.Actions.Count -ne 1', source)
+        self.assertIn('[int]$task.Principal.LogonType -ne 3', source)
+        self.assertIn('Get-AuthenticodeSignature', source)
+        self.assertIn('Export-ScheduledTask -TaskName $name', source)
+        self.assertIn("$task.Settings.ExecutionTimeLimit = 'PT0S'", source)
+        self.assertIn('Set-ScheduledTask -TaskName $name -Settings $task.Settings', source)
+        self.assertIn('if ($StartMissing -and $clients.Count -eq 0)', source)
+        self.assertIn('client_login_verified = $false', source)
+        for forbidden in ('Register-ScheduledTask', 'Stop-Process', 'Stop-ScheduledTask',
+                          'Restart-Computer', 'Remove-Item', 'SendWait', 'Set-MpPreference'):
+            self.assertNotIn(forbidden, source)
+
     def test_environment_audit_is_read_only_by_default_and_never_installs(self):
         client = transport.Tiny11Transport(config())
         with mock.patch.object(client, 'powershell', return_value='{"ok":true,"mode":"Status"}') as run, \
@@ -617,7 +673,7 @@ class Tiny11WeComTransportTests(unittest.TestCase):
         self.assertIn("Processes = @('WXWork'); Side = 0", source)
         self.assertIn("Processes = @('WeChat', 'Weixin'); Side = 1", source)
         self.assertIn('$primary.Bounds.Width -lt 2000', source)
-        self.assertIn('if ($seen.ContainsKey($key)) { continue }', source)
+        self.assertIn('if ($seen.ContainsKey($key) -and $seen[$key] -eq $areaKey) { continue }', source)
         self.assertNotIn('Stop-Process', source)
         self.assertNotIn('Restart-Computer', source)
 

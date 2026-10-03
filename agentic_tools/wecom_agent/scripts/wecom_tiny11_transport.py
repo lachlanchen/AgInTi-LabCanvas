@@ -258,6 +258,27 @@ Write-Output 'installed'
             raise Tiny11TransportError("Tiny11 environment audit returned an invalid result")
         return payload
 
+    def wechat_launch_task(self, *, apply: bool = False, start_missing: bool = False) -> dict[str, Any]:
+        if self.app != "wechat":
+            raise Tiny11TransportError("client launch repair is personal-WeChat only")
+        if type(apply) is not bool or type(start_missing) is not bool or (start_missing and not apply):
+            raise Tiny11TransportError("starting a missing client requires explicit launch repair")
+        remote = self.stage_file(
+            GUEST_HELPER.with_name("Repair-WeChatLaunchTask.ps1"), "wechat-launch-task"
+        )
+        output = self.powershell(
+            f"& ([scriptblock]::Create([IO.File]::ReadAllText({ps_quote(remote)})))"
+            + (" -Apply" if apply else "")
+            + (" -StartMissing" if start_missing else "")
+        )
+        try:
+            payload = json.loads(first_json_line(output))
+        except json.JSONDecodeError as exc:
+            raise Tiny11TransportError("WeChat launch task returned invalid JSON") from exc
+        if not isinstance(payload, dict) or type(payload.get("ok")) is not bool:
+            raise Tiny11TransportError("WeChat launch task returned an invalid result")
+        return payload
+
     def screenshot(self) -> bytes:
         req = request.Request(
             self.helper_url + "/screenshot",

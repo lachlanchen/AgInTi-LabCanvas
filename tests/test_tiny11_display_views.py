@@ -16,6 +16,29 @@ views = importlib.import_module('tiny11_display_views')
 
 
 class SharedConsoleZoomTests(unittest.TestCase):
+    def test_guest_fit_refreshes_native_work_area_and_repositions_only_after_change(self):
+        source = (SCRIPTS.parent / 'windows/Set-Tiny11AppScreens.ps1').read_text()
+        loop = source.split('do {', 1)[1]
+        self.assertIn('$area = if ($Layout', loop)
+        self.assertIn('[AppScreens]::PrimaryWorkingArea()', loop)
+        self.assertIn('SystemParametersInfo(48, 0, out rect, 0)', source)
+        self.assertIn('$seen[$key] -eq $areaKey', loop)
+        self.assertIn('$seen[$key] = $areaKey', loop)
+        self.assertIn('if (-not $layoutReady) { continue }', loop)
+        self.assertLess(loop.index('$seen[$key] -eq $areaKey'), loop.index('::SetWindowPos'))
+        self.assertNotIn('Stop-Process', source)
+
+    def test_guest_fit_accepts_account_named_main_but_excludes_owned_menus(self):
+        source = (SCRIPTS.parent / 'windows/Set-Tiny11AppScreens.ps1').read_text()
+        selector = source.split("if ($AppName -eq 'WeChat')", 1)[1].split('return $Windows', 1)[0]
+        main = selector.split('if ($main.Count -eq 1)', 1)[0]
+        self.assertNotIn('$_.Name -in', main)
+        self.assertIn('[AppScreens]::IsMainWindow($_.Handle)', main)
+        self.assertIn('GetWindow(window, 4) == IntPtr.Zero', source)
+        self.assertIn('GetWindowLong(window, -16) & 0x10000', source)
+        self.assertIn('if ($main.Count -gt 1) { return @() }', selector)
+        self.assertIn('$_.Width -lt 700', selector)
+
     @unittest.skipUnless(shutil.which('node'), 'Node.js is needed for the viewer control test')
     def test_desktop_zoom_uses_local_scale_only_and_waits_for_connection(self):
         module = (SCRIPTS.parent / 'web/tiny11-console.mjs').as_uri()
