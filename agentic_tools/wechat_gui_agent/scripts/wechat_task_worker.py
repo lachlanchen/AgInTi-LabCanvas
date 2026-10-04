@@ -34,6 +34,7 @@ from wechat_agent_backend import (
     select_agent_backend,
 )
 from wechat_chat_profiles import profile_for_chat, public_video_publication_enabled
+from wechat_workspace import chat_workspace
 from wechat_history_rag import build_history_context, build_wecom_history_context
 from wechat_completion_audit import (
     coverage_items as completion_coverage_items,
@@ -12114,6 +12115,27 @@ def worker_backend_config(task: dict[str, Any], backend: str) -> dict[str, Any]:
         raw = task.get(backend)
         config = dict(raw) if isinstance(raw, dict) else {}
     source = task.get("source") if isinstance(task.get("source"), dict) else {}
+    config_id = Path(str(source.get("config_id") or "")).name
+    if config_id:
+        try:
+            current = json.loads((PRIVATE / config_id).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            current = {}
+        if isinstance(current, dict) and current.get("chat_name") == task.get("chat"):
+            for key in ("assistant_context", "workspace_read_paths"):
+                if key in current:
+                    config[key] = current[key]
+    references = config.get("workspace_read_paths")
+    references = list(references) if isinstance(references, list) else []
+    if task.get("artifact_dir"):
+        references.append(str(task["artifact_dir"]))
+    references.extend(
+        path for path in collect_preflight_agent_paths(task.get("preflight"))
+        if Path(path).is_file()
+    )
+    config["workspace_read_paths"] = list(dict.fromkeys(
+        value for value in references if isinstance(value, str) and value.strip()
+    ))
     route = (
         task.get("route_decision")
         if isinstance(task.get("route_decision"), dict)
@@ -12376,6 +12398,11 @@ Same-chat interruption packet:
 
 def worker_artifact_dir(task: dict[str, Any]) -> Path:
     task_id = safe_slug(str(task.get("id") or "manual-task"))
+    if task.get("artifact_dir"):
+        # A running/recovering task keeps its already-recorded source paths.
+        return Path(str(task["artifact_dir"]))
+    if task.get("session_scope"):
+        return chat_workspace(str(task["session_scope"]), root=ROOT) / "tasks" / task_id
     return ROOT / "output" / "wechat_worker" / task_id
 
 

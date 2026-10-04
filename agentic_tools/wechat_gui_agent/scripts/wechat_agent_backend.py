@@ -19,6 +19,13 @@ from codex_quota_status import (
 )
 from agenticapp.aginti_shadow import enqueue_codex_shadow_review  # noqa: E402
 from file_lock import exclusive_lock
+from wechat_workspace import (
+    approved_reference_paths,
+    ensure_chat_workspace,
+    read_reference_scope,
+    shared_tool_paths,
+    workspace_instruction,
+)
 from wechat_codex_sessions import (
     DEFAULT_REGISTRY,
     ROOT,
@@ -305,6 +312,18 @@ def run_agent_session(
     """Run one backend turn with system-level quota/unavailable fallback."""
     selected = normalize_backend(backend)
     config = backend_config or {}
+    if workdir.resolve() == ROOT.resolve():
+        workdir = ensure_chat_workspace(chat_name)
+        boundary = workspace_instruction(workdir, approved_reference_paths(config))
+        prompt = boundary + prompt
+        if backend_prompts:
+            backend_prompts = {
+                name: boundary + value for name, value in backend_prompts.items()
+            }
+        # Keep conversational turns read-only; workers use the existing native
+        # writable-workspace sandbox instead of inheriting host-wide authority.
+        if sandbox != "read-only":
+            sandbox = "workspace-write"
     preferred_model, preferred_effort, quota_preference = quota_aware_codex_preference(
         backend=selected,
         model=model,
@@ -442,6 +461,16 @@ def run_single_backend_attempt(
 ) -> dict[str, Any]:
     selected = normalize_backend(str(attempt.get("backend") or "codex"))
     selected_config = backend_specific_config(backend_config, selected, primary_backend=primary_backend)
+    if workdir.parent == ROOT / "output" / "chat_workspaces":
+        selected_config.update({
+            "workspace": str(workdir),
+            "allow_host_workspace": False,
+            "sandbox_mode": "docker-readonly" if attempt.get("sandbox") == "read-only" else "docker-workspace",
+            "chat_read_paths": [
+                path for path in shared_tool_paths() + approved_reference_paths(backend_config)
+                if not Path(path).is_relative_to(workdir)
+            ],
+        })
     model = str(attempt.get("model") or "")
     reasoning_effort = str(attempt.get("reasoning_effort") or "")
     timeout_seconds = int(attempt.get("timeout_seconds") or 1)
@@ -472,18 +501,19 @@ def run_single_backend_attempt(
             backend_config=selected_config,
         )
     else:
-        result = run_codex_session(
-            prompt,
-            chat_name=chat_name,
-            role=role,
-            model=model,
-            reasoning_effort=reasoning_effort,
-            sandbox=sandbox,
-            timeout_seconds=timeout_seconds,
-            workdir=workdir,
-            reuse=reuse,
-            registry_path=registry_path,
-        )
+        with read_reference_scope(approved_reference_paths(backend_config)):
+            result = run_codex_session(
+                prompt,
+                chat_name=chat_name,
+                role=role,
+                model=model,
+                reasoning_effort=reasoning_effort,
+                sandbox=sandbox,
+                timeout_seconds=timeout_seconds,
+                workdir=workdir,
+                reuse=reuse,
+                registry_path=registry_path,
+            )
         result["backend"] = "codex"
     result["backend"] = selected
     result["model"] = str(result.get("model") or model)
@@ -1169,6 +1199,8 @@ def run_aginti_provider_once(
             "backend": "aginti",
         }
     command[0] = resolved_executable
+    for reference in backend_config.get("chat_read_paths") or []:
+        command += ["--read-root", reference]
     aginti_workdir = aginti_workdir_from_config(backend_config, workdir)
     wrapped_prompt = aginti_prompt(
         prompt,
@@ -1974,6 +2006,8 @@ def extract_agent_protocol_block(stdout: str) -> str:
 
 
 def aginti_workdir_from_config(backend_config: dict[str, Any], fallback: Path) -> Path:
+    if fallback.parent == ROOT / "output" / "chat_workspaces":
+        return fallback
     raw = str(
         backend_config.get("workspace") or aginti_env_value("WORKSPACE")
     ).strip()

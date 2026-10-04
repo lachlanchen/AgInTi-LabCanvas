@@ -1285,7 +1285,9 @@ class WeChatAgentBackendTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(len(codex_prompts), 1)
         self.assertGreater(len(codex_prompts[0]), 50000)
-        self.assertEqual(aginti_prompts, ["COMPACT exact routine packet"])
+        self.assertEqual(len(aginti_prompts), 1)
+        self.assertTrue(aginti_prompts[0].endswith("COMPACT exact routine packet"))
+        self.assertIn("Exact-chat workspace boundary", aginti_prompts[0])
 
     def test_aginti_retries_explicit_provider_only_for_pre_inference_failure(self) -> None:
         backend = load_backend()
@@ -2171,7 +2173,8 @@ class WeChatAgentBackendTests(unittest.TestCase):
         command = calls[0]["command"]
         self.assertTrue(result["ok"])
         self.assertEqual(result["backend"], "claude")
-        self.assertEqual(calls[0]["input"], "long prompt body")
+        self.assertTrue(calls[0]["input"].endswith("long prompt body"))
+        self.assertIn("Exact-chat workspace boundary", calls[0]["input"])
         self.assertEqual(calls[0]["timeout"], 77)
         self.assertIn("--session-id", command)
         self.assertIn("--disallowedTools", command)

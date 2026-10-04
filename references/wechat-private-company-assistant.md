@@ -105,11 +105,32 @@ context, back up and detach only that chat's affected session pointers; retain
 native history and source artifacts. See
 `references/wechat-company-publication-isolation-2026-10-04.md`.
 
-Configuration provides guidance and source isolation; it is not an OS-level
-sandbox for a full-access backend. Use a separately restricted runtime when the
-group needs hostile-user isolation. Never describe prompt-only restrictions as a
-security boundary. Do not send secrets, other groups' messages, internal paths or
-diagnostic logs to the company group.
+All bridge agent turns starting at the shared repository root now run from
+`output/chat_workspaces/<stable-scope>-<digest>/`. This includes route, fast,
+worker and daily roles. New source-scoped worker artifacts go under that group's
+`tasks/`; already-recorded artifact paths remain intact for recovery.
+
+Reuse the existing sandboxes: Codex receives a native `labcanvas-chat` permission
+profile with minimal runtime reads, read-only shared tool code and approved
+references, and writes only in the group's workspace. Account-wide writable roots
+and approval escalation are not inherited. AgInTi uses its existing Docker
+workspace/read-only modes and `--read-root` for the same approved references,
+never a globally redirected host workspace. Keep company credentials out of the
+reference allowlist; approve individual briefs/documents or a reviewed repository,
+not the whole transport-private directory.
+
+`assistant_context.reference_paths` and the optional operator-only
+`workspace_read_paths` list identify external read-only materials. Current
+source config is rechecked for queued worker turns. Incoming messages do not
+modify that list. Windows/WeDrive materials remain accessible through trusted
+exact-source intake and task copies, not by giving the agent SSH credentials or
+the whole Windows desktop filesystem.
+
+This is local command/filesystem confinement, not a complete hostile-user
+security container: MCP servers, browser surfaces and trusted host routines have
+their own permissions. Do not send secrets, other groups' messages, internal
+paths or diagnostic logs to the company group. Native profiles follow the
+[official permission-profile contract](https://learn.chatgpt.com/docs/permissions).
 
 ## Regression coverage
 

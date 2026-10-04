@@ -19,6 +19,7 @@ import time
 from typing import Any
 
 from file_lock import fcntl_compat as fcntl
+from wechat_workspace import codex_workspace_permissions
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -573,6 +574,12 @@ def run_codex_once(
         "-o",
         str(output_path),
     ]
+    if workdir.parent == ROOT / "output" / "chat_workspaces":
+        # Profiles enforce both read and write scope. Do not mix the native
+        # profile with legacy sandbox flags or inherit account writable roots.
+        offset = command.index("--sandbox")
+        del command[offset:offset + 2]
+        command += codex_workspace_permissions(workdir, sandbox, codex_binary=codex_bin)
     if thread_id:
         command += ["resume", thread_id, "-"]
     else:

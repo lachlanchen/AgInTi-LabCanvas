@@ -7005,6 +7005,9 @@ def agent_backend_config(config: dict[str, Any], backend: str) -> dict[str, Any]
     selected = select_agent_backend({"agent_backend": backend})
     raw = config.get(selected)
     selected_config = dict(raw) if isinstance(raw, dict) else {}
+    for key in ("assistant_context", "workspace_read_paths"):
+        if key in config:
+            selected_config[key] = config[key]
     selected_config["_backends"] = {
         name: dict(value)
         for name, value in {
