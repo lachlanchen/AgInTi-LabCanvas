@@ -48,6 +48,32 @@ def parse_quote_reference(value: Any) -> dict[str, str] | None:
     return None
 
 
+def without_quoted_evidence(value: Any) -> str:
+    """Remove native or rendered reply evidence only for authorization checks."""
+    reference = parse_quote_reference(value)
+    if reference is not None:
+        return reference["request"]
+    text = str(value or "")
+    parts: list[str] = []
+    start = 0
+    for match in re.finditer(r"\[quoted\s", text, re.I):
+        if match.start() < start:
+            continue
+        parts.append(text[start:match.start()])
+        depth = 1
+        end = match.end()
+        while end < len(text) and depth:
+            if text[end] == "[":
+                depth += 1
+            elif text[end] == "]":
+                depth -= 1
+            end += 1
+        # Incomplete quoted previews cannot grant permission either.
+        start = end
+    parts.append(text[start:])
+    return "".join(parts)
+
+
 def exact_task_source_row(task: dict[str, Any]) -> dict[str, Any]:
     source = task.get("source") or {}
     chat = str(task.get("chat") or "")

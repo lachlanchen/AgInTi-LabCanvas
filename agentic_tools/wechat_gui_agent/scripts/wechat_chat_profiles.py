@@ -31,6 +31,20 @@ SHARED_CAPABILITIES = (
     "artifact_delivery_to_source_chat",
 )
 
+
+def public_video_publication_enabled(config: dict[str, Any]) -> bool:
+    """An operator's explicit denial is independent of conversational intent."""
+    if "public_publish_enabled" in config and config["public_publish_enabled"] is not True:
+        return False
+    profile = config.get("capability_profile")
+    if not isinstance(profile, dict):
+        profile = profile_for_chat(
+            str(config.get("chat_name") or config.get("chat") or ""),
+            profile_id=str(config.get("profile_id") or ""),
+        )
+    capabilities = profile.get("capabilities")
+    return not isinstance(capabilities, (list, tuple)) or "explicitly_authorized_video_publication" in capabilities
+
 LABAGENT_CAPABILITIES = tuple(
     capability
     for capability in SHARED_CAPABILITIES

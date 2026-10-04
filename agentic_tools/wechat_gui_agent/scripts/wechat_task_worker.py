@@ -33,7 +33,7 @@ from wechat_agent_backend import (
     run_agent_session as run_codex_session,
     select_agent_backend,
 )
-from wechat_chat_profiles import profile_for_chat
+from wechat_chat_profiles import profile_for_chat, public_video_publication_enabled
 from wechat_history_rag import build_history_context, build_wecom_history_context
 from wechat_completion_audit import (
     coverage_items as completion_coverage_items,
@@ -9333,6 +9333,20 @@ def run_task_orchestrator(task: dict[str, Any], policy: dict[str, Any]) -> str:
     Codex worker session below.
     """
     enforce_current_task_route_safety(task)
+    if not worker_public_publish_enabled(task) and (
+        task_route_decision(task).get("route_kind") == "publish_video"
+        or task_route_decision(task).get("public_publish_allowed")
+        or (task.get("routine") or {}).get("id") == "video_publish_existing"
+    ):
+        task.setdefault("route_decision", {}).update({
+            "public_publish_enabled": False,
+            "public_publish_allowed": False,
+            "public_publish_intent": False,
+            "external_action_allowed": False,
+        })
+        task["publication_blocked_reason"] = "disabled_by_chat_operator"
+        return json.dumps({"message": "", "files": [], "no_reply": True,
+                           "data": {"publication_blocked_reason": task["publication_blocked_reason"]}})
     artifact_dir = worker_artifact_dir(task)
     artifact_dir.mkdir(parents=True, exist_ok=True)
     task.setdefault("artifact_dir", str(artifact_dir))
@@ -10148,6 +10162,7 @@ def aginti_worker_task_view(task: dict[str, Any]) -> dict[str, Any]:
                 "style",
                 "artifact_delivery",
                 "no_reply_allowed",
+                "public_publish_enabled",
                 "capability_profile",
             )
             if response_policy.get(key) not in (None, "", [], {})
@@ -10396,7 +10411,7 @@ def build_aginti_worker_prompt(task: dict[str, Any]) -> str:
             repair.pop("missing_items", None)
             repair.pop("artifact_repair", None)
             packet_view["completion_audit_repair"] = repair
-    packet = json.dumps(packet_view, ensure_ascii=False, indent=2)
+    packet = json.dumps(packet_view, ensure_ascii=False, indent=1)
     matched_routine_note = build_matched_workspace_routine_context(task)
     evidence_scope_payload = {
         "mode": evidence_scope_mode,
@@ -10892,6 +10907,7 @@ def worker_response_policy(task: dict[str, Any]) -> dict[str, Any]:
         ),
         "cross_chat_context_allowed": False,
         "cross_chat_artifacts_allowed": False,
+        **({"public_publish_enabled": False} if not worker_public_publish_enabled(task) else {}),
         "capability_profile": capability_profile,
         "explicit_request_overrides_focus": True,
         "sender_attribution": "preserve_each_message_author",
@@ -10904,6 +10920,27 @@ def worker_response_policy(task: dict[str, Any]) -> dict[str, Any]:
             )
         ),
     }
+
+
+def worker_public_publish_enabled(task: dict[str, Any]) -> bool:
+    """Recheck operator permissions, including tasks queued before a revocation."""
+    raw = task.get("response_policy")
+    policy = dict(raw) if isinstance(raw, dict) else {"chat": task.get("chat")}
+    if not public_video_publication_enabled(policy):
+        return False
+    source = task.get("source") if isinstance(task.get("source"), dict) else {}
+    config_id = Path(str(source.get("config_id") or "")).name
+    if config_id:
+        path = PRIVATE / config_id
+        if path.is_file():
+            try:
+                config = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                return False
+            if not isinstance(config, dict) or config.get("chat_name") != task.get("chat"):
+                return False
+            return public_video_publication_enabled(config)
+    return True
 
 
 def worker_response_policy_instruction(policy: dict[str, Any]) -> str:
@@ -10928,6 +10965,8 @@ def worker_response_policy_instruction(policy: dict[str, Any]) -> str:
         "Per-chat response policy: "
         + language_rule
         + profile_rule
+        + (" Publication is disabled here: discussion is allowed, execution and consent tasks are not."
+           if policy.get("public_publish_enabled") is False else "")
         + " Preserve the sender attached to every source/context row. Never transfer one person's "
         + "statement, criticism, preference, or request to another person. Never use context or artifacts "
         + "from another chat."
@@ -20416,10 +20455,12 @@ def wants_lazyedit_import(text: str) -> bool:
 
 
 def generated_video_public_publish_allowed(task: dict[str, Any]) -> bool:
-    return bool(generated_video_stage_permissions(task).get("public_publish"))
+    return worker_public_publish_enabled(task) and bool(generated_video_stage_permissions(task).get("public_publish"))
 
 
 def run_generated_video_lazyedit_command(video_path: Path, task: dict[str, Any], monitor: dict[str, Any], *, publish: bool) -> dict[str, Any]:
+    if publish and not worker_public_publish_enabled(task):
+        return {"ok": False, "status": "publication_disabled_by_chat_operator"}
     if os.environ.get("WECHAT_WORKER_DISABLE_GENERATED_VIDEO_LAZYEDIT"):
         return {"ok": False, "status": "disabled-by-env"}
     timeout = float(os.environ.get("WECHAT_WORKER_GENERATED_VIDEO_LAZYEDIT_TIMEOUT", str(DEFAULT_GENERATED_VIDEO_LAZYEDIT_TIMEOUT_SECONDS)))
@@ -20576,6 +20617,8 @@ def append_lazyedit_context_once(path: Path, marker: str, body: str) -> None:
 
 
 def should_deterministic_video_publish(task: dict[str, Any]) -> bool:
+    if not worker_public_publish_enabled(task):
+        return False
     if os.environ.get("WECHAT_WORKER_DISABLE_DETERMINISTIC_VIDEO_PUBLISH"):
         return False
     route = task_route_decision(task)
@@ -20604,6 +20647,8 @@ def should_deterministic_video_publish(task: dict[str, Any]) -> bool:
 
 
 def run_deterministic_lazyedit_publish(task: dict[str, Any], autopub: dict[str, Any]) -> str | None:
+    if not worker_public_publish_enabled(task):
+        return None
     target_raw = str(autopub.get("target") or "")
     if not target_raw:
         return None

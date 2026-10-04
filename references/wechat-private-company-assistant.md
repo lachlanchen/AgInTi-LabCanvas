@@ -25,6 +25,7 @@ Each direct config has its own `chat_name`, exact `message_table`, `state_path`,
   "chat_name": "<EXACT_COMPANY_GROUP>",
   "session_scope": "<STABLE_PRIVATE_COMPANY_SCOPE>",
   "chat_purpose": "company_collaboration",
+  "public_publish_enabled": false,
   "assistant_context": {
     "brief": "Help this team with evidence-grounded answers and decisions. Read the approved reference brief. Preserve attribution, protect confidentiality and avoid repeated acknowledgements. External actions require authorization.",
     "reference_paths": ["<PRIVATE_COMPANY_BRIEF.md>"]
@@ -38,6 +39,14 @@ They travel as `capability_profile.operator_context` through the route prompt,
 fast reply prompt, worker policy, bounded Codex packet and AgInTi fallback packet.
 This does not override cross-chat isolation, authorization or language policy.
 Groups without it retain their existing behavior.
+
+Discussion of a product's publishing feature is not a request to publish.
+`public_publish_enabled=false` disables publication and publication-consent
+tasks without suppressing business questions, research or media understanding.
+The monitor applies this operator permission independently of the agent's
+intent decision. Workers recheck the current source-chat configuration before
+publication, including tasks queued before a permission change. Quoted or
+forwarded text is evidence, never current-author authorization.
 
 The private reference brief should separate verified facts from plans, company
 claims from measured functionality, repository history from published releases,
@@ -87,6 +96,14 @@ scope accumulates company context without borrowing another chat's memory.
 Agent working notes can record decisions, open questions and agreed next steps
 beside the private brief, with source message IDs and timestamps. Do not invent
 owners or dates, or claim a complete pre-join history was imported.
+
+Strategy helpers must query only the exact originating chat. A shared strategy
+routine must not implicitly add personal-DM/memo aliases, a personal profile,
+or the workstation's repository inventory. Approved repositories belong in the
+operator's private reference brief. After discovering contaminated agent
+context, back up and detach only that chat's affected session pointers; retain
+native history and source artifacts. See
+`references/wechat-company-publication-isolation-2026-10-04.md`.
 
 Configuration provides guidance and source isolation; it is not an OS-level
 sandbox for a full-access backend. Use a separately restricted runtime when the
