@@ -329,31 +329,16 @@ Current OCR:
 Triggered text:
 {trigger_text[-3000:]}
 """
-    with tempfile.NamedTemporaryFile("w+", encoding="utf-8", delete=False) as out:
-        output_path = Path(out.name)
-    command = [
-        "codex",
-        "exec",
-        "-m",
-        config.codex.model,
-        "-c",
-        f'model_reasoning_effort="{config.codex.reasoning_effort}"',
-        "--sandbox",
-        config.codex.sandbox,
-        "-C",
-        str(config.codex.workdir),
-        "-o",
-        str(output_path),
-    ]
-    if screenshot:
-        command.extend(["-i", str(screenshot)])
-    command.append(prompt)
-    proc = subprocess.run(command, capture_output=True, text=True, timeout=config.codex.timeout_seconds, check=False)
-    if proc.returncode != 0:
-        return f"Codex bridge error: {proc.stderr.strip()[:500] or proc.stdout.strip()[:500]}"
-    response = output_path.read_text(encoding="utf-8", errors="replace").strip()
-    output_path.unlink(missing_ok=True)
-    return response
+    from wechat_codex_sessions import run_codex_across_accounts
+    result = run_codex_across_accounts(
+        prompt, thread_id="", model=config.codex.model,
+        reasoning_effort=config.codex.reasoning_effort, sandbox=config.codex.sandbox,
+        workdir=config.codex.workdir, timeout_seconds=config.codex.timeout_seconds,
+        web_search=False, image_paths=(screenshot,) if screenshot else (),
+    )
+    if not result.get("ok"):
+        return f"Codex bridge error: {str(result.get('stderr_tail') or '')[:500]}"
+    return str(result.get("message") or "").strip()
 
 
 def clean_response(response: str, max_chars: int) -> str:

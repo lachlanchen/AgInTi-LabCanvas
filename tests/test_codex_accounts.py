@@ -76,7 +76,31 @@ class CodexAccountPoolTests(unittest.TestCase):
                     profile_root=root,
                 )
 
-        self.assertEqual(selected, ["lab", "personal"])
+        self.assertEqual(selected, ["lab"])
+
+    def test_unknown_or_stale_profile_never_falls_through_to_credits(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "profiles"
+            profile = root / "company"
+            profile.mkdir(parents=True)
+            (profile / "profile.conf").touch()
+            cache = Path(tmp) / "pool.json"
+            for status in ({}, {"ok": True, "codex_available": True,
+                               "remaining_percent": 100,
+                               "observed_at_epoch": time.time() - 1000}):
+                cache.write_text(json.dumps({"accounts": {"company": status}}))
+                with mock.patch.dict(os.environ, {"LABCANVAS_CODEX_ACCOUNT": "company"}):
+                    self.assertEqual(codex_accounts.codex_account_candidates(
+                        cache_path=cache, profile_root=root), [])
+
+    def test_no_unknown_default_account_when_no_verified_quota(self) -> None:
+        with mock.patch.object(codex_accounts, "codex_reserve_candidates", return_value=[]):
+            self.assertEqual(list(codex_accounts.codex_account_attempts([], "gpt-6-astra")), [])
+
+    def test_no_regular_quota_uses_explicit_reserve_model(self) -> None:
+        reserve = {"account": "company", "model": "gpt-5.6-luna", "quota_pool": "reserve"}
+        with mock.patch.object(codex_accounts, "codex_reserve_candidates", return_value=[reserve]):
+            self.assertEqual(list(codex_accounts.codex_account_attempts([], "gpt-6-astra")), [reserve])
 
     def test_agentshell_command_keeps_account_before_codex_arguments(self) -> None:
         with mock.patch.object(codex_accounts, "resolve_agent_codex_binary", return_value="/usr/bin/agent-codex"):

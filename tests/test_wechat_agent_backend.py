@@ -1956,7 +1956,7 @@ class WeChatAgentBackendTests(unittest.TestCase):
 
         self.assertEqual(reason, "strict_json_contract_rejected")
 
-    def test_codex_quota_retries_once_when_purchased_credits_are_available(self) -> None:
+    def test_global_policy_vetoes_local_purchased_credit_retry(self) -> None:
         backend = load_backend()
         calls: list[dict[str, object]] = []
         original = backend.run_codex_session
@@ -2000,13 +2000,9 @@ class WeChatAgentBackendTests(unittest.TestCase):
         finally:
             backend.run_codex_session = original
 
-        self.assertTrue(result["ok"])
-        self.assertEqual(len(calls), 2)
-        self.assertTrue(result["backend_attempts"][1]["credit_retry"])
-        self.assertEqual(
-            result["backend_attempts"][1]["fallback_reason"],
-            "codex_purchased_credit_retry",
-        )
+        self.assertFalse(result["ok"])
+        self.assertEqual(len(calls), 1)
+        self.assertFalse(any(attempt.get("credit_retry") for attempt in result["backend_attempts"]))
 
     def test_metadata_only_aginti_fallback_is_rejected(self) -> None:
         backend = load_backend()

@@ -160,6 +160,9 @@ class WeChatWorkspaceTests(unittest.TestCase):
         binary = sessions.resolve_codex_binary()
         if not binary:
             self.skipTest("Codex native sandbox unavailable")
+        interpreter = Path("/usr/bin/python3")
+        if not interpreter.is_file():
+            self.skipTest("Native sandbox probe requires its allowlisted system Python")
         with tempfile.TemporaryDirectory(dir=ROOT / "output") as directory:
             base = Path(directory)
             own = base / "group"
@@ -189,7 +192,7 @@ print(json.dumps(result))
                 args = workspace.codex_workspace_permissions(own, "workspace-write", codex_binary=binary)
             result = subprocess.run(
                 [binary, "sandbox", "-P", "labcanvas-chat", "-C", str(own),
-                 *args, "--", sys.executable, "-c", script],
+                 *args, "--", str(interpreter), "-c", script],
                 capture_output=True, text=True, timeout=20,
             )
             self.assertEqual(result.returncode, 0, result.stderr)

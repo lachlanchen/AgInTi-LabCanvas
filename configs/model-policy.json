@@ -3,6 +3,7 @@
   "codex": {
     "account_pool": "agentshell",
     "primary_model": "gpt-6-astra",
+    "allow_paid_credits": false,
     "reserve_enabled": true,
     "reserve_model": "gpt-5.6-luna",
     "fallback_backend": "aginti",
@@ -95,5 +96,5 @@
     "send_output": false,
     "safe_task_only": true
   },
-  "notes": "GPT-6 Astra is the default. AgentShell selects existing accounts with regular quota or usable credits, then tries GPT-5.6 Luna only for a fresh explicitly observed reserve allowance on an exhausted account. Reserve is separate from regular quota; never infer reserve access from a low percentage. GPT-5.6 SOL remains the model-unavailable compatibility fallback. AgInTi follows Codex availability. Preserve per-conversation shared history and do not replay after side-effecting tool activity."
+  "notes": "GPT-6 Astra is the default. Paid Codex credits are prohibited for all LabCanvas chat and scheduled work. AgentShell selects only accounts with fresh verified subscription quota, then GPT-5.6 Luna with an explicitly observed reserve allowance. Unknown/exhausted accounts are not paid-credit fallbacks. Reserve is separate from regular quota; never infer reserve access from a low percentage. GPT-5.6 SOL remains the model-unavailable compatibility fallback. AgInTi follows Codex availability. Preserve per-conversation shared history and do not replay after side-effecting tool activity."
 }

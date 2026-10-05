@@ -12585,7 +12585,9 @@ def prepare_worker_preflight(task: dict[str, Any], artifact_dir: Path) -> dict[s
         and not file_intake_has_explicit_non_image_request_files(task)
     ):
         media_task = source_scoped_file_intake_task(task) if is_file_intake_task(task) else task
-        preflight["media_resolution"] = prepare_media_resolution_preflight(media_task, artifact_dir)
+        preflight["media_resolution"] = prepare_media_resolution_preflight(
+            media_task, artifact_dir, image_context_task=task,
+        )
         task["preflight"] = preflight
     if native_wechat_transport and task_requests_local_download_save(task):
         preflight["local_file_save"] = prepare_local_download_save_preflight(task, preflight)
@@ -15421,15 +15423,21 @@ def should_prepare_media_resolution(task: dict[str, Any]) -> bool:
     return source_kind in {"image", "video", "file", "file/link", "voice", "audio"} or source_type in {3, 34, 43, 49}
 
 
-def prepare_media_resolution_preflight(task: dict[str, Any], artifact_dir: Path) -> dict[str, Any]:
-    native_image = uses_tiny11_wechat(task) and task_source_is_image(task)
+def prepare_media_resolution_preflight(
+    task: dict[str, Any], artifact_dir: Path, *,
+    image_context_task: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    from wechat_tiny11_image import coalesced_image_sources
+    native_image = uses_tiny11_wechat(task) and (
+        task_source_is_image(task) or bool(coalesced_image_sources(task))
+    )
     native_candidates = []
     gui_cache_probe: dict[str, Any] = {}
     second_refresh: dict[str, Any] = {}
     if native_image:
         try:
-            from wechat_tiny11_image import recover_image
-            native_candidates = [recover_image(task, artifact_dir / "native_image")]
+            from wechat_tiny11_image import recover_images
+            native_candidates = recover_images(task, artifact_dir / "native_image")
             refresh = {"status": "ok", "transport": "wechat_tiny11_image"}
         except Exception as exc:
             refresh = {"status": "failed", "transport": "wechat_tiny11_image",
@@ -15446,7 +15454,7 @@ def prepare_media_resolution_preflight(task: dict[str, Any], artifact_dir: Path)
                     for attempt, delay in enumerate((0.5, 2, 5), start=1):
                         time.sleep(delay)
                         try:
-                            native_candidates = [recover_image(task, artifact_dir / "native_image")]
+                            native_candidates = recover_images(task, artifact_dir / "native_image")
                             second_refresh = {"status": "ok", "attempts": attempt,
                                               "transport": "wechat_tiny11_image"}
                             break
@@ -15516,7 +15524,7 @@ def prepare_media_resolution_preflight(task: dict[str, Any], artifact_dir: Path)
     source_dir = artifact_dir / "source_media"
     copied: list[dict[str, Any]] = []
     skipped: list[dict[str, str]] = []
-    for index, item in enumerate(candidates[:8], start=1):
+    for index, item in enumerate(candidates if native_image else candidates[:8], start=1):
         source = Path(str(item.get("mirror_path") or "")).expanduser()
         if not source.is_file():
             skipped.append({"path": str(source), "reason": "missing"})
@@ -15539,7 +15547,9 @@ def prepare_media_resolution_preflight(task: dict[str, Any], artifact_dir: Path)
                 "sha256": sha256_file(target),
             }
         )
-    enrich_media_resolution_copies_with_image_read(copied, artifact_dir, task=task)
+    enrich_media_resolution_copies_with_image_read(
+        copied, artifact_dir, task=image_context_task or task,
+    )
     enrich_copies_with_document_read(copied, artifact_dir / "document_read")
     manifest = {
         "task_id": task.get("id"),
@@ -16071,6 +16081,21 @@ def enrich_media_resolution_copies_with_image_read(
     task: dict[str, Any] | None = None,
 ) -> None:
     prompt_context = image_read_prompt_context(task or {})
+    album = bool(copied) and all(
+        item.get("album_count") == len(copied)
+        and item.get("original_resolution_verified") is True
+        and image_file_metadata(Path(str(item.get("task_copy_path") or ""))).get("status") == "ok"
+        for item in copied
+    )
+    if album and not all(image_vision_result_is_usable(item.get("vision") or {}) for item in copied):
+        paths = tuple(Path(item["task_copy_path"]) for item in copied)
+        result = codex_read_image_file(
+            paths[0], artifact_dir / "image_text", prompt_context=prompt_context,
+            additional_images=paths[1:],
+        )
+        if image_vision_result_is_usable(result):
+            for item in copied:
+                item["vision"] = {**result, "album_index": item["album_index"]}
     for item in copied:
         if not isinstance(item, dict):
             continue
@@ -16141,6 +16166,10 @@ def image_read_prompt_context(task: dict[str, Any]) -> str:
     if not task:
         return ""
     parts: list[str] = []
+    if task.get("reprocess_reason"):
+        parts.append("Current correction: " + sanitize_worker_agent_text(
+            task["reprocess_reason"], max_len=800,
+        ))
     focus = re.sub(r"<[^>]*>", " ", task_focus_text(task))
     focus = collapse_context_text(focus, max_len=1000)
     generic_markers = (
@@ -16306,6 +16335,7 @@ def codex_read_image_file(
     output_dir: Path,
     *,
     prompt_context: str = "",
+    additional_images: tuple[Path, ...] = (),
 ) -> dict[str, Any]:
     if os.environ.get("WECHAT_WORKER_DISABLE_CODEX_IMAGE_READ"):
         return {"status": "skipped", "reason": "disabled"}
@@ -16317,44 +16347,41 @@ def codex_read_image_file(
     effort = os.environ.get("WECHAT_IMAGE_READ_EFFORT", "low")
     timeout = float(os.environ.get("WECHAT_IMAGE_READ_TIMEOUT", "90"))
     prompt, context_used = image_read_prompt(prompt_context)
-    command = [
-        "codex",
-        "exec",
-        "--json",
-        "-m",
-        model,
-        "-c",
-        f'model_reasoning_effort="{effort}"',
-        "--sandbox",
-        "read-only",
-        "-C",
-        str(ROOT),
-        "-i",
-        str(path),
-        "-o",
-        str(text_path),
-        prompt,
-    ]
+    if additional_images:
+        prompt += (
+            f"\nThese {1 + len(additional_images)} images are one ordered native WeChat album. "
+            "Read every image, including its text. Consider their relationship and answer the "
+            "request once from the complete set, distinguishing image positions when necessary. "
+            "Do not infer unreadable content from another image or treat the album as one thumbnail."
+        )
+    from wechat_codex_sessions import run_codex_across_accounts
+    workdir = next((parent for parent in output_dir.resolve().parents
+                    if parent.parent == ROOT / "output" / "chat_workspaces"), ROOT)
     try:
-        proc = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, check=False, timeout=timeout)
+        result = run_codex_across_accounts(
+            prompt, thread_id="", model=model, reasoning_effort=effort,
+            sandbox="read-only", timeout_seconds=int(timeout), workdir=workdir,
+            web_search=False, image_paths=(path, *additional_images),
+        )
     except subprocess.TimeoutExpired as exc:
         return {"status": "timeout", "model": model, "reasoning_effort": effort, "timeout_seconds": exc.timeout}
     except (OSError, subprocess.SubprocessError) as exc:
         return {"status": "error", "model": model, "reasoning_effort": effort, "error": str(exc)[:300]}
-    text = normalize_ocr_text(text_path.read_text(encoding="utf-8", errors="replace") if text_path.exists() else "")
+    text = normalize_ocr_text(str(result.get("message") or "") if result.get("ok") else "")
     if text:
         text_path.write_text(text + "\n", encoding="utf-8")
     return {
-        "status": "ok" if proc.returncode == 0 and text else ("empty" if proc.returncode == 0 else "failed"),
+        "status": "ok" if result.get("ok") and text else ("empty" if result.get("ok") else "failed"),
         "text_path": str(text_path),
         "text_preview": collapse_context_text(text, max_len=700),
-        "model": model,
+        "model": result.get("model") or model,
+        "quota_pool": result.get("quota_pool"),
         "reasoning_effort": effort,
         "provider": "codex",
         "response_style": "natural_semantic",
         "context_used": context_used,
-        "returncode": proc.returncode,
-        "stderr": collapse_context_text(proc.stderr, max_len=500) if proc.stderr.strip() else "",
+        "returncode": result.get("returncode"),
+        "stderr": collapse_context_text(str(result.get("stderr_tail") or ""), max_len=500),
     }
 
 
@@ -16600,7 +16627,13 @@ def prepare_file_intake_preflight(task: dict[str, Any], artifact_dir: Path) -> d
     source_items = extract_file_intake_source_items(task)
     copied: list[dict[str, Any]] = []
     skipped: list[dict[str, str]] = []
-    limit = 1 if task_source_is_image(task) or any(item_path_suffix(item) in OCR_IMAGE_SUFFIXES for item in source_items[:1]) else 8
+    complete_album = bool(source_items) and all(
+        isinstance(item, dict) and item.get("album_count") == len(source_items)
+        and item.get("original_resolution_verified") is True for item in source_items
+    )
+    limit = len(source_items) if complete_album else (
+        1 if task_source_is_image(task) or any(item_path_suffix(item) in OCR_IMAGE_SUFFIXES for item in source_items[:1]) else 8
+    )
     for index, item in enumerate(source_items[:limit], start=1):
         source = source_item_path(item)
         if not source.is_file():
@@ -16642,6 +16675,9 @@ def prepare_file_intake_preflight(task: dict[str, Any], artifact_dir: Path) -> d
                 "original_resolution_verified",
                 "width",
                 "height",
+                "album_count",
+                "album_index",
+                "source_server_id",
             ):
                 if key in item:
                     copied_item[key] = item[key]
@@ -19567,6 +19603,10 @@ def deterministic_file_intake_result(task: dict[str, Any]) -> str | None:
         file_count = len(copied)
         first = copied[0] if isinstance(copied[0], dict) else {}
         if intake_item_is_image(first):
+            if task.get("reprocess_reason") or task_interruptions(task):
+                # Corrections and follow-ups need the resumed chat agent, not
+                # an unchanged caption returned directly from intake.
+                return None
             message = image_intake_description_message(first)
             status = "image_read"
             saved = str(first.get("saved_path") or "")

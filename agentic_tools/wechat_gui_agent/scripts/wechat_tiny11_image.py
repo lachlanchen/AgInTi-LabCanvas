@@ -11,6 +11,7 @@ import sqlite3
 import subprocess
 import time
 import xml.etree.ElementTree as ET
+from wechat_combined_images import combined_image_group, same_image_group
 
 from PIL import Image
 
@@ -49,6 +50,7 @@ def image_request(task, config, store):
                'server_id': str(row[1]), 'create_time': int(row[2])}
     # Signed CDN URLs and AES keys never leave the source database in this packet.
     attrs = {key: img.get(key, '') for key in ('md5', 'length', 'hdlength', 'cdnthumbwidth', 'cdnthumbheight')}
+    attrs['combined_image'] = combined_image_group(text)
     return request, attrs
 
 
@@ -150,7 +152,104 @@ def recover_image(task, output_dir, *, provision_key=False):
             'size_bytes': target.stat().st_size, 'status': 'copied', 'score': 1000,
             'matched_by': 'native-image-exact-message-resource', 'match_reasons': ['exact_message', 'resource_database'],
             'fidelity': 'native_full_image', 'original_resolution_verified': True,
+            'combined_image': attrs.get('combined_image'),
             'width': width, 'height': height, 'metadata': {'export_manifest': str(manifest)}}
+
+
+def image_group_tasks(task, group, config, store):
+    from wechat_direct_chatops import decode_content
+    # Validate the anchor through the existing account/chat/message contract.
+    image_request(task, config, store)
+    source = task['source']
+    table = source['message_table']
+    with closing(sqlite3.connect(Path(store).resolve().as_uri() + '?mode=ro', uri=True)) as conn:
+        anchor = conn.execute(f'SELECT real_sender_id FROM "{table}" WHERE local_id=?',
+                              (source['local_id'],)).fetchone()
+        rows = conn.execute(
+            f'SELECT local_id,server_id,create_time,local_type,real_sender_id,'
+            f'message_content,compress_content,WCDB_CT_message_content FROM "{table}" '
+            'WHERE (local_type & 4294967295) IN (3,43) ORDER BY local_id DESC LIMIT 10000',
+        ).fetchall()
+    members = []
+    for local_id, server_id, created, kind, sender, *body in rows:
+        candidate = combined_image_group(decode_content(*body))
+        if not candidate or candidate['id'] != group['id']:
+            continue
+        if not same_image_group(candidate, group) or sender != anchor[0]:
+            raise ValueError('image_group_identity_mismatch')
+        if int(kind) & 0xffffffff != 3:
+            raise ValueError('mixed_image_video_group_requires_separate_video_intake')
+        members.append({**task, 'source': {**source, 'local_id': local_id,
+                                         'server_id': str(server_id), 'create_time': created,
+                                         'local_type': kind}})
+    members.sort(key=lambda item: item['source']['local_id'])
+    if len(members) != group['count'] or len({m['source']['server_id'] for m in members}) != len(members):
+        raise ValueError('combined_image_members_incomplete')
+    return members
+
+
+def coalesced_image_sources(task):
+    """Current numbered inputs only; nearby history cannot select an image."""
+    source = task.get('source') or {}
+    return [entry for entry in task.get('message_ledger') or []
+            if isinstance(entry, dict) and entry.get('kind') == 'image'
+            and entry.get('role') == 'coalesced_source'
+            and entry.get('chat') == task.get('chat')
+            and entry.get('message_db') == source.get('message_db')
+            and entry.get('local_id') is not None and entry.get('server_id')]
+
+
+def coalesced_image_task(task, config, store):
+    sources = coalesced_image_sources(task)
+    if not sources:
+        raise ValueError('coalesced_image_source_missing')
+    candidates = []
+    for source in sources:
+        candidate = {**task, 'source': {**task['source'],
+            **{key: source.get(key) for key in (
+                'local_id', 'server_id', 'create_time', 'sender', 'sender_display')},
+            'kind': 'image', 'local_type': 3}}
+        _, attrs = image_request(candidate, config, store)
+        candidates.append((candidate, attrs.get('combined_image')))
+    if len(candidates) > 1 and not all(
+            same_image_group(group, candidates[0][1]) for _, group in candidates):
+        raise ValueError('ambiguous_coalesced_image_groups')
+    return min(candidates, key=lambda item: int(item[0]['source']['local_id']))[0]
+
+
+def recover_images(task, output_dir):
+    """Recover each original in native album order, or retain an explicit blocker."""
+    if coalesced_image_sources(task) and (task.get('source') or {}).get('kind') != 'image':
+        from wechat_tiny11_bridge import CONFIG, STORE, load_config
+        task = coalesced_image_task(task, load_config(CONFIG), STORE)
+    first = recover_image(task, output_dir)
+    group = first.pop('combined_image', None)
+    if not group:
+        return [first]
+    from wechat_tiny11_bridge import CONFIG, STORE, load_config
+    config = load_config(CONFIG)
+    # A snapshot may contain the first row before the rest of its native album.
+    # Wait only for exact group members; mismatched identity fails immediately.
+    for delay in (0.25, 0.75, 2, None):
+        try:
+            members = image_group_tasks(task, group, config, STORE)
+            break
+        except ValueError as exc:
+            if str(exc) != 'combined_image_members_incomplete' or delay is None:
+                raise
+            time.sleep(delay)
+    copies = []
+    for index, member in enumerate(members, start=1):
+        same_source = str(member['source']['server_id']) == str(task['source']['server_id'])
+        item = first if same_source else recover_image(member, Path(output_dir) / f'image-{index:03d}')
+        item.pop('combined_image', None)
+        item.update({'album_index': index, 'album_count': len(members),
+                     'source_server_id': member['source']['server_id']})
+        copies.append(item)
+    manifest = Path(output_dir) / 'native-combined-image-export.json'
+    manifest.write_text(json.dumps({'count': len(copies), 'images': copies}, indent=2), encoding='utf-8')
+    manifest.chmod(0o600)
+    return copies
 
 
 def install_decoder(decoder_root):

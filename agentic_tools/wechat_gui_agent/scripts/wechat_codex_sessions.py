@@ -157,6 +157,7 @@ def run_codex_with_startup_retries(
     workdir: Path,
     web_search: bool,
     agentshell_account: str = "",
+    image_paths: tuple[Path, ...] = (),
 ) -> dict[str, Any]:
     """Retry only failures proven to occur before a Codex turn starts."""
     max_retries = max(0, int(os.environ.get("WECHAT_CODEX_STARTUP_RETRIES", "2")))
@@ -177,6 +178,7 @@ def run_codex_with_startup_retries(
             workdir=workdir,
             web_search=web_search,
             agentshell_account=agentshell_account,
+            **({"image_paths": image_paths} if image_paths else {}),
         )
         if not codex_startup_retryable(result) or retry_index >= max_retries:
             break
@@ -199,11 +201,16 @@ def run_codex_across_accounts(
     timeout_seconds: int,
     workdir: Path,
     web_search: bool,
+    image_paths: tuple[Path, ...] = (),
 ) -> dict[str, Any]:
     """Try cached available accounts, but only before a turn or tool starts."""
     accounts = codex_account_candidates()
     attempts: list[dict[str, Any]] = []
-    result: dict[str, Any] = {}
+    result: dict[str, Any] = {
+        "ok": False, "returncode": 69, "message": "",
+        "stderr_tail": "No verified Codex subscription or reserve quota available; paid credits are disabled.",
+        "execution_started": False, "tool_activity": False,
+    }
     for candidate in codex_account_attempts(accounts, model):
         account = candidate["account"]
         result = run_codex_with_startup_retries(
@@ -216,6 +223,7 @@ def run_codex_across_accounts(
             workdir=workdir,
             web_search=web_search,
             agentshell_account=account,
+            **({"image_paths": image_paths} if image_paths else {}),
         )
         result["agentshell_account"] = account
         result["model"] = candidate["model"]
@@ -523,6 +531,7 @@ def run_codex_once(
     workdir: Path,
     web_search: bool = False,
     agentshell_account: str = "",
+    image_paths: tuple[Path, ...] = (),
 ) -> dict[str, Any]:
     with tempfile.NamedTemporaryFile("w+", encoding="utf-8", delete=False) as out:
         output_path = Path(out.name)
@@ -580,6 +589,8 @@ def run_codex_once(
         offset = command.index("--sandbox")
         del command[offset:offset + 2]
         command += codex_workspace_permissions(workdir, sandbox, codex_binary=codex_bin)
+    for image_path in image_paths:
+        command += ["-i", str(image_path)]
     if thread_id:
         command += ["resume", thread_id, "-"]
     else:

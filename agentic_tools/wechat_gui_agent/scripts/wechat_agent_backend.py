@@ -745,6 +745,10 @@ def fallback_after_readonly_tool_activity_enabled(config: dict[str, Any]) -> boo
 
 
 def codex_credit_retry_enabled(config: dict[str, Any]) -> bool:
+    from agenticapp.codex_accounts import paid_codex_credits_allowed
+
+    if not paid_codex_credits_allowed():
+        return False
     fallback_config = fallback_config_dict(config)
     return bool(fallback_config.get("purchased_credit_retry", True))
 

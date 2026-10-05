@@ -30,6 +30,7 @@ from agenticapp.codex_accounts import (  # noqa: E402
     agentshell_codex_command,
     best_cached_codex_status,
     discover_agentshell_accounts,
+    paid_codex_credits_allowed,
 )
 
 DEFAULT_CACHE = Path(
@@ -77,6 +78,8 @@ def credit_warning_floor() -> Decimal:
 
 
 def purchased_credits_suppress_warning(status: dict[str, Any]) -> bool:
+    if not paid_codex_credits_allowed():
+        return False
     credits = status.get("credits") if isinstance(status.get("credits"), dict) else {}
     if not credits.get("has_credits"):
         return False
@@ -90,8 +93,11 @@ def add_availability_fields(status: dict[str, Any]) -> dict[str, Any]:
     credits_available = codex_credits_available(enriched)
     remaining = float(enriched.get("remaining_percent") or 0)
     enriched["credits_available"] = credits_available
+    enriched["paid_credits_allowed"] = paid_codex_credits_allowed()
     enriched["weekly_quota_available"] = remaining > 0
-    enriched["codex_available"] = remaining > 0 or credits_available
+    enriched["codex_available"] = remaining > 0 or (
+        enriched["paid_credits_allowed"] and credits_available
+    )
     return enriched
 
 
@@ -532,7 +538,7 @@ def format_warning(status: dict[str, Any], *, request_text: str = "") -> str:
     remaining_text = f"{remaining:g}%"
     threshold_text = f"{threshold:g}%"
     credits = status.get("credits") if isinstance(status.get("credits"), dict) else {}
-    credits_available = codex_credits_available(status)
+    credits_available = paid_codex_credits_allowed() and codex_credits_available(status)
     balance = credit_balance_number(credits.get("balance"))
     balance_text = format(balance.normalize(), "f") if balance else "0"
     if request_uses_cjk(request_text):

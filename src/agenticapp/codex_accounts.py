@@ -35,6 +35,12 @@ ACCOUNT_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 DEFAULT_CACHE_MAX_AGE_SECONDS = 300.0
 
 
+def paid_codex_credits_allowed() -> bool:
+    from .backends import load_model_policy
+
+    return load_model_policy().get("codex", {}).get("allow_paid_credits") is True
+
+
 def _split_names(value: str | Iterable[str] | None) -> list[str]:
     if value is None:
         return []
@@ -144,7 +150,7 @@ def _status_is_fresh(status: dict[str, Any], max_age_seconds: float) -> bool:
     if runtime_unavailable_until > time.time():
         return False
     observed = float(status.get("observed_at_epoch") or 0)
-    if observed <= 0 or time.time() - observed > max(1.0, max_age_seconds):
+    if observed <= 0 or not 0 <= time.time() - observed <= max(1.0, max_age_seconds):
         return False
     reset_at = (status.get("window") or {}).get("resets_at")
     return not isinstance(reset_at, (int, float)) or reset_at > time.time()
@@ -216,7 +222,8 @@ def codex_account_candidates(
     discovered = [name for name in discovered if name not in excluded]
     pinned = configured_pinned_account()
     if pinned:
-        return [pinned] if pinned in discovered else []
+        discovered = [name for name in discovered if name == pinned]
+    allow_credits = paid_codex_credits_allowed()
 
     payload = load_account_pool_cache(cache_path)
     statuses = payload.get("accounts") if isinstance(payload.get("accounts"), dict) else {}
@@ -227,12 +234,14 @@ def codex_account_candidates(
         if float(status.get("runtime_unavailable_until") or 0) > time.time():
             continue
         if not status or not _status_is_fresh(status, max_age_seconds):
-            unknown.append(account)
+            if allow_credits:
+                unknown.append(account)
             continue
-        if status.get("ok") and status.get("codex_available"):
+        if (status.get("ok") and status.get("codex_available")
+                and (allow_credits or float(status.get("remaining_percent") or 0) > 0)):
             ranked.append((_account_rank(status, order), account))
     ranked.sort(key=lambda item: item[0], reverse=True)
-    # Unknown profiles remain eligible after positively available profiles.
+    # Unknown profiles may be tried only when the operator allows paid usage.
     return [account for _, account in ranked] + unknown
 
 
@@ -252,6 +261,15 @@ def best_cached_codex_status(
         if isinstance(status, dict) and status.get("ok"):
             # Account identity stays private; callers need only quota state.
             return dict(status)
+    reserves = codex_reserve_candidates(cache_path=cache_path, max_age_seconds=max_age_seconds)
+    if reserves:
+        status = dict(statuses[reserves[0]["account"]])
+        reserve = status["reserve"]
+        status.update({"normal_remaining_percent": status.get("remaining_percent"),
+                       "remaining_percent": reserve["remaining_percent"],
+                       "window": reserve.get("window", {}), "quota_pool": "reserve",
+                       "model": reserve["model"], "codex_available": True})
+        return status
     return {}
 
 
@@ -311,7 +329,7 @@ def codex_account_attempts(accounts: list[str], model: str) -> Iterator[dict[str
         if reserves:
             yield from reserves
             return
-    for account in accounts or [""]:
+    for account in accounts or ([""] if paid_codex_credits_allowed() else []):
         yield {"account": account, "model": model, "quota_pool": "regular"}
     # Evaluate lazily: callers record quota rejection before asking for the
     # next attempt. They must stop iterating if an answer or tool has started.

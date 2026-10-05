@@ -635,6 +635,21 @@ class WeChatCodexSessionTests(unittest.TestCase):
         self.assertEqual(result["account_failover_count"], 1)
         self.assertEqual(run.call_count, 2)
 
+    def test_no_verified_account_never_invokes_default_codex(self) -> None:
+        sessions = load_sessions()
+        with mock.patch.object(sessions, "codex_account_candidates", return_value=[]), \
+                mock.patch.object(sessions, "codex_account_attempts", return_value=iter(())), \
+                mock.patch.object(sessions, "run_codex_with_startup_retries") as run:
+            result = sessions.run_codex_across_accounts(
+                "hello", thread_id="same-thread", model="gpt-6-astra",
+                reasoning_effort="low", sandbox="read-only", timeout_seconds=30,
+                workdir=ROOT, web_search=False,
+            )
+        run.assert_not_called()
+        self.assertFalse(result["ok"])
+        self.assertFalse(result["execution_started"])
+        self.assertEqual(result["returncode"], 69)
+
     def test_account_pool_recognizes_quota_in_structured_error(self) -> None:
         sessions = load_sessions()
         exhausted = {

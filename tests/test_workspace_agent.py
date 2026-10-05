@@ -35,6 +35,21 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class WorkspaceAgentTests(unittest.TestCase):
+    def test_no_verified_account_never_invokes_default_codex(self):
+        with tempfile.TemporaryDirectory() as directory, \
+                patch("agenticapp.workspace_agent.codex_account_candidates", return_value=[]), \
+                patch("agenticapp.workspace_agent.codex_account_attempts", return_value=iter(())), \
+                patch("agenticapp.workspace_agent._run_codex_process") as run:
+            result = _run_codex_account_pool(
+                "continue", codex_bin="codex", thread_id="same-thread",
+                policy={"model": "gpt-6-astra"}, task_dir=Path(directory),
+                root=ROOT, pid_callback=None,
+            )
+        run.assert_not_called()
+        self.assertFalse(result["ok"])
+        self.assertFalse(result["execution_started"])
+        self.assertEqual(result["returncode"], 69)
+
     def test_workspace_reserve_fallback_preserves_session_and_stops_after_tools(self):
         candidates = [
             {"account": "lab", "model": "gpt-6-astra", "quota_pool": "regular"},

@@ -15,6 +15,7 @@ DEFAULT_MODEL_POLICY: dict[str, Any] = {
     "primary_backend": "codex",
     "codex": {
         "primary_model": "gpt-6-astra",
+        "allow_paid_credits": False,
         "reserve_enabled": True,
         "reserve_model": "gpt-5.6-luna",
     },

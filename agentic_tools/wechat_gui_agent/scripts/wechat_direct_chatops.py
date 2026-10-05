@@ -7238,6 +7238,13 @@ def enqueue_worker_task(
     queue.parent.mkdir(parents=True, exist_ok=True)
     backend = select_agent_backend(config)
     task_id = datetime.now().strftime("%Y%m%d%H%M%S") + f"-{row['local_id']}"
+    from wechat_combined_images import combined_image_group, same_image_group
+    image_group = combined_image_group(row.get("content"))
+    album_intake_only = bool(image_group) and all(
+        message_kind(item) == "image" and same_image_group(
+            combined_image_group(item.get("content")), image_group)
+        for item in (focus_rows or [row])
+    )
     task = {
         "id": task_id,
         "chat": config["chat_name"],
@@ -7251,6 +7258,7 @@ def enqueue_worker_task(
         "agent_backend": backend,
         "agent_backend_config": agent_backend_config(config, backend),
         "agent_bridge_mode": agent_bridge_mode(config),
+        "album_intake_only": album_intake_only,
         "session_scope": agent_session_chat_name(config),
         "route": build_route_contract(config),
         "route_decision": route_decision or {},
@@ -7283,6 +7291,7 @@ def enqueue_worker_task(
             "kind": message_kind(row),
             "sender": row["sender"],
             "sender_display": row["sender_display"],
+            **({"combined_image": image_group} if image_group else {}),
             **voice_queue_fields(row),
         },
         "context": [
@@ -7381,6 +7390,21 @@ def append_worker_task_once(queue: Path, task: dict[str, Any]) -> tuple[dict[str
         with exclusive_lock(lock):
             existing = find_duplicate_worker_task(queue, task)
             if existing is not None:
+                if task.get("album_intake_only") and existing.get("album_intake_only"):
+                    tasks = read_worker_queue_tasks(queue)
+                    for saved in tasks:
+                        if saved.get("id") != existing.get("id"):
+                            continue
+                        ledger = saved.setdefault("message_ledger", [])
+                        seen = {(item.get("message_db"), item.get("local_id"), item.get("server_id"))
+                                for item in ledger}
+                        for item in task.get("message_ledger", []):
+                            key = (item.get("message_db"), item.get("local_id"), item.get("server_id"))
+                            if key not in seen:
+                                ledger.append(item)
+                                seen.add(key)
+                        existing = saved
+                    write_worker_queue_tasks(queue, tasks)
                 duplicate = dict(existing)
                 duplicate["dedupe_existing"] = True
                 return duplicate, False
@@ -8111,7 +8135,17 @@ def find_duplicate_worker_task(queue: Path, task: dict[str, Any]) -> dict[str, A
             str(existing_source.get("local_id") or ""),
             str(existing_routine.get("id") or ""),
         )
-        if existing_key == target_key and str(existing.get("status") or "") not in terminal_retryable:
+        same_album = (
+            task.get("album_intake_only") and existing.get("album_intake_only")
+            and task.get("chat") == existing.get("chat")
+            and source.get("message_db") == existing_source.get("message_db")
+            and source.get("message_table") == existing_source.get("message_table")
+            and source.get("sender") == existing_source.get("sender")
+            and source.get("combined_image")
+            and source.get("combined_image") == existing_source.get("combined_image")
+            and routine.get("id") == existing_routine.get("id")
+        )
+        if (existing_key == target_key or same_album) and str(existing.get("status") or "") not in terminal_retryable:
             return existing
     return None
 

@@ -146,7 +146,7 @@ class CodexQuotaStatusTests(unittest.TestCase):
         self.assertEqual(status["remaining_percent"], 90)
         self.assertNotIn("reserve", status)
 
-    def test_large_purchased_balance_suppresses_weekly_warning(self) -> None:
+    def test_large_purchased_balance_does_not_authorize_paid_work(self) -> None:
         module = load_module()
         status = module.normalize_rate_limit_response(
             self.sample_response(
@@ -159,8 +159,9 @@ class CodexQuotaStatusTests(unittest.TestCase):
         self.assertTrue(status["warning"])
         self.assertFalse(status["weekly_quota_available"])
         self.assertTrue(status["credits_available"])
-        self.assertTrue(status["codex_available"])
-        self.assertEqual(module.format_warning(status, request_text="继续"), "")
+        self.assertFalse(status["codex_available"])
+        self.assertFalse(status["paid_credits_allowed"])
+        self.assertNotIn("已购额度", module.format_warning(status, request_text="继续"))
 
     def test_small_purchased_balance_keeps_weekly_warning(self) -> None:
         module = load_module()
@@ -174,8 +175,8 @@ class CodexQuotaStatusTests(unittest.TestCase):
 
         warning = module.format_warning(status, request_text="继续")
 
-        self.assertIn("已购额度余额 999.5", warning)
-        self.assertIn("Codex 会继续执行", warning)
+        self.assertNotIn("已购额度", warning)
+        self.assertIn("备用后端", warning)
 
     def test_credit_warning_floor_is_configurable(self) -> None:
         module = load_module()
@@ -187,7 +188,7 @@ class CodexQuotaStatusTests(unittest.TestCase):
             )
         )
 
-        with mock.patch.dict(
+        with mock.patch.object(module, "paid_codex_credits_allowed", return_value=True), mock.patch.dict(
             os.environ,
             {"LABCANVAS_CODEX_QUOTA_CREDIT_WARNING_FLOOR": "2000"},
             clear=False,

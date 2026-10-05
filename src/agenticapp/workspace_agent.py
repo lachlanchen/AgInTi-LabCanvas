@@ -1322,7 +1322,11 @@ def _run_codex_account_pool(
 ) -> dict[str, Any]:
     accounts = codex_account_candidates()
     attempts: list[dict[str, Any]] = []
-    result: dict[str, Any] = {}
+    result: dict[str, Any] = {
+        "ok": False, "returncode": 69, "message": "",
+        "stderr_tail": "No verified Codex subscription or reserve quota available; paid credits are disabled.",
+        "execution_started": False, "tool_activity": False,
+    }
     for candidate in codex_account_attempts(accounts, str(policy.get("model") or "")):
         account = candidate["account"]
         result = _run_codex_process(
