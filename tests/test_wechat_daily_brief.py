@@ -107,6 +107,12 @@ class DailyBriefTests(unittest.TestCase):
                 brief.run_schedule({**self.schedule, field: value}, self.root, now=self.now)
         self.generate.assert_not_called()
 
+    def test_group_reflection_can_cite_chat_history_without_external_news(self):
+        data = {'message': '我们还没有明确验证的关键假设是什么？', 'sources': ['chat-history']}
+        self.assertEqual(brief.parse_brief(json.dumps(data), 200), data)
+        with self.assertRaises(ValueError):
+            brief.parse_brief(json.dumps({**data, 'sources': ['other-group-history']}), 200)
+
 
 class BriefGenerationTests(unittest.TestCase):
     def test_research_and_bounded_editor_keep_same_chat_and_sources(self):
@@ -125,6 +131,9 @@ class BriefGenerationTests(unittest.TestCase):
         self.assertEqual(history.call_args.args[1], ['Company only'])
         self.assertIn('/private/company.md', agent.call_args_list[0].args[0])
         self.assertIn('live web search', agent.call_args_list[0].args[0])
+        self.assertIn('no web search is required', agent.call_args_list[0].args[0])
+        self.assertIn('not a fixed market-news format', agent.call_args_list[0].args[0])
+        self.assertIn('Request: Market advice', agent.call_args_list[0].args[0])
         for call in agent.call_args_list:
             self.assertEqual(call.kwargs['chat_name'], 'company-private')
             self.assertEqual(call.kwargs['sandbox'], 'read-only')
