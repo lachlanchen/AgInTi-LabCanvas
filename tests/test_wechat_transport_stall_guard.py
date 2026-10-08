@@ -144,6 +144,22 @@ class WeChatTransportStallGuardTests(unittest.TestCase):
         self.assertEqual(result["age_seconds"], 3)
         decrypt_health.assert_not_called()
 
+    def test_source_refresh_distinguishes_login_from_stale_store(self) -> None:
+        for client_status, expected in (
+            ("entry_required", "login_required"),
+            ("transport_unavailable", "refresh_stale"),
+        ):
+            with (
+                self.subTest(client_status=client_status),
+                mock.patch("wechat_transport_selection.tiny11_enabled", return_value=True),
+                mock.patch("wechat_transport_selection.tiny11_health", return_value={
+                    "ok": False, "status": client_status, "state_age_seconds": 2,
+                }),
+            ):
+                result = guard.source_refresh_health()
+            self.assertFalse(result["ok"])
+            self.assertEqual(result["status"], expected)
+
     def test_agent_backend_runtime_status_exposes_emergency_override(self) -> None:
         with mock.patch.dict(
             "os.environ",
@@ -318,6 +334,45 @@ class WeChatTransportStallGuardTests(unittest.TestCase):
         self.assertEqual(result["active"], 2)
         self.assertEqual(result["pending"], 1)
         self.assertEqual(result["stale_ids"], ["old-active"])
+
+    def test_queue_health_preserves_unicode_newlines_in_json_strings(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            queue.write_text(json.dumps({"id": "done", "status": "done",
+                                        "request": "one\u2028two\u2029three"},
+                                       ensure_ascii=False) + "\n\n", encoding="utf-8")
+            result = guard.queue_health(queue)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["task_count"], 1)
+        self.assertEqual(result["invalid_lines"], 0)
+
+    def test_queue_health_uses_reprocess_time_for_recovered_pending_task(self) -> None:
+        now = datetime(2026, 7, 22, 12, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            queue.write_text(
+                json.dumps(
+                    {
+                        "id": "recovered-pending",
+                        "status": "pending",
+                        "created_at": "2026-07-21T06:00:00+00:00",
+                        "reprocess_requested_at": "2026-07-22T11:59:30+00:00",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            result = guard.queue_health(
+                queue,
+                now=now,
+                stale_active_seconds=3600,
+                stale_pending_seconds=3600,
+            )
+
+        self.assertEqual(result["active"], 1)
+        self.assertEqual(result["pending"], 1)
+        self.assertEqual(result["oldest_active_seconds"], 30)
+        self.assertEqual(result["stale_ids"], [])
 
     def test_queue_health_flags_recent_terminal_worker_failure(self) -> None:
         now = datetime(2026, 7, 22, 12, 0, tzinfo=timezone.utc)
@@ -1875,7 +1930,7 @@ class WeChatTransportStallGuardTests(unittest.TestCase):
             ]
         }
         state = {"fault_counts": {"wechat_gui_delivery_stalled": 2}}
-        with mock.patch.object(
+        with mock.patch("wechat_transport_selection.tiny11_enabled", return_value=False), mock.patch.object(
             guard,
             "run_repair",
             return_value={"label": "wechat_input_stalled", "ok": True},

@@ -36,6 +36,18 @@ def load_worker():
 
 
 class WeChatTaskWorkerTests(unittest.TestCase):
+    def test_read_tasks_preserves_unicode_line_separators_inside_json_strings(self):
+        worker = load_worker()
+        tasks = [
+            {"id": "one", "status": "pending", "request": "before\u2028after"},
+            {"id": "two", "status": "done", "request": "before\u2029after"},
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            worker.write_tasks(queue, tasks)
+
+            self.assertEqual(worker.read_tasks(queue), tasks)
+
     def test_private_group_context_survives_codex_and_fallback_packets(self):
         worker = load_worker()
         context = {"brief": "Help this company using evidence.",

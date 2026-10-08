@@ -10,7 +10,7 @@ import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest import mock
-from PIL import Image
+from PIL import Image, ImageDraw
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'agentic_tools/wechat_gui_agent/scripts'))
@@ -20,6 +20,38 @@ snapshot = importlib.import_module('wechat_store_snapshot')
 
 
 class Tiny11WeChatTests(unittest.TestCase):
+    def test_native_search_requires_a_focused_outline_in_sidebar_header(self):
+        window = SimpleNamespace(x=500, y=0)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'screen.png'
+            image = Image.new('RGB', (1600, 1000), 'white')
+            draw = ImageDraw.Draw(image)
+            for box in ((700, 750, 995, 783), (1100, 41, 1395, 74)):
+                draw.rectangle(box, outline=(50, 200, 120), width=2)
+            image.save(path)
+            self.assertIsNone(bridge.native_search_field(path, window))
+            draw.rectangle((653, 41, 948, 74), outline=(50, 200, 120), width=2)
+            image.save(path)
+            self.assertEqual(bridge.native_search_field(path, window), (653, 41, 295, 33))
+            draw.rectangle((653, 41, 948, 74), fill='white')
+            draw.rectangle((653, 41, 948, 42), fill=(50, 200, 120))
+            image.save(path)
+            self.assertIsNone(bridge.native_search_field(path, window))
+
+    def test_unverified_search_never_types_into_existing_composer(self):
+        client = object.__new__(bridge.Tiny11WeChatBridge)
+        client.click = mock.Mock()
+        client.capture_screen = mock.Mock()
+        client.key = mock.Mock()
+        client.set_clipboard = mock.Mock()
+        window = SimpleNamespace(x=0, y=0)
+        with mock.patch.object(bridge, 'native_search_field', return_value=None), \
+             mock.patch.object(bridge.time, 'sleep'), \
+             self.assertRaisesRegex(RuntimeError, 'no text pasted'):
+            client.open_native_search(window)
+        client.key.assert_not_called()
+        client.set_clipboard.assert_not_called()
+
     def test_start_client_repairs_owned_task_under_gui_lock_without_restarting_helper(self):
         for command, live in [('audit-client-launch', False), ('start-client', True)]:
             with self.subTest(command=command), mock.patch.object(bridge, 'Tiny11WeChatBridge') as factory, \
@@ -383,11 +415,14 @@ class Tiny11WeChatTests(unittest.TestCase):
         client.crop = mock.Mock()
         client.find_ocr_line = mock.Mock(return_value=None)
         client.native_search_category = mock.Mock(return_value=None)
+        client.open_native_search = mock.Mock(return_value=(165, 41, 295, 33))
         with mock.patch.object(bridge.time, 'sleep'), \
                 self.assertRaisesRegex(RuntimeError, 'no web search'):
             client.ensure_chat('Shares')
         self.assertNotIn(mock.call('Return'), client.key.call_args_list)
-        self.assertEqual(client.key.call_args_list[0], mock.call('ctrl+f'))
+        self.assertNotIn(mock.call('ctrl+f'), client.key.call_args_list)
+        client.open_native_search.assert_called_once()
+        self.assertEqual(client.click.call_args_list[0], mock.call(312, 57))
         self.assertNotIn(mock.call(233, 54), client.click.call_args_list)
         helper = (ROOT / 'agentic_tools/wecom_agent/windows/WeComBridge.ps1').read_text()
         self.assertIn('"ctrl+f" = "^f"', helper)

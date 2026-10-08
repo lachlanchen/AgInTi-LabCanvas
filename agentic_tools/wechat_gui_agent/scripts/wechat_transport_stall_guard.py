@@ -882,7 +882,7 @@ def recent_terminal_agent_failures(
             continue
         latest: dict[str, dict[str, Any]] = {}
         try:
-            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+            lines = path.read_text(encoding="utf-8", errors="replace").split("\n")
         except OSError:
             continue
         for line in lines:
@@ -932,10 +932,12 @@ def queue_health(
     latest: dict[str, dict[str, Any]] = {}
     invalid_lines = 0
     try:
-        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        lines = path.read_text(encoding="utf-8", errors="replace").split("\n")
     except OSError:
         return {"ok": False, "exists": True, "error": "unreadable"}
     for line in lines:
+        if not line.strip():
+            continue
         try:
             task = json.loads(line)
         except json.JSONDecodeError:
@@ -1039,6 +1041,11 @@ def queue_health(
         started = parse_timestamp(
             task.get("claimed_at")
             or task.get("started_at")
+            or (
+                task.get("reprocess_requested_at")
+                if status == "pending"
+                else None
+            )
             or task.get("updated_at")
             or task.get("created_at")
         )
@@ -1179,7 +1186,7 @@ def recent_wechat_gui_timeout_health(
     lines: list[str] = []
     if queue_exists:
         try:
-            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+            lines = path.read_text(encoding="utf-8", errors="replace").split("\n")
         except OSError:
             return {
                 "ok": False,
@@ -1386,7 +1393,11 @@ def source_refresh_health() -> dict[str, Any]:
     state = tiny11_health()
     return {
         "ok": bool(state.get("ok")),
-        "status": "ready" if state.get("ok") else "refresh_stale",
+        "status": (
+            "ready" if state.get("ok") else
+            "login_required" if state.get("status") == "entry_required" else
+            "refresh_stale"
+        ),
         "age_seconds": int(state.get("state_age_seconds") or 0),
         "failed_count": 0,
         "missing_key_count": 0,
@@ -1465,7 +1476,9 @@ def build_snapshot(*, max_sender_seconds: float = 180.0) -> dict[str, Any]:
             "critical",
             f"{len(direct_monitors.get('stale_configs') or [])} direct monitor heartbeat(s) stale",
         )
-    if not source_refresh.get("ok"):
+    # A live login screen is already reported above. It cannot be repaired by
+    # refreshing the native store or launching another backend agent.
+    if not source_refresh.get("ok") and source_refresh.get("status") != "login_required":
         issue("wechat_source_refresh_failed", "critical", str(source_refresh.get("status")))
     if client.get("binding_missing_chats"):
         issue("wechat_chat_binding_missing", "degraded",

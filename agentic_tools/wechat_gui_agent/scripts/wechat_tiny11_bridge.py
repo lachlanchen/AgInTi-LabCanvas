@@ -86,6 +86,31 @@ def composer_has_visible_content(image):
                for x in range(image.width)) >= 8
 
 
+def native_search_field(screen, window):
+    """Locate the focused native search outline, never a composer/web search."""
+    with Image.open(screen).convert('RGB') as image:
+        points = set()
+        for y in range(max(0, window.y + 28), min(image.height, window.y + 78)):
+            for x in range(max(0, window.x + 65), min(image.width, window.x + 540)):
+                r, g, b = image.getpixel((x, y))
+                if g > r + 25 and g > b + 10:
+                    points.add((x, y))
+    if not points:
+        return None
+    left, right = min(x for x, y in points), max(x for x, y in points)
+    top, bottom = min(y for x, y in points), max(y for x, y in points)
+    if not (180 <= right - left <= 420 and 24 <= bottom - top <= 45):
+        return None
+    # A green icon or selected sidebar row is not a focused edit rectangle.
+    for y in (top + 1, bottom - 1):
+        if sum((x, y) in points for x in range(left + 8, right - 8)) < (right - left - 16) * .9:
+            return None
+    for x in (left, right):
+        if sum((x, y) in points for y in range(top + 8, bottom - 8)) < (bottom - top - 16) * .8:
+            return None
+    return left, top, right - left, bottom - top
+
+
 def native_docked_pane(screen, window):
     """Locate the native dock divider, including a still-loading white pane."""
     with Image.open(screen).convert('RGB') as image:
@@ -230,6 +255,17 @@ class Tiny11WeChatBridge(Tiny11WeComGuiBridge):
                     return match
         return None
 
+    def open_native_search(self, window):
+        # Ctrl+F can remain in the editor or target the docked web view. Click
+        # the native sidebar search and prove its focused field BEFORE typing.
+        self.click(window.x + 166, window.y + 55)
+        for _ in range(6):
+            time.sleep(.2)
+            field = native_search_field(self.capture_screen('wechat-search-focus'), window)
+            if field:
+                return field
+        raise RuntimeError('WECHAT_GUI_SEARCH_UNVERIFIED: no native search field; no text pasted')
+
     def ensure_chat(self, chat, *, operation='text'):
         if chat not in self.target_groups or chat not in self.config['targets']:
             raise RuntimeError('WeChat chat is not allowlisted')
@@ -250,19 +286,18 @@ class Tiny11WeChatBridge(Tiny11WeComGuiBridge):
         # send based solely on a partial/truncated sidebar name.
         target = self.config['targets'][chat]
         search = target.get('search_name') or target.get('query') or target.get('expected_title') or chat
-        # A narrow sidebar collapses the search field to an icon. Native search
-        # avoids clicking an obsolete field coordinate after a dock is closed.
-        self.key('ctrl+f')
+        field_left, field_top, field_width, field_height = self.open_native_search(window)
         self.set_clipboard(search)
+        self.click(field_left + field_width // 2, field_top + field_height // 2)
         self.key('ctrl+a')
         self.key('ctrl+v')
         time.sleep(.8)
         image = self.capture_screen('wechat-search')
-        crop = self.crop(image, (window.x + 65, window.y + 82, 380, 450),
+        result_left, result_base_top = field_left - 12, field_top + field_height + 6
+        crop = self.crop(image, (result_left, result_base_top, field_width + 24, 450),
                          self.runtime_dir / 'wechat-search-results.png')
         # Never choose an Internet search suggestion with the same query.
         category = self.native_search_category(crop)
-        result_left, result_base_top = window.x + 65, window.y + 82
         if not category:
             self.click(window.x + 245, window.y + 38)
             raise RuntimeError('WECHAT_GUI_TITLE_UNVERIFIED: no native contact category; no web search')
@@ -453,7 +488,15 @@ class Tiny11WeChatBridge(Tiny11WeComGuiBridge):
         binding = native_chat_binding(self.config['targets'][chat])
         if any(draft.get(field) != binding[field] for field in ('table', 'sender')):
             return False
-        if not self.composer_text_matches(window, draft['text'], draft['key']):
+        matches = self.composer_text_matches(window, draft['text'], draft['key'])
+        if not matches:
+            # An interrupted clipboard check can leave its own marker in the
+            # editor. Require the exact journal key, not a generic prefix, and
+            # use a DIFFERENT probe key so an unchanged clipboard cannot pass.
+            matches = any(self.composer_text_matches(
+                window, f'__LABCANVAS_{kind}_PROBE_{draft["key"]}__', draft['key'] + '-recovery')
+                for kind in ('COMPOSER', 'EMPTY'))
+        if not matches:
             return False
         if self.tiny11.invoke({'action': 'get_file_clipboard'}):
             return False

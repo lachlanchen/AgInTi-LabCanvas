@@ -6214,7 +6214,15 @@ def append_jsonl(path: Path, item: dict[str, Any]) -> None:
 def read_tasks(path: Path) -> list[dict[str, Any]]:
     if not path.exists():
         return []
-    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    # JSONL records are delimited by the literal LF written by append_jsonl()
+    # and write_tasks().  str.splitlines() also treats valid JSON string
+    # characters such as U+2028/U+2029 as record boundaries, which can split a
+    # single task in the middle of a quoted value and crash every worker.
+    return [
+        json.loads(line)
+        for line in path.read_text(encoding="utf-8").split("\n")
+        if line.strip()
+    ]
 
 
 def reconcile_numbered_message_coverage(path: Path) -> int:

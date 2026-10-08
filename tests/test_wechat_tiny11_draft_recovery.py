@@ -91,6 +91,22 @@ class TextDraftRecoveryTests(unittest.TestCase):
         self.client.clear_composer.assert_not_called()
         self.client.composer_keys.assert_not_called()
 
+    def test_exact_owned_probe_marker_is_recovered_with_distinct_probe(self):
+        self.journal()
+        self.text = '__LABCANVAS_COMPOSER_PROBE_owned__'
+        self.assertTrue(self.client.clear_owned_text_draft('window', 'Team'))
+        self.client.composer_text_matches.assert_any_call(
+            'window', '__LABCANVAS_COMPOSER_PROBE_owned__', 'owned-recovery')
+        self.assertEqual(self.text, '')
+
+    def test_foreign_probe_marker_or_modified_probe_is_not_owned(self):
+        self.journal()
+        for text in ('__LABCANVAS_COMPOSER_PROBE_other__',
+                     '__LABCANVAS_COMPOSER_PROBE_owned__ plus my note'):
+            self.text = text
+            self.assertFalse(self.client.clear_owned_text_draft('window', 'Team'))
+        self.client.clear_composer.assert_not_called()
+
     def test_edited_or_partial_owned_draft_is_preserved(self):
         self.journal()
         for text in ('Ack', 'Acknowledgement plus human edits'):
