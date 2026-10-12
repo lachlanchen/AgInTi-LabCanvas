@@ -2011,14 +2011,12 @@ def deliver_pending_lesson(
             if periodic_lesson_delivery_recorded(config, pending):
                 delivery = {"requested": True, "status": "sent_verified_recovered"}
             else:
-                screenshot = send_scheduled_message(
+                evidence = send_scheduled_message(
                     config,
                     message,
                     generated_at=str(pending.get("generated_at") or ""),
                 )
-                if not screenshot or not Path(screenshot).is_file():
-                    raise RuntimeError(f"EchoMind lesson send was not verified: {screenshot or 'no screenshot'}")
-                delivery = {"requested": True, "status": "sent_verified", "screenshot": screenshot}
+                delivery = verified_lesson_delivery(evidence)
         except Exception as exc:
             state["last_delivery_error"] = f"{type(exc).__name__}: {exc}"
             schedule_pending_lesson_retry(state, pending)
@@ -2038,6 +2036,30 @@ def deliver_pending_lesson(
     state.pop("last_delivery_error", None)
     save_state(state)
     return {"ok": True, "chat": config["chat_name"], "sent_at": now, "message": message, "delivery": delivery, "daily_pdf": None}
+
+
+def verified_lesson_delivery(evidence: str) -> dict:
+    """Accept the selected sender's proof, not just a legacy screenshot path."""
+    try:
+        result = json.loads(evidence)
+    except (ValueError, TypeError):
+        result = None
+    if isinstance(result, dict):
+        sent = result.get("sent_messages")
+        if (result.get("ok") is True and not result.get("errors")
+                and isinstance(sent, list) and sent
+                and all(isinstance(item, dict) and item.get("verified") is True
+                        and isinstance(item.get("receipt"), dict)
+                        and item["receipt"].get("verified") is True for item in sent)):
+            return {"requested": True, "status": "sent_verified",
+                    "receipts": [item["receipt"] for item in sent]}
+    elif evidence and not evidence.lstrip().startswith(("{", "[")):
+        try:
+            if Path(evidence).is_file():
+                return {"requested": True, "status": "sent_verified", "screenshot": evidence}
+        except OSError:
+            pass
+    raise RuntimeError("EchoMind lesson send was not verified: missing delivery proof")
 
 
 def periodic_lesson_delivery_recorded(config: dict, pending: dict) -> bool:

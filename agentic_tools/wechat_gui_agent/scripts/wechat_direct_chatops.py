@@ -2386,7 +2386,6 @@ DEFAULT_DANGER_KEYWORDS = [
     "2fa",
     "security key",
     "api key",
-    "token",
     "secret",
     "cookie",
     "decrypt",
@@ -2407,7 +2406,6 @@ DEFAULT_DANGER_KEYWORDS = [
     "密码",
     "验证码",
     "密钥",
-    "令牌",
     "泄露",
     "盗取",
     "解密",
@@ -2474,6 +2472,9 @@ def is_dangerous_message(config: dict[str, Any], text: str) -> bool:
     return any(
         danger_keyword_present(scanned, keyword)
         for keyword in config.get("danger_keywords", DEFAULT_DANGER_KEYWORDS)
+        # A model token is also a normal unit of usage/cost. Legacy configs
+        # contain this noun; leave its meaning to the agent, not silent intake.
+        if str(keyword).strip().casefold() not in {"token", "令牌"}
     )
 
 

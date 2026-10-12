@@ -1444,6 +1444,27 @@ class WeChatTransportStallGuardTests(unittest.TestCase):
         self.assertTrue(result["career_daily"]["organizer_overdue"])
         self.assertFalse(result["ok"])
 
+    def test_lesson_retry_cannot_hide_multiday_stall(self) -> None:
+        now = datetime(2026, 7, 22, 12, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            heartbeat = Path(tmp) / "daily.health.json"
+            heartbeat.write_text(json.dumps({"checked_at": now.isoformat(), "status": "ok"}))
+            with (
+                mock.patch.object(guard, "tmux_session_live", return_value=True),
+                mock.patch.object(guard, "read_json", side_effect=schedule_state_reader(
+                    echo_last_loop_at="2026-07-22T11:59:30+00:00",
+                    echomind_pending_lesson=True,
+                    echomind_pending_lesson_generated_at="2026-07-01T06:00:00+00:00",
+                    echomind_pending_lesson_next_attempt_at="2026-07-22T16:00:00+00:00",
+                    echomind_phase="lesson_retry_wait",
+                )),
+            ):
+                result = guard.schedule_health(labagent_heartbeat=heartbeat, now=now)
+        self.assertFalse(result["echomind"]["ok"])
+        self.assertTrue(result["echomind"]["pending_lesson_retry_pending"])
+        self.assertTrue(result["echomind"]["pending_lesson_retry_stalled"])
+        self.assertTrue(result["echomind"]["pending_lesson_actionable"])
+
     def test_schedule_health_waits_for_persisted_delivery_retry(self) -> None:
         now = datetime(2026, 7, 22, 12, 0, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:

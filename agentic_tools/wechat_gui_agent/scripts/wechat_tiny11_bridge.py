@@ -514,6 +514,9 @@ class Tiny11WeChatBridge(Tiny11WeComGuiBridge):
             names, body, chunk = mention_header(chunk)
             key = short_hash(f'{chat}:{task_id}:{index}:{chunk}')
             if delivery_done(self.state_db, key, chat):
+                sent.append({'verified': True, 'already_sent': True,
+                             'receipt': {'verified': True, 'method': 'durable_delivery_ledger',
+                                         'delivery_key': key}})
                 continue
             prior = get_runtime(self.state_db, 'native-intent:' + key)
             if prior:
@@ -658,6 +661,17 @@ def find_receipt(receipt, *, message='', file=None, db_path=STORE, video_verifie
             text = text[len(prefix):]
         matched = int(kind) == 1 and message and normalize_message(text) == normalize_message(message)
         media_proof = None
+        if file and (int(kind) & 0xffffffff) == 3:
+            try:
+                img = ET.fromstring(text[text.index('<'):]).find('.//img')
+                digest = str(img.get('md5') or '').lower() if img is not None else ''
+                if re.fullmatch(r'[0-9a-f]{32}', digest):
+                    from wechat_tiny11_media_receipt import md5_file
+                    matched = md5_file(file) == digest
+                    if matched:
+                        media_proof = {'method': 'native_image_row_and_exact_file_hash', 'rawmd5': digest}
+            except (ValueError, ET.ParseError):
+                matched = False
         if file and (int(kind) & 0xffffffff) == 43 and video_verifier:
             try:
                 video = ET.fromstring(text[text.index('<'):]).find('.//videomsg')

@@ -315,6 +315,40 @@ class Tiny11WeChatTests(unittest.TestCase):
             self.assertTrue(proof['verified'])
             verify.assert_called_with(file, {'rawmd5': 'abcdef', 'rawlength': '5'}, 200)
 
+    def test_native_image_receipt_requires_exact_original_hash(self):
+        import hashlib
+        table = 'Msg_' + 'c' * 32
+        source = 'message/message_0.db:' + table
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            file = root / 'figure.png'
+            Image.new('RGB', (10, 10), 'red').save(file)
+            digest = hashlib.md5(file.read_bytes()).hexdigest()
+            path = root / 'message_999998.db'
+            row = {'source': source, 'table': table, 'local_id': 1, 'server_id': 88,
+                   'local_type': 3, 'sender': 'owner', 'create_time': 200, 'status': 2,
+                   'message_content': f'<msg><img md5="{digest}"/></msg>',
+                   'compress_content': None, 'WCDB_CT_message_content': 0}
+            bridge.ingest_export({'account_verified': True, 'tables': [table], 'rows': [row],
+                                  'high_watermarks': {source: 1}}, path)
+            receipt = {'table': table, 'sender': 'owner', 'started_at': 199, 'after': {path.name: 0}}
+            proof = bridge.find_receipt(receipt, file=file, db_path=path)
+            self.assertTrue(proof['verified'])
+            self.assertEqual(proof['media_proof']['rawmd5'], digest)
+            file.write_bytes(b'wrong-image')
+            self.assertIsNone(bridge.find_receipt(receipt, file=file, db_path=path))
+
+    def test_text_duplicate_returns_proof_without_gui_input(self):
+        client = object.__new__(bridge.Tiny11WeChatBridge)
+        client.state_db = Path('unused')
+        client.ensure_chat = mock.Mock()
+        with mock.patch.object(bridge, 'delivery_done', return_value=True):
+            result = client.send_text_locked('EchoMind', 'lesson', task_id='same-lesson')
+        client.ensure_chat.assert_not_called()
+        self.assertTrue(result['sent_messages'][0]['verified'])
+        self.assertTrue(result['sent_messages'][0]['already_sent'])
+        self.assertEqual(result['sent_messages'][0]['receipt']['method'], 'durable_delivery_ledger')
+
     def test_real_sqlite_wal_keeps_overflow_pages_and_excludes_uncommitted_tail(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

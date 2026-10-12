@@ -636,11 +636,15 @@ def schedule_health(
     pending_lesson_retry_pending = bool(
         pending_lesson_retry_at and pending_lesson_retry_at > current
     )
+    pending_lesson_retry_stalled = bool(
+        pending_lesson_age is not None
+        and pending_lesson_age > max(2 * ECHOMIND_INTERVAL_SECONDS, 2 * interval)
+    )
     pending_lesson_actionable = bool(
         echomind_pending_lesson
         and not pending_lesson_in_progress
         and not pending_lesson_quiet_hours_deferred
-        and not pending_lesson_retry_pending
+        and (not pending_lesson_retry_pending or pending_lesson_retry_stalled)
         and (
             pending_lesson_age is None
             or pending_lesson_age > ECHOMIND_PENDING_DELIVERY_GRACE_SECONDS
@@ -772,6 +776,7 @@ def schedule_health(
                 pending_lesson_quiet_hours_deferred
             ),
             "pending_lesson_retry_pending": pending_lesson_retry_pending,
+            "pending_lesson_retry_stalled": pending_lesson_retry_stalled,
             "pending_lesson_next_attempt_at": (
                 str(pending_lesson.get("next_attempt_at") or "")
                 if isinstance(pending_lesson, dict)

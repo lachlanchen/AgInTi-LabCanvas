@@ -969,6 +969,27 @@ Reading detail with corrected pinyin and romaji. Reading detail with corrected p
         self.assertEqual(stored["pending_lesson"]["delivery_attempts"], 1)
         self.assertTrue(stored["pending_lesson"]["next_attempt_at"])
 
+    def test_lesson_accepts_native_receipt_and_durable_duplicate_proof(self) -> None:
+        for method in ("native_outbound_row", "durable_delivery_ledger"):
+            receipt = {"verified": True, "method": method}
+            evidence = json.dumps({"ok": True, "sent_messages": [
+                {"verified": True, "receipt": receipt}
+            ], "errors": []})
+            result = scheduler.verified_lesson_delivery(evidence)
+            self.assertEqual(result["status"], "sent_verified")
+            self.assertEqual(result["receipts"], [receipt])
+
+    def test_lesson_rejects_empty_or_unverified_native_success(self) -> None:
+        for payload in (
+            {"ok": True, "sent_messages": [], "errors": []},
+            {"ok": True, "sent_messages": [{"verified": True}], "errors": []},
+            {"ok": True, "sent_messages": [{"verified": False, "receipt": {"verified": True}}]},
+            {"ok": True, "sent_messages": [{"verified": True, "receipt": {"verified": True}}], "errors": ["failed"]},
+            {"ok": False},
+        ):
+            with self.subTest(payload=payload), self.assertRaisesRegex(RuntimeError, "not verified"):
+                scheduler.verified_lesson_delivery(json.dumps(payload))
+
     def test_pending_lesson_waits_for_durable_retry_without_sending(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             state_path = Path(tmp) / "state.json"
