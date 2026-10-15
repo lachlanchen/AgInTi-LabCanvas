@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import base64
 import copy
+from contextlib import closing
 from datetime import datetime, timedelta
 import hashlib
 import html
@@ -1663,6 +1664,9 @@ def process_one(queue: Path, chat: str, *, send: bool, send_targets: Path = DEFA
         return False
     log_worker_event("claimed", task)
     task["queue_path"] = str(queue)
+    if suppress_recalled_source(task, queue=queue):
+        log_worker_event("source-recalled", task)
+        return True
     initialize_generated_video_claim_baseline(task)
     repair_explicit_research_task_contract(task)
     ensure_group_inspiration_runtime_contract(task)
@@ -1670,6 +1674,9 @@ def process_one(queue: Path, chat: str, *, send: bool, send_targets: Path = DEFA
     ensure_runtime_instruction_contract(task)
     try:
         result_text = run_worker_codex(task)
+        if suppress_recalled_source(task, queue=queue):
+            log_worker_event("source-recalled", task)
+            return True
         result = parse_worker_result(result_text)
         result = enforce_worker_result_contract(task, result, result_text)
         result = attach_audio_transcript_reference(task, result)
@@ -1679,6 +1686,9 @@ def process_one(queue: Path, chat: str, *, send: bool, send_targets: Path = DEFA
         result = enforce_message_only_research_evidence(task, result)
         result = audit_and_repair_worker_completion(task, result)
         result = enforce_worker_result_response_policy(task, result)
+    except SourceMessageRecalled:
+        log_worker_event("source-recalled", task)
+        return True
     except Exception as exc:
         result_text = f"Worker failed before completion: {type(exc).__name__}: {str(exc)[:800]}"
         result = private_worker_failure_result(result_text)
@@ -1717,6 +1727,9 @@ def process_one(queue: Path, chat: str, *, send: bool, send_targets: Path = DEFA
         # in its artifact directory for diagnosis, but stale text/files must
         # never reach the chat transport.
         log_worker_event("stale-generation-delivery-suppressed", task)
+        return True
+    if suppress_recalled_source(task, queue=queue):
+        log_worker_event("source-recalled", task)
         return True
     target_chat = str(task.get("chat") or chat)
     has_delivery_content = worker_result_has_delivery_content(result)
@@ -2853,6 +2866,10 @@ def worker_result_has_delivery_content(result: dict[str, Any]) -> bool:
     )
 
 
+class SourceMessageRecalled(RuntimeError):
+    """Stop remaining delivery without retrying a withdrawn request."""
+
+
 def send_result_with_retries(
     result: dict[str, Any],
     target_chat: str,
@@ -2861,18 +2878,24 @@ def send_result_with_retries(
     task: dict[str, Any] | None = None,
 ) -> list[str]:
     if task is not None:
+        if suppress_recalled_source(task):
+            return ["source_message_recalled"]
         enforce_worker_result_response_policy(task, result)
         prepare_long_response_delivery(task, result)
     attempts = max(1, int(os.environ.get("WECHAT_WORKER_SEND_RETRIES", "2")))
     delay = max(0.0, float(os.environ.get("WECHAT_WORKER_SEND_RETRY_DELAY", "1.5")))
     errors: list[str] = []
     for attempt in range(1, attempts + 1):
+        if task is not None and suppress_recalled_source(task):
+            return ["source_message_recalled"]
         try:
             if task is None:
                 send_result_once(result, target_chat, send_targets)
             else:
                 send_result_once(result, target_chat, send_targets, task=task)
             return []
+        except SourceMessageRecalled:
+            return ["source_message_recalled"]
         except Exception as exc:
             errors.append(f"attempt {attempt}: {exc}")
             if send_errors_indicate_deferable(errors):
@@ -3201,6 +3224,8 @@ def send_result_once(
             resolved = str(file_path.expanduser().resolve())
             if resolved in sent_files:
                 continue
+            if task is not None and suppress_recalled_source(task):
+                raise SourceMessageRecalled("source_message_recalled")
             try:
                 send_file(file_path, target_chat, send_targets, target=target, task=task)
                 sent_files.add(resolved)
@@ -3271,6 +3296,8 @@ def send_result_text_parts(
         ).hexdigest()[:24]
         if fingerprint in sent_hashes:
             continue
+        if task is not None and suppress_recalled_source(task):
+            raise SourceMessageRecalled("source_message_recalled")
         task_id = str((task or {}).get("id") or "adhoc")
         send_message(
             part,
@@ -8962,6 +8989,73 @@ def task_execution_generation(task: dict[str, Any] | None) -> int:
         return 0
 
 
+def recalled_source_evidence(task: dict[str, Any]) -> dict[str, Any] | None:
+    """Check the exact live source row, not a queued copy or recall-like prose."""
+    source = task.get("source") or {}
+    if not isinstance(source, dict) or str(task.get("chat") or "").startswith("wecom:"):
+        return None
+    if source.get("chat") and source["chat"] != task.get("chat"):
+        return None
+    table = str(source.get("message_table") or "")
+    database = normalize_message_db_name(source.get("message_db"))
+    local_id = int_or_none(source.get("local_id"))
+    server_id = str(source.get("server_id") or "")
+    if (not re.fullmatch(r"Msg_[0-9a-fA-F]{32}", table) or not database
+            or local_id is None or not server_id.isdigit() or int(server_id) <= 0):
+        return None
+    from wechat_direct_chatops import decode_content, message_db_path
+
+    db_path = message_db_path(database)
+    try:
+        with closing(sqlite3.connect(db_path.resolve().as_uri() + "?mode=ro", uri=True, timeout=1)) as conn:
+            row = conn.execute(
+                f"SELECT local_type,message_content,compress_content,WCDB_CT_message_content "
+                f"FROM {table} WHERE local_id=? AND CAST(server_id AS TEXT)=?",
+                (local_id, server_id),
+            ).fetchone()
+        if not row or (int(row[0]) & 0xffffffff) not in {10000, 10002}:
+            return None
+        content = decode_content(row[1], row[2], row[3])
+        xml = ET.fromstring(content[content.index("<"):])
+        if xml.tag != "sysmsg" or xml.get("type") != "revokemsg" or xml.find("revokemsg") is None:
+            return None
+    except (OSError, ValueError, sqlite3.Error, ET.ParseError):
+        return None
+    return {"message_db": database, "message_table": table,
+            "local_id": local_id, "server_id": server_id}
+
+
+def suppress_recalled_source(task: dict[str, Any], *, queue: Path | None = None) -> bool:
+    evidence = recalled_source_evidence(task)
+    if not evidence:
+        return False
+    queue_value = queue or task.get("queue_path")
+    if not queue_value or not Path(queue_value).is_file():
+        return True
+    path = Path(queue_value)
+    with path.with_suffix(path.suffix + ".lock").open("w", encoding="utf-8") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        tasks = read_tasks(path)
+        for current in tasks:
+            if current.get("id") != task.get("id"):
+                continue
+            if task_execution_generation(current) != task_execution_generation(task):
+                break
+            if current.get("status") in {"done", "canceled", "canceled_superseded", "expired_stale"}:
+                break
+            current.update({
+                "status": "canceled",
+                "execution_generation": task_execution_generation(current) + 1,
+                "completed_at": datetime.now().isoformat(timespec="seconds"),
+                "source_recall": evidence,
+                "send_suppressed_reason": "source_message_recalled",
+                "result": {"message": "", "confirmation": "", "files": [], "no_reply": True},
+            })
+            write_tasks(path, tasks)
+            break
+    return True
+
+
 def task_claim_is_current(path: Path, claimed: dict[str, Any]) -> bool:
     """Prove this worker still owns the exact row generation before delivery."""
 
@@ -9198,6 +9292,8 @@ def run_worker_codex(task: dict[str, Any]) -> str:
         + max_permission_recovery_retries
     )
     for attempt_index in range(attempt_budget):
+        if suppress_recalled_source(task):
+            raise SourceMessageRecalled("source_message_recalled")
         task["worker_policy"] = policy
         result = run_worker_codex_once(task, policy)
         recovered = recover_completed_research_artifacts(task, result)
@@ -9416,6 +9512,8 @@ def run_task_orchestrator(task: dict[str, Any], policy: dict[str, Any]) -> str:
             ensure_ascii=False,
         )
     preflight = prepare_worker_preflight(task, artifact_dir)
+    if suppress_recalled_source(task):
+        raise SourceMessageRecalled("source_message_recalled")
     if preflight:
         task["preflight"] = preflight
         persist_task_progress(task)

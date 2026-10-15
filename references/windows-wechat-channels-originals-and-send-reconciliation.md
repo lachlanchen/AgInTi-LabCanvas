@@ -16,6 +16,11 @@ remain passive save-only input.
 
 ## Source Selection
 
+If a source card is withdrawn, the queued XML is no longer authority to keep
+working or send it back. The shared worker checks the current exact native row
+before work and delivery. See
+[recalled-source cancellation](wechat-recalled-source-cancellation-2026-10-15.md).
+
 `wechat_task_worker.py` recovers Finder XML from the current task's exact source
 row or an explicitly selected reference in its same-chat context. The database
 identity must also match. A follow-up such as "download this" needs the routing
