@@ -15,6 +15,24 @@ resolver = importlib.import_module("shipinhao_share_link_resolver")
 
 
 class NativeChannelsLinkTests(unittest.TestCase):
+    def test_cli_preserves_typed_login_error_for_worker(self):
+        import json
+        import io
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / 'source.txt'
+            source.write_text('card')
+            (root / 'stage.json').write_text(json.dumps({'stage': 'verify_resolved_identity'}))
+            error = resolver.ShareLinkResolutionError('login required', code='yuanbao_login_required')
+            with mock.patch.object(sys, 'argv', ['tool', '--chat', 'Shares', '--source-text-file', str(source), '--output-dir', str(root)]), \
+                    mock.patch.object(native, 'recover', side_effect=error), \
+                    mock.patch('sys.stdout', new_callable=io.StringIO) as output:
+                self.assertEqual(native.main(), 2)
+                result = json.loads(output.getvalue())
+            self.assertEqual(result['error_code'], 'yuanbao_login_required')
+            self.assertTrue(result['native_link_copied'])
+            self.assertEqual(result['failure_stage'], 'share_resolver')
+
     @staticmethod
     def identity_profiles(title, author):
         card = native.extract_shipinhao_media_profile(

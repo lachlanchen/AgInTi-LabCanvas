@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import importlib.util
+import io
 import json
 from pathlib import Path
 import tempfile
 import unittest
+import urllib.error
 from unittest import mock
 
 
@@ -21,6 +23,64 @@ def load_module():
 
 
 class ShipinhaoShareLinkResolverTests(unittest.TestCase):
+    def test_authenticated_flow_stops_before_feed_on_auth_failure(self) -> None:
+        module = load_module()
+        for payload in ({"code": 401}, {"code": 1, "msg": "not logged in"}):
+            with self.subTest(payload=payload), mock.patch.object(
+                module, "request_resolver_json", return_value=payload,
+            ) as request:
+                with self.assertRaises(module.ShareLinkResolutionError) as caught:
+                    module.resolve_authenticated_share("https://weixin.qq.com/sph/ABcd123", "ABcd123", "secret", timeout=5)
+                self.assertEqual(caught.exception.error_code, "yuanbao_login_required")
+                request.assert_called_once()
+
+    def test_http_401_is_login_blocker_not_playback_failure(self) -> None:
+        module = load_module()
+        opener = mock.Mock()
+        opener.open.side_effect = urllib.error.HTTPError("private", 401, "Unauthorized", {}, io.BytesIO(b"secret"))
+        with mock.patch.object(module.urllib.request, "build_opener", return_value=opener):
+            with self.assertRaises(module.ShareLinkResolutionError) as caught:
+                module.request_resolver_json("https://yuanbao.tencent.com/api/weixin/get_parse_result", {},
+                                             timeout=5, cookie="secret", referer="https://yuanbao.tencent.com/", stage="yuanbao_parse")
+        self.assertEqual(caught.exception.error_code, "yuanbao_login_required")
+        self.assertNotIn("secret", str(caught.exception))
+
+    def test_unusable_parse_never_calls_feed_with_empty_identity(self) -> None:
+        module = load_module()
+        for playable in ("", "https://example.org/?eid=x&token=y", "https://channels.weixin.qq.com/?eid=x"):
+            with self.subTest(playable=playable), mock.patch.object(module, "request_resolver_json", return_value={
+                "code": 0, "data": {"playable_url": playable},
+            }) as request:
+                with self.assertRaises(module.ShareLinkResolutionError) as caught:
+                    module.resolve_authenticated_share("https://weixin.qq.com/sph/ABcd123", "ABcd123", "secret", timeout=5)
+                self.assertEqual(caught.exception.error_code, "yuanbao_playback_identity_missing")
+                request.assert_called_once()
+
+    def test_authenticated_flow_preserves_identity_and_separates_cookies(self) -> None:
+        module = load_module()
+        with mock.patch.object(module, "request_resolver_json", side_effect=[
+            {"code": 0, "data": {"playable_url": "https://channels.weixin.qq.com/finder-preview/pages/feed?token=abc&eid=def"}},
+            {"errCode": 0, "data": {"errMsg": {"type": 0}, "feedInfo": {"description": "Exact title", "videoUrl": "https://finder.video.qq.com/source"},
+                                   "authorInfo": {"nickname": "Exact author"}}},
+        ]) as request:
+            result = module.resolve_authenticated_share("https://weixin.qq.com/sph/ABcd123", "ABcd123", "secret", timeout=5)
+        self.assertEqual(result["title"], "Exact title")
+        self.assertEqual(result["author"], "Exact author")
+        self.assertEqual(request.call_count, 2)
+        self.assertEqual(request.call_args_list[0].kwargs["cookie"], "secret")
+        self.assertNotIn("cookie", request.call_args_list[1].kwargs)
+        self.assertEqual(request.call_args_list[1].args[1], {"baseReq": {"generalToken": "abc"}, "exportId": "def"})
+
+    def test_upstream_feed_error_is_not_silently_ignored(self) -> None:
+        module = load_module()
+        for payload in ({"errCode": 123, "data": {}}, {"errCode": 0, "data": {"errMsg": {"type": 1}}}):
+            with self.subTest(payload=payload), self.assertRaises(module.ShareLinkResolutionError):
+                module.normalize_provider_result(payload, canonical_url="https://weixin.qq.com/sph/ABcd123", token="ABcd123")
+
+    def test_redirect_cannot_forward_authentication(self) -> None:
+        module = load_module()
+        self.assertIsNone(module.NoResolverRedirect().redirect_request(None, None, 302, "", {}, "https://other.test/"))
+
     def test_extracts_only_canonical_weixin_sph_links(self) -> None:
         module = load_module()
 

@@ -351,10 +351,21 @@ def transcribe_wav_openai_whisper(
                 torch.set_num_threads(previous_threads)
 
     cpu_fallback = False
+    fallback_reason = ""
     try:
         result = run(device)
     except RuntimeError as exc:
-        if not str(device).startswith("cuda") or "out of memory" not in str(exc).lower():
+        error = str(exc).lower()
+        if not str(device).startswith("cuda"):
+            raise
+        if "out of memory" in error:
+            fallback_reason = "cuda_out_of_memory"
+        elif any(marker in error for marker in (
+            "nvml", "driver/library version mismatch", "cuda driver version is insufficient",
+            "cuda initialization error",
+        )):
+            fallback_reason = "cuda_driver_unavailable"
+        else:
             raise
         cpu_fallback = True
     if cpu_fallback:
@@ -364,7 +375,8 @@ def transcribe_wav_openai_whisper(
         import torch
 
         gc.collect()
-        torch.cuda.empty_cache()
+        if fallback_reason == "cuda_out_of_memory":
+            torch.cuda.empty_cache()
         result = run("cpu")
     raw_segments = result.get("segments") or []
     segments = []
@@ -385,7 +397,7 @@ def transcribe_wav_openai_whisper(
     return {
         "backend": "whisper",
         "device": "cpu" if cpu_fallback else device,
-        "device_fallback_reason": "cuda_out_of_memory" if cpu_fallback else "",
+        "device_fallback_reason": fallback_reason,
         "text": " ".join(parts).strip(),
         "language": result.get("language") or "",
         "language_probability": None,

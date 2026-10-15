@@ -13894,13 +13894,22 @@ def prepare_shipinhao_media_transcript_preflight(task: dict[str, Any], artifact_
             result["native_capture_fallback"] = safe_shipinhao_capture_result(capture_result)
         else:
             safe_capture = safe_shipinhao_capture_result(capture_result)
-            if result.get("status") not in {"transcribed", "cached", "no_audio"}:
+            if (result.get("status") not in {"transcribed", "cached", "no_audio"}
+                    and safe_capture.get("error_code") != "yuanbao_login_required"):
                 result = run_shipinhao_media_transcriber(
                     command, output_dir=output_dir, timeout=timeout, profile=public_profile,
                 )
             result["native_capture_fallback"] = safe_capture
             if result.get("status") in {"transcribed", "cached", "no_audio"}:
                 result.pop("agent_next_action", None)
+            elif safe_capture.get("error_code") == "yuanbao_login_required":
+                result["agent_next_action"] = (
+                    "The exact card and native share link are already saved. The separate Yuanbao "
+                    "downloader login has expired; this is not a WeChat logout, invalid link, deleted "
+                    "video, or silent video. Explain the actual download blocker briefly. Do not ask "
+                    "for the card or link again, repeat GUI recovery, or claim to have read the video. "
+                    "After the owner restores the downloader login, reuse this exact saved candidate."
+                )
             elif safe_capture.get("failure_stage") == "share_resolver" and safe_capture.get("native_link_copied"):
                 result["agent_next_action"] = (
                     "The exact native card was opened and its share link copied successfully. "

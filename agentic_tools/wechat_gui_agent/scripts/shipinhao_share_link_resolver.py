@@ -38,6 +38,10 @@ MAX_PROVIDER_RESPONSE_BYTES = 8 * 1024 * 1024
 class ShareLinkResolutionError(RuntimeError):
     """Raised when an exact share link cannot be resolved safely."""
 
+    def __init__(self, message: str, *, code: str = "share_resolution_failed"):
+        super().__init__(message)
+        self.error_code = code
+
 
 def extract_share_urls(text: str) -> list[str]:
     """Extract canonical exact-source share links in stable input order."""
@@ -114,7 +118,7 @@ def cdp_cookie_header(cdp_url: str = DEFAULT_CDP_URL, *, timeout: float = 8.0) -
         name = str(cookie.get("name") or "").strip()
         value = str(cookie.get("value") or "")
         expires = float(cookie.get("expires") or 0)
-        if not domain.endswith("tencent.com") or not name or not value:
+        if domain not in {"tencent.com", "yuanbao.tencent.com"} or not name or not value:
             continue
         if expires > 0 and expires <= now:
             continue
@@ -159,7 +163,7 @@ def resolve_share_link(
     timeout: float = 45.0,
     provider_binary: Path | None = None,
 ) -> dict[str, Any]:
-    """Resolve a share URL through a short-lived parse-only upstream provider."""
+    """Resolve with the owner's login, checking each upstream stage separately."""
     canonical_url = extract_share_urls(url)
     if len(canonical_url) != 1:
         raise ShareLinkResolutionError("expected one exact Shipinhao share URL")
@@ -169,13 +173,100 @@ def resolve_share_link(
         raise ShareLinkResolutionError("the parse-only Shipinhao resolver must not run as root")
     if Path("/sys/class/net/tun0").exists():
         raise ShareLinkResolutionError("refusing to resolve while a tun0 interceptor is active")
-    binary = (provider_binary or find_provider_binary()).expanduser().resolve()
     cookie = load_yuanbao_cookie(cdp_url=cdp_url, timeout=min(timeout, 8.0))
     DEFAULT_RUN_ROOT.mkdir(parents=True, exist_ok=True)
     DEFAULT_RUN_ROOT.chmod(0o700)
     lock_path = DEFAULT_RUN_ROOT / ".resolver.lock"
     with exclusive_lock(lock_path):
-        return run_parse_provider(binary, canonical_url, token, cookie, timeout=timeout)
+        # Retain the explicit legacy provider override for compatibility.
+        if provider_binary or os.environ.get("WECHAT_SHIPINHAO_RESOLVER_BINARY"):
+            binary = (provider_binary or find_provider_binary()).expanduser().resolve()
+            return run_parse_provider(binary, canonical_url, token, cookie, timeout=timeout)
+        return resolve_authenticated_share(canonical_url, token, cookie, timeout=timeout)
+
+
+class NoResolverRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        # Never forward an authenticated request to an unexpected location.
+        return None
+
+
+def request_resolver_json(
+    url: str, payload: dict[str, Any], *, timeout: float, cookie: str = "",
+    referer: str, stage: str,
+) -> dict[str, Any]:
+    headers = {
+        "Content-Type": "application/json", "Accept": "application/json",
+        "User-Agent": "Mozilla/5.0", "Referer": referer,
+        "Origin": "https://" + urllib.parse.urlsplit(url).netloc,
+    }
+    if cookie:
+        headers["Cookie"] = cookie
+    request = urllib.request.Request(url, data=json.dumps(payload).encode(), headers=headers)
+    try:
+        with urllib.request.build_opener(NoResolverRedirect()).open(request, timeout=timeout) as response:
+            result = json.loads(read_bounded(response, MAX_PROVIDER_RESPONSE_BYTES))
+    except urllib.error.HTTPError as exc:
+        if stage == "yuanbao_parse" and exc.code == 401:
+            raise ShareLinkResolutionError(
+                "Yuanbao downloader login expired; WeChat login and the saved card are unaffected",
+                code="yuanbao_login_required",
+            ) from exc
+        raise ShareLinkResolutionError(
+            f"{stage} returned HTTP {exc.code}", code=f"{stage}_http_error",
+        ) from exc
+    except (OSError, urllib.error.URLError) as exc:
+        raise ShareLinkResolutionError(
+            f"{stage} network request failed", code=f"{stage}_network_error",
+        ) from exc
+    except (ValueError, UnicodeError) as exc:
+        raise ShareLinkResolutionError(
+            f"{stage} returned invalid JSON", code=f"{stage}_invalid_response",
+        ) from exc
+    if not isinstance(result, dict):
+        raise ShareLinkResolutionError(f"{stage} returned a non-object response")
+    return result
+
+
+def resolve_authenticated_share(
+    canonical_url: str, token: str, cookie: str, *, timeout: float,
+) -> dict[str, Any]:
+    """Same two-stage flow as wx_channels_download, without its lost auth error."""
+    deadline = time.monotonic() + timeout
+
+    def remaining() -> float:
+        value = deadline - time.monotonic()
+        if value <= 0:
+            raise ShareLinkResolutionError("Shipinhao resolver timed out", code="resolver_timeout")
+        return value
+
+    parsed = request_resolver_json(
+        "https://yuanbao.tencent.com/api/weixin/get_parse_result",
+        {"type": "video_channel_url", "url": canonical_url, "scene": 1},
+        cookie=cookie, referer="https://yuanbao.tencent.com/",
+        timeout=remaining(), stage="yuanbao_parse",
+    )
+    if str(parsed.get("code", "")) != "0":
+        message = str(parsed.get("msg") or "")
+        if str(parsed.get("code")) == "401" or re.search(r"未登录|登录.*(?:过期|失效)|not.?log(?:ged)?|unauthorized", message, re.I):
+            raise ShareLinkResolutionError("Yuanbao downloader login required", code="yuanbao_login_required")
+        raise ShareLinkResolutionError("Yuanbao rejected the share-link parse request", code="yuanbao_parse_rejected")
+    data = parsed.get("data") if isinstance(parsed.get("data"), dict) else {}
+    playable = urllib.parse.urlsplit(str(data.get("playable_url") or ""))
+    query = urllib.parse.parse_qs(playable.query)
+    general_token = query.get("token", [""])[0]
+    export_id = query.get("eid", [""])[0]
+    if (playable.scheme != "https" or playable.hostname != "channels.weixin.qq.com"
+            or not general_token or not export_id):
+        raise ShareLinkResolutionError("Yuanbao returned no valid playback identity", code="yuanbao_playback_identity_missing")
+    feed = request_resolver_json(
+        "https://channels.weixin.qq.com/finder-preview/api/feed/get_feed_info",
+        {"baseReq": {"generalToken": general_token}, "exportId": export_id},
+        referer=urllib.parse.urlunsplit(playable), timeout=remaining(), stage="finder_feed",
+    )
+    result = normalize_provider_result(feed, canonical_url=canonical_url, token=token)
+    result["resolver"] = "yuanbao_authenticated_share"
+    return result
 
 
 def run_parse_provider(
@@ -297,10 +388,19 @@ def request_parse_result(
 
 
 def normalize_provider_result(payload: dict[str, Any], *, canonical_url: str, token: str) -> dict[str, Any]:
+    if int(payload.get("errCode") or 0) != 0:
+        raise ShareLinkResolutionError("Finder preview rejected the request", code="finder_feed_rejected")
     outer_data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
     response = outer_data.get("data") if isinstance(outer_data.get("data"), dict) else outer_data
     if int(response.get("errCode") or 0) != 0:
         raise ShareLinkResolutionError(str(response.get("errMsg") or "Finder preview rejected the link"))
+    error = response.get("errMsg")
+    if isinstance(error, dict):
+        restricted = bool(error.get("type") or error.get("title") or error.get("content"))
+    else:
+        restricted = bool(error)
+    if restricted:
+        raise ShareLinkResolutionError("Finder preview returned a content restriction", code="finder_content_unavailable")
     feed = response.get("feedInfo") if isinstance(response.get("feedInfo"), dict) else {}
     author = response.get("authorInfo") if isinstance(response.get("authorInfo"), dict) else {}
     video_candidates = [

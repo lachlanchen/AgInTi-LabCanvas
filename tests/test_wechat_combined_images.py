@@ -174,7 +174,8 @@ class CombinedImageTests(unittest.TestCase):
         import wechat_task_worker as worker
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "original.png"
-            with mock.patch.object(worker.shutil, "which", return_value="codex"), \
+            with mock.patch.dict(worker.os.environ, {"WECHAT_WORKER_DISABLE_CODEX_IMAGE_READ": ""}), \
+                    mock.patch.object(worker.shutil, "which", return_value="codex"), \
                     mock.patch("wechat_codex_sessions.run_codex_across_accounts", return_value={
                         "ok": True, "message": "Three original images.", "returncode": 0,
                         "model": "gpt-5.6-luna", "quota_pool": "reserve"}) as run:
@@ -240,7 +241,8 @@ class CombinedImageTests(unittest.TestCase):
             root = Path(folder)
             workspace = root / "output" / "chat_workspaces" / "group-one"
             output = workspace / "tasks" / "image-one" / "image_text"
-            with mock.patch.object(worker, "ROOT", root), \
+            with mock.patch.dict(worker.os.environ, {"WECHAT_WORKER_DISABLE_CODEX_IMAGE_READ": ""}), \
+                    mock.patch.object(worker, "ROOT", root), \
                     mock.patch.object(worker.shutil, "which", return_value="codex"), \
                     mock.patch("wechat_codex_sessions.run_codex_across_accounts", return_value={
                         "ok": True, "message": "Read this group's original."}) as run:

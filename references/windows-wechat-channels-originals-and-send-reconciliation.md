@@ -174,6 +174,12 @@ verification route; this verifier deliberately accepts unchanged streams only.
 
 ## Recovery and Tests
 
+For an exact copied link that fails in the downloader, see
+[the resolver authentication and ASR recovery note](shipinhao-resolver-auth-and-asr-recovery-2026-10-15.md).
+An expired Yuanbao session is independent of WeChat's login. Preserve the
+candidate link, restore only that downloader session, and retry the same task;
+do not ask for another card or label the video silent/unavailable on that basis.
+
 Use the existing worker, not a second hand-written delivery pipeline:
 
 ```bash

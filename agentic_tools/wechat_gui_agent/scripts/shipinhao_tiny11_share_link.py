@@ -363,7 +363,8 @@ def main():
         resolver_failed = stage == 'verify_resolved_identity'
         result = {'status': 'failed', 'transport': 'wechat_tiny11',
                   'failure_stage': 'share_resolver' if resolver_failed else 'share_link',
-                  'error_code': str(exc)[:250], 'error_type': type(exc).__name__}
+                  'error_code': getattr(exc, 'error_code', str(exc)[:250]),
+                  'error_type': type(exc).__name__}
         if resolver_failed:
             result['native_link_copied'] = True
             result['failure_origin'] = 'download_resolver_not_native_player'

@@ -4531,6 +4531,30 @@ stderr: noisy internal trace
         self.assertIn('separate download resolver', result['agent_next_action'])
         self.assertIn('Do not ask the user to resend', result['agent_next_action'])
 
+    def test_shipinhao_expired_downloader_login_skips_mirror_and_explains_actual_blocker(self) -> None:
+        worker = load_worker()
+        card = ('<finderFeed><objectId>auth-test</objectId><nickname>Author</nickname>'
+                '<desc>Exact title</desc><mediaList><media>'
+                '<url>https://wxapp.tc.qq.com/video?id=expired</url></media></mediaList></finderFeed>')
+        task = {'id': 'auth-failure', 'chat': 'Shares',
+                'source': {'local_id': 77, 'kind': 'file/link', 'local_type': 219043332145},
+                'routine': {'id': 'research_summary'},
+                'request': 'Current coalesced request:\nsummarize this video',
+                'context': [{'local_id': 77, 'content': card}]}
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(worker, 'run_shipinhao_media_transcriber', return_value={
+                    'status': 'failed', 'failure_stage': 'download', 'read_only': True}) as transcribe, \
+                mock.patch.object(worker, 'run_automatic_shipinhao_gui_capture', return_value={
+                    'status': 'failed', 'failure_stage': 'share_resolver',
+                    'error_code': 'yuanbao_login_required', 'native_link_copied': True}), \
+                mock.patch.object(worker, 'discover_verified_shipinhao_capture', return_value=None):
+            result = worker.prepare_shipinhao_media_transcript_preflight(task, Path(tmp))
+        transcribe.assert_called_once()
+        self.assertIn('Yuanbao', result['agent_next_action'])
+        self.assertIn('not a WeChat logout', result['agent_next_action'])
+        self.assertIn('Do not ask', result['agent_next_action'])
+        self.assertEqual(result['native_capture_fallback']['error_code'], 'yuanbao_login_required')
+
     def test_shipinhao_media_preflight_retries_native_copied_share_link(self) -> None:
         worker = load_worker()
         exact_card = (
