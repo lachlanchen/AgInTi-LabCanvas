@@ -25,6 +25,14 @@ def load_sessions():
         sys.path.insert(0, scripts_dir)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
+    # Session tests simulate execution, not the owner's cached quota or login.
+    # Account selection itself is covered in test_codex_accounts.py.
+    module.codex_account_candidates = mock.Mock(return_value=[""])
+    module.codex_account_attempts = mock.Mock(side_effect=lambda accounts, model: iter(
+        {"account": account, "model": model, "quota_pool": "regular"}
+        for account in accounts
+    ))
+    module.mark_codex_account_runtime_unavailable = mock.Mock()
     return module
 
 

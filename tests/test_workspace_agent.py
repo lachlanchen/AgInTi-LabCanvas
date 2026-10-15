@@ -35,6 +35,20 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class WorkspaceAgentTests(unittest.TestCase):
+    def setUp(self):
+        # Never consult or mutate workstation account state in backend tests.
+        patches = (
+            patch("agenticapp.workspace_agent.codex_account_candidates", return_value=[""]),
+            patch("agenticapp.workspace_agent.codex_account_attempts", side_effect=lambda accounts, model: iter(
+                {"account": account, "model": model, "quota_pool": "regular"}
+                for account in accounts
+            )),
+            patch("agenticapp.workspace_agent.mark_codex_account_runtime_unavailable"),
+        )
+        for mocked in patches:
+            mocked.start()
+            self.addCleanup(mocked.stop)
+
     def test_no_verified_account_never_invokes_default_codex(self):
         with tempfile.TemporaryDirectory() as directory, \
                 patch("agenticapp.workspace_agent.codex_account_candidates", return_value=[]), \

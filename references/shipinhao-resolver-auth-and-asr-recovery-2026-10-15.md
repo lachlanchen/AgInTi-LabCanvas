@@ -97,6 +97,11 @@ and Whisper fallback 4 tests, 656 total. Run them with
 The complete `npm test` suite also passed: 2,333 tests, 16 skipped. Two existing
 combined-image tests now explicitly enable their mocked vision call inside
 the test context; the suite-wide live-vision disable remains in effect.
+Clean GitHub CI also exposed session tests that had accidentally depended on
+the workstation's private quota cache. Session/workspace test fixtures now
+simulate account attempts and quota-rejection writes, while dedicated account
+policy tests continue testing real selection logic with their own fixtures.
+No production credit restriction or account policy was relaxed for CI.
 
 Two previously failed sources were independently resolved and downloaded:
 
