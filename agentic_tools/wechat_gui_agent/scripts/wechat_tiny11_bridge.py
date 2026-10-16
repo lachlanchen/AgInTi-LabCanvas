@@ -763,9 +763,49 @@ def sync_once(config=None):
         return _sync_once(config)
 
 
+def record_sync_state(state):
+    """Retain sync freshness and a bounded login timeline, not chat payloads."""
+    path = STORE.parent / 'status.json'
+    try:
+        previous = json.loads(path.read_text())
+        if not isinstance(previous, dict):
+            previous = {}
+    except (OSError, ValueError):
+        previous = {}
+    state = dict(state)
+    state.setdefault('last_sync_epoch', previous.get('last_sync_epoch', 0))
+    now = time.time()
+    state.setdefault('last_probe_epoch', now)
+    keys = ('client_state', 'client_ready', 'input_blocker', 'sync_deferred')
+    changed = any(previous.get(key) != state.get(key) for key in keys)
+    history = previous.get('client_transitions', [])
+    history = history[-16:] if isinstance(history, list) else []
+    if changed:
+        history = history[-15:] + [{'at': now, 'from': previous.get('client_state', 'unknown'),
+                                    **{key: state.get(key) for key in keys}}]
+    state['client_state_changed_at'] = now if changed else previous.get('client_state_changed_at', now)
+    state['client_transitions'] = history
+    write_private_json(path, state)
+    return state
+
+
 def _sync_once(config=None):
     config = config or load_config(CONFIG)
     transport = Tiny11Transport(config)
+    client = transport.health()
+    observed_at = time.time()
+    helper_ready = client.get('helper_ready') is True and client.get('app') == 'wechat'
+    client_state = client.get('client_state', 'unknown') if helper_ready else 'unknown'
+    # A login screen is not useful database work. Probe without input and keep
+    # the cursor/cache unchanged until the owner restores the native session.
+    if not helper_ready or client_state in {'entry_required', 'client_unavailable', 'unresponsive'}:
+        return record_sync_state({
+            'ok': helper_ready, 'last_probe_epoch': observed_at, 'inserted': 0,
+            'client_ready': False, 'client_state': client_state,
+            'input_blocker': client.get('input_blocker', '') if helper_ready else '',
+            'sync_deferred': client_state if helper_ready else 'helper_unavailable',
+            'automatic_delivery_enabled': False,
+        })
     cursors = {}
     if STORE.exists():
         with closing(sqlite3.connect(STORE)) as conn:
@@ -787,7 +827,7 @@ def _sync_once(config=None):
     local_export.chmod(0o600)
     payload = json.loads(local_export.read_text(encoding='utf-8'))
     # A contact with no local history is still a valid empty intake table.
-    inserted = ingest_export({**payload, 'tables': config['message_tables']})
+    inserted = ingest_export({**payload, 'tables': config['message_tables']}, db_path=STORE)
     bindings = {row['table'] for row in payload.get('bindings', [])}
     missing = [chat for chat, target in config['targets'].items()
                if native_chat_binding(target)['table'] not in bindings]
@@ -797,16 +837,17 @@ def _sync_once(config=None):
     client_ready = (client.get('ok') is True and client.get('app') == 'wechat'
                     and client.get('client_state') == 'ready'
                     and client.get('input_ready') is not False)
-    state = {'ok': True, 'last_sync_epoch': time.time(), 'inserted': inserted,
+    state = {'ok': True, 'last_sync_epoch': time.time(), 'last_probe_epoch': time.time(),
+             'inserted': inserted,
              'client_ready': client_ready,
              'client_state': client.get('client_state', 'unknown'),
+             'input_blocker': client.get('input_blocker', ''),
              'reader_mode': summary.get('reader_mode', 'unknown'),
              'tables': len(payload['tables']), 'expected_tables': len(config['message_tables']),
              'all_tables_available': set(config['message_tables']) <= set(payload['tables']),
              'binding_missing_chats': missing,
-             'automatic_delivery_enabled': bool(config.get('enabled') and config.get('delivery_verified'))}
-    write_private_json(STORE.parent / 'status.json', state)
-    return state
+             'automatic_delivery_enabled': bool(client_ready and config.get('enabled') and config.get('delivery_verified'))}
+    return record_sync_state(state)
 
 
 def main():
@@ -844,17 +885,23 @@ def main():
             window = client.ensure_chat(args.chat)
             print(json.dumps({'ok': True, 'chat_title_verified': client.current_title_matches(window, args.chat), 'sent': False}))
         return
+    last_log_signature = None
     while True:
         try:
             result = sync_once()
         except Exception as exc:
-            result = {'ok': False, 'error': str(exc)[:500], 'last_failure_epoch': time.time()}
-            write_private_json(STORE.parent / 'status.json', result)
-        if not args.loop or not result['ok'] or result.get('inserted'):
-            print(json.dumps(result), flush=True)
+            result = record_sync_state({'ok': False, 'error': str(exc)[:500],
+                                        'last_failure_epoch': time.time(),
+                                        'client_state': 'unknown', 'client_ready': False})
+        signature = tuple(result.get(key) for key in
+                          ('ok', 'client_state', 'client_ready', 'input_blocker', 'sync_deferred', 'error'))
+        if not args.loop or signature != last_log_signature or result.get('inserted'):
+            print(json.dumps({key: value for key, value in result.items()
+                              if key != 'client_transitions'}), flush=True)
+        last_log_signature = signature
         if not args.loop:
             return 0 if result['ok'] else 1
-        time.sleep(2 if result['ok'] else 30)
+        time.sleep(10 if result.get('sync_deferred') else 2 if result['ok'] else 30)
 
 
 if __name__ == '__main__':

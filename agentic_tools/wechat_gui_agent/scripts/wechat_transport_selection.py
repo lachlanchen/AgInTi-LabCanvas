@@ -28,9 +28,11 @@ def tiny11_health():
         state = json.loads((STORE.parent / 'status.json').read_text())
     except (OSError, ValueError):
         config, state = {}, {}
-    age = max(0, time.time() - state.get('last_sync_epoch', 0))
+    now = time.time()
+    sync_age = max(0, now - state.get('last_sync_epoch', 0))
+    age = max(0, now - state.get('last_probe_epoch', state.get('last_sync_epoch', 0)))
     unresponsive = state.get('client_state') == 'unresponsive'
-    ready = bool(state.get('ok') and age < 60 and config.get('delivery_verified')
+    ready = bool(state.get('ok') and age < 60 and sync_age < 60 and config.get('delivery_verified')
                  and state.get('client_ready') is True and not unresponsive)
     entry_required = bool(not ready and age < 60 and state.get('client_state') == 'entry_required')
     client_absent = bool(not ready and age < 60 and state.get('client_state') == 'client_unavailable')
@@ -43,6 +45,9 @@ def tiny11_health():
             'client_ready': state.get('client_ready') is True and not unresponsive,
             'client_state': state.get('client_state', 'unknown'),
             'human_action_required': entry_required, 'state_age_seconds': round(age),
+            'store_age_seconds': round(sync_age),
+            'client_state_changed_at': state.get('client_state_changed_at'),
+            'sync_deferred': state.get('sync_deferred', ''),
             'binding_missing_chats': state.get('binding_missing_chats', []),
             'novnc_url': 'http://127.0.0.1:6143/'}
 

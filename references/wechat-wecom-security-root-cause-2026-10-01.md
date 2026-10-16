@@ -1,5 +1,10 @@
 # WeChat / WeCom Security and Stability Root-Cause Audit
 
+For the October 16 recurrence, see
+[login-aware intake recovery](wechat-login-aware-intake-recovery-2026-10-16.md).
+That audit did not establish a vendor-side trigger; it fixed repeated cache
+exports during logout and missing native-state transition evidence.
+
 ## Conclusion
 
 The incidents are not one failure. Do not attribute every frozen window,
