@@ -587,11 +587,7 @@ def send_file_to_open_chat(
     )
     clear_composer(env, window, min(max(pause, 0.1), 0.5))
 
-    click(
-        env,
-        window.x + int(window.width * 0.47),
-        window.y + window.height - 132,
-    )
+    click(env, *find_native_file_button(preflight_path, window))
     time.sleep(max(0.5, pause))
     chooser = wait_for_verified_file_chooser(env, window)
     paste_path_into_file_chooser(env, path)
@@ -657,6 +653,73 @@ def send_file_to_open_chat(
         },
         "selected_title_guard": selected_guard,
     }
+
+
+def find_native_file_button(screenshot_path: Path, window: Window) -> tuple[int, int]:
+    """Find the folder glyph in the composer, independent of window width."""
+    from PIL import Image
+
+    # Native Linux WeChat folder outline, without any private screenshot data.
+    glyph = (
+        "#######.............",
+        "##...####...........",
+        "#.......############",
+        "#..................#",
+        "#..................#",
+        "####################",
+        "##................##",
+        "#..................#",
+        "#..................#",
+        "#..................#",
+        "#..................#",
+        "#..................#",
+        "#..................#",
+        "#..................#",
+        "##................##",
+        "####################",
+    )
+    expected = {i for i, pixel in enumerate("".join(glyph)) if pixel == "#"}
+    with Image.open(screenshot_path) as image:
+        left, top = max(0, window.x), max(0, window.y + window.height - 260)
+        region = image.convert("L").crop(
+            (left, top, window.x + window.width, window.y + window.height)
+        )
+    points = {
+        (i % region.width, i // region.width)
+        for i, value in enumerate(region.getdata())
+        if value < 150
+    }
+    matches = []
+    while points:
+        pending = [points.pop()]
+        component = set(pending)
+        while pending:
+            x, y = pending.pop()
+            for neighbor in ((x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)):
+                if neighbor in points:
+                    points.remove(neighbor)
+                    component.add(neighbor)
+                    pending.append(neighbor)
+        x0, x1 = min(p[0] for p in component), max(p[0] for p in component)
+        y0, y1 = min(p[1] for p in component), max(p[1] for p in component)
+        width, height = x1 - x0 + 1, y1 - y0 + 1
+        if not (16 <= width <= 40 and 12 <= height <= 32):
+            continue
+        if not 1.1 <= width / height <= 1.4:
+            continue
+        mask = Image.new("L", (width, height))
+        for x, y in component:
+            mask.putpixel((x - x0, y - y0), 255)
+        resized = mask.resize((20, 16), Image.Resampling.NEAREST)
+        actual = {i for i, value in enumerate(resized.getdata()) if value}
+        if len(actual & expected) / len(actual | expected) >= 0.84:
+            matches.append((left + (x0 + x1) // 2, top + (y0 + y1) // 2))
+    if len(matches) != 1:
+        raise RuntimeError(
+            "WECHAT_FILE_BUTTON_NOT_FOUND: expected one visible composer folder "
+            f"icon, found {len(matches)}; refusing a guessed click"
+        )
+    return matches[0]
 
 
 def active_window_identity(env: dict[str, str]) -> WindowIdentity | None:
@@ -1468,6 +1531,7 @@ def click_visible_chat_list_match(
         return None
     screenshot_path = out_dir / f"{shot_prefix}-chat-list-source.png"
     crop_path = out_dir / f"{shot_prefix}-chat-list.png"
+    ocr_path = out_dir / f"{shot_prefix}-chat-list-ocr.png"
     screenshot(env, screenshot_path)
     if not screenshot_path.exists():
         return None
@@ -1481,8 +1545,9 @@ def click_visible_chat_list_match(
         ],
         env=env,
     )
-    proc = run(["tesseract", str(crop_path), "stdout", "-l", "chi_sim+chi_tra+eng", "--psm", "11", "tsv"], env=env, check=False)
-    match = visible_chat_list_match_from_tsv(proc.stdout, target)
+    run(["convert", str(crop_path), "-resize", "300%", str(ocr_path)], env=env)
+    proc = run(["tesseract", str(ocr_path), "stdout", "-l", "chi_sim+chi_tra+eng", "--psm", "11", "tsv"], env=env, check=False)
+    match = visible_chat_list_match_from_tsv(proc.stdout, target, scale=3, title_image=crop_path)
     if not match:
         return None
     click_x = target.result_click[0] if target.result_click else int(region["left"] - window.x + 110)
@@ -1513,7 +1578,9 @@ def chat_list_crop_region(window: Window) -> dict[str, int] | None:
     }
 
 
-def visible_chat_list_match_from_tsv(tsv_text: str, target: TargetSpec) -> dict[str, Any] | None:
+def visible_chat_list_match_from_tsv(
+    tsv_text: str, target: TargetSpec, *, scale: int = 1, title_image: Path | None = None,
+) -> dict[str, Any] | None:
     expected_titles = [
         item
         for item in (
@@ -1533,10 +1600,10 @@ def visible_chat_list_match_from_tsv(tsv_text: str, target: TargetSpec) -> dict[
         if not text:
             continue
         try:
-            left = int(float(raw.get("left") or 0))
-            top = int(float(raw.get("top") or 0))
-            width = int(float(raw.get("width") or 0))
-            height = int(float(raw.get("height") or 0))
+            left = int(float(raw.get("left") or 0) / scale)
+            top = int(float(raw.get("top") or 0) / scale)
+            width = int(float(raw.get("width") or 0) / scale)
+            height = int(float(raw.get("height") or 0) / scale)
         except ValueError:
             continue
         if width <= 0 or height <= 0:
@@ -1574,6 +1641,10 @@ def visible_chat_list_match_from_tsv(tsv_text: str, target: TargetSpec) -> dict[
                 max_right = max(int(item["left"]) + int(item["width"]) for item in title_words)
                 min_top = min(int(item["top"]) for item in title_words)
                 max_bottom = max(int(item["top"]) + int(item["height"]) for item in title_words)
+                if title_image and not chat_list_title_is_foreground(
+                    title_image, (min_left, min_top, max_right, max_bottom)
+                ):
+                    continue
                 matches.append(
                     {
                         "text": text,
@@ -1590,6 +1661,22 @@ def visible_chat_list_match_from_tsv(tsv_text: str, target: TargetSpec) -> dict[
         return None
     matches.sort(key=lambda item: (int(item["top"]), abs(int(item["left"]) - 65)))
     return matches[0]
+
+
+def chat_list_title_is_foreground(image_path: Path, bounds: tuple[int, int, int, int]) -> bool:
+    """Exclude subdued message previews from native chat-title matching."""
+    from PIL import Image, ImageStat
+
+    with Image.open(image_path) as source:
+        image = source.convert("L")
+        # The narrow gutter has the list background, rather than avatars/text.
+        background = ImageStat.Stat(image.crop((0, 0, min(4, image.width), image.height))).median[0]
+        pixels = list(image.crop(bounds).getdata())
+    if not pixels:
+        return False
+    # Titles use strong foreground ink; previews and @ mentions use gray.
+    foreground = sum(value < 110 if background >= 128 else value > 200 for value in pixels)
+    return foreground >= max(3, len(pixels) * 0.04)
 
 
 def target_explicit_click_candidates(target: TargetSpec) -> list[tuple[str, tuple[int, int]]]:

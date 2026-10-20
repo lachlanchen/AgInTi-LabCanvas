@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 import importlib.util
 import json
+import os
 from pathlib import Path
 import subprocess
 import tempfile
@@ -1940,7 +1941,7 @@ class WeChatTransportStallGuardTests(unittest.TestCase):
             )
         )
 
-    def test_current_client_gui_timeout_restarts_only_wechat_client(self) -> None:
+    def test_current_client_gui_timeout_needs_explicit_restart_opt_in(self) -> None:
         snapshot = {
             "issues": [
                 {
@@ -1951,7 +1952,7 @@ class WeChatTransportStallGuardTests(unittest.TestCase):
             ]
         }
         state = {"fault_counts": {"wechat_gui_delivery_stalled": 2}}
-        with mock.patch("wechat_transport_selection.tiny11_enabled", return_value=False), mock.patch.object(
+        with mock.patch.dict(os.environ, {"WECHAT_ALLOW_AUTOMATIC_CLIENT_RESTART": "1"}), mock.patch("wechat_transport_selection.tiny11_enabled", return_value=False), mock.patch.object(
             guard,
             "run_repair",
             return_value={"label": "wechat_input_stalled", "ok": True},
@@ -1969,6 +1970,19 @@ class WeChatTransportStallGuardTests(unittest.TestCase):
             "wechat_input_stalled",
             [str(guard.WECHAT_VIRTUAL_DESKTOP), "restart-client"],
         )
+
+    def test_composer_failure_never_restarts_client_by_default(self) -> None:
+        snapshot = {"issues": [{"code": "wechat_gui_delivery_stalled"}]}
+        state = {"fault_counts": {"wechat_gui_delivery_stalled": 8}}
+        with mock.patch.dict(os.environ, {"WECHAT_ALLOW_AUTOMATIC_CLIENT_RESTART": "0"}), \
+                mock.patch("wechat_transport_selection.tiny11_enabled", return_value=False), \
+                mock.patch.object(guard, "run_repair") as repair:
+            result = guard.perform_repairs(
+                snapshot, state, consecutive_failures=2,
+                cooldown_seconds=300, max_sender_seconds=180,
+            )
+        self.assertEqual(result, [])
+        repair.assert_not_called()
 
     def test_repair_agent_never_runs_for_healthy_poll(self) -> None:
         due, signature, codes = guard.repair_agent_due(

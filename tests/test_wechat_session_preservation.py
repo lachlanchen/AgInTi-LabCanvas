@@ -158,6 +158,7 @@ class WeChatSessionPreservationTests(unittest.TestCase):
         issue = {'issues': [{'code': 'wechat_gui_delivery_stalled'}]}
         for windows in (True, False):
             with self.subTest(windows=windows), \
+                 mock.patch.dict(guard.os.environ, {'WECHAT_ALLOW_AUTOMATIC_CLIENT_RESTART': '1'}), \
                  mock.patch.object(selection, 'tiny11_enabled', return_value=windows), \
                  mock.patch.object(guard, 'repair_due', return_value=True), \
                  mock.patch.object(guard, 'run_repair', return_value={'ok': True}) as repair:

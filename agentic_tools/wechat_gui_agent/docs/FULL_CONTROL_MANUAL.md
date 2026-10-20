@@ -1,5 +1,10 @@
 # WeChat Full Control Manual
 
+For a Windows-to-native-Ubuntu recovery, use
+[Ubuntu transport recovery](../../../references/ubuntu-wechat-transport-recovery-2026-10-20.md).
+Reconcile server IDs before switching intake, preserve uncertain-send receipts,
+and do not restart a chat client automatically after a delivery failure.
+
 For retained Channels cards, use [saved-card recovery](../../../references/wechat-saved-card-recovery-2026-09-27.md).
 Internal retrieval failures must not ask the owner to resend an identified card.
 

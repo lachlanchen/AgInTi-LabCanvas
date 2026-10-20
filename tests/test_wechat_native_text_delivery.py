@@ -5,6 +5,7 @@ import sqlite3
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "agentic_tools/wechat_gui_agent/scripts"
@@ -91,6 +92,15 @@ class NativeTextDeliveryTests(unittest.TestCase):
         self.assertIsNone(delivery.wait_native_receipt(receipt, "reply", timeout=0, private=self.private))
         self.insert(receipt)
         self.assertIsNotNone(delivery.wait_native_receipt(receipt, "reply", timeout=0, private=self.private))
+
+    def test_default_wait_covers_a_delayed_store_refresh(self):
+        clock = [0.0]
+        evidence = {"verified": True, "local_id": 1}
+        with mock.patch.object(delivery.time, "monotonic", side_effect=lambda: clock[0]), \
+                mock.patch.object(delivery.time, "sleep", side_effect=lambda delay: clock.__setitem__(0, clock[0] + delay)), \
+                mock.patch.object(delivery, "find_native_receipt", side_effect=lambda *a: evidence if clock[0] >= 12 else None):
+            self.assertEqual(delivery.wait_native_receipt({}, "reply", private=self.private), evidence)
+        self.assertEqual(clock[0], 12)
 
     def test_pending_send_is_an_echo_before_delivery_is_recorded(self):
         receipt = delivery.prepare_receipt(self.target, self.private)

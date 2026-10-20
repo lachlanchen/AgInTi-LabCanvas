@@ -148,6 +148,7 @@ class WeChatGuiSendTests(unittest.TestCase):
                 mock.patch.object(module, "screenshot", side_effect=fake_screenshot),
                 mock.patch.object(module, "detect_wechat_locked", side_effect=fake_lock),
                 mock.patch.object(module, "clear_composer"),
+                mock.patch.object(module, "find_native_file_button", return_value=(478, 568)),
                 mock.patch.object(module, "click"),
                 mock.patch.object(
                     module,
@@ -208,6 +209,7 @@ class WeChatGuiSendTests(unittest.TestCase):
                     return_value={"locked": False, "ocr_text": ""},
                 ),
                 mock.patch.object(module, "clear_composer"),
+                mock.patch.object(module, "find_native_file_button", return_value=(478, 568)),
                 mock.patch.object(module, "click") as click,
                 mock.patch.object(
                     module,
@@ -262,6 +264,7 @@ class WeChatGuiSendTests(unittest.TestCase):
                     return_value={"locked": False, "ocr_text": ""},
                 ),
                 mock.patch.object(module, "clear_composer"),
+                mock.patch.object(module, "find_native_file_button", return_value=(478, 568)),
                 mock.patch.object(module, "click"),
                 mock.patch.object(
                     module,
@@ -287,6 +290,46 @@ class WeChatGuiSendTests(unittest.TestCase):
                     )
 
         paste_path.assert_not_called()
+
+    def test_folder_button_detection_tracks_toolbar_not_window_ratio(self):
+        from PIL import Image, ImageDraw
+
+        module = load_wechat_gui_send()
+        icon = Image.new("L", (24, 23), 238)
+        draw = ImageDraw.Draw(icon)
+        draw.line([(2, 3), (8, 3), (10, 5), (21, 5), (21, 18), (2, 18), (2, 3)], fill=50)
+        draw.line([(2, 8), (21, 8)], fill=50)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "desktop.png"
+            for width, scale, origin in ((1000, 1, (0, 0)), (1920, 1, (0, 0)), (1200, 2, (80, 40))):
+                with self.subTest(width=width, scale=scale, origin=origin):
+                    image = Image.new("L", (width + origin[0], 800), 238)
+                    x, y = origin[0] + 466, origin[1] + 568
+                    image.paste(icon.resize((24 * scale, 23 * scale), Image.Resampling.NEAREST), (x, y))
+                    image.save(path)
+                    found = module.find_native_file_button(
+                        path, module.Window("main", *origin, width, 700)
+                    )
+                    self.assertAlmostEqual(found[0], x + 11.5 * scale, delta=1)
+                    self.assertAlmostEqual(found[1], y + 10.5 * scale, delta=1)
+
+    def test_folder_button_detection_rejects_absent_or_ambiguous_icons(self):
+        from PIL import Image, ImageDraw
+
+        module = load_wechat_gui_send()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "desktop.png"
+            image = Image.new("L", (1000, 700), 238)
+            for count in (0, 2):
+                if count:
+                    draw = ImageDraw.Draw(image)
+                    for x in (470, 520):
+                        draw.line([(x, 570), (x + 6, 570), (x + 8, 572), (x + 19, 572),
+                                   (x + 19, 585), (x, 585), (x, 570)], fill=50)
+                        draw.line([(x, 575), (x + 19, 575)], fill=50)
+                image.save(path)
+                with self.assertRaisesRegex(RuntimeError, "WECHAT_FILE_BUTTON_NOT_FOUND"):
+                    module.find_native_file_button(path, module.Window("main", 0, 0, 1000, 700))
 
     def test_file_chooser_identity_must_be_distinct_and_native(self):
         module = load_wechat_gui_send()
@@ -1400,6 +1443,29 @@ class WeChatGuiSendTests(unittest.TestCase):
 
         self.assertIsNone(match)
 
+    def test_visible_list_does_not_select_gray_mentions_as_contact_names(self):
+        from PIL import Image, ImageDraw
+
+        module = load_wechat_gui_send()
+        tsv = "\n".join([
+            "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext",
+            "5\t1\t1\t1\t1\t1\t198\t90\t150\t36\t90\t@Owner",
+            "5\t1\t2\t1\t1\t1\t198\t300\t150\t48\t90\tOwner",
+        ])
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "list.png"
+            image = Image.new("L", (300, 250), 238)
+            draw = ImageDraw.Draw(image)
+            draw.rectangle((66, 30, 116, 42), fill=155)
+            draw.rectangle((66, 100, 116, 116), fill=40)
+            image.save(path)
+            match = module.visible_chat_list_match_from_tsv(
+                tsv, module.TargetSpec("owner", "Owner", "Owner"),
+                scale=3, title_image=path,
+            )
+        self.assertEqual(match["text"], "Owner")
+        self.assertEqual(match["center_y"], 108)
+
     def test_open_target_clicks_visible_chat_list_match_before_static_rows(self):
         module = load_wechat_gui_send()
         target = module.TargetSpec(
@@ -1411,9 +1477,9 @@ class WeChatGuiSendTests(unittest.TestCase):
         tsv = "\n".join(
             [
                 "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext",
-                "5\t1\t10\t1\t1\t1\t64\t164\t58\t15\t80\t懒",
-                "5\t1\t10\t1\t1\t2\t88\t160\t9\t28\t80\t人",
-                "5\t1\t10\t1\t1\t3\t96\t164\t26\t15\t80\t科研",
+                "5\t1\t10\t1\t1\t1\t192\t492\t174\t45\t80\t懒",
+                "5\t1\t10\t1\t1\t2\t264\t480\t27\t84\t80\t人",
+                "5\t1\t10\t1\t1\t3\t288\t492\t78\t45\t80\t科研",
             ]
         )
         original_click = module.click
@@ -1444,7 +1510,9 @@ class WeChatGuiSendTests(unittest.TestCase):
 
             module.run = fake_run
             module.verify_opened_title = fake_verify
-            with tempfile.TemporaryDirectory() as tmp:
+            with tempfile.TemporaryDirectory() as tmp, mock.patch.object(
+                module, "chat_list_title_is_foreground", return_value=True
+            ):
                 result = module.open_target(
                     {},
                     module.Window("1", 100, 200, 1000, 700),
@@ -1481,7 +1549,7 @@ class WeChatGuiSendTests(unittest.TestCase):
         tsv = "\n".join(
             [
                 "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext",
-                "5\t1\t10\t1\t1\t1\t65\t238\t120\t29\t80\t写作—外语—挣钱",
+                "5\t1\t10\t1\t1\t1\t195\t714\t360\t87\t80\t写作—外语—挣钱",
             ]
         )
         clicks: list[tuple[int, int]] = []
@@ -1502,6 +1570,7 @@ class WeChatGuiSendTests(unittest.TestCase):
             }
 
         with (
+            mock.patch.object(module, "chat_list_title_is_foreground", return_value=True),
             mock.patch.object(module, "run", side_effect=fake_run),
             mock.patch.object(module, "screenshot", side_effect=lambda _env, path: Path(path).write_bytes(b"shot")),
             mock.patch.object(module, "title_window_candidates", side_effect=lambda _env, window: [window]),
@@ -1540,8 +1609,8 @@ class WeChatGuiSendTests(unittest.TestCase):
         tsv = "\n".join(
             [
                 "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext",
-                "5\t1\t10\t1\t1\t1\t64\t164\t58\t15\t80\t🍓",
-                "5\t1\t10\t1\t1\t2\t88\t164\t58\t15\t80\t我的设备",
+                "5\t1\t10\t1\t1\t1\t192\t492\t174\t45\t80\t🍓",
+                "5\t1\t10\t1\t1\t2\t264\t492\t174\t45\t80\t我的设备",
             ]
         )
         original_run = module.run
@@ -1563,7 +1632,9 @@ class WeChatGuiSendTests(unittest.TestCase):
                 return subprocess.CompletedProcess(command, 0, "", "")
 
             module.run = fake_run
-            with tempfile.TemporaryDirectory() as tmp:
+            with tempfile.TemporaryDirectory() as tmp, mock.patch.object(
+                module, "chat_list_title_is_foreground", return_value=True
+            ):
                 result = module.open_target(
                     {},
                     module.Window("1", 100, 200, 1000, 700),
@@ -1599,8 +1670,8 @@ class WeChatGuiSendTests(unittest.TestCase):
         tsv = "\n".join(
             [
                 "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext",
-                "5\t1\t10\t1\t1\t1\t64\t164\t58\t15\t80\t🍓",
-                "5\t1\t10\t1\t1\t2\t88\t164\t58\t15\t80\t我的设备",
+                "5\t1\t10\t1\t1\t1\t192\t492\t174\t45\t80\t🍓",
+                "5\t1\t10\t1\t1\t2\t264\t492\t174\t45\t80\t我的设备",
             ]
         )
         original_run = module.run
@@ -1622,7 +1693,9 @@ class WeChatGuiSendTests(unittest.TestCase):
                 return subprocess.CompletedProcess(command, 0, "", "")
 
             module.run = fake_run
-            with tempfile.TemporaryDirectory() as tmp:
+            with tempfile.TemporaryDirectory() as tmp, mock.patch.object(
+                module, "chat_list_title_is_foreground", return_value=True
+            ):
                 result = module.open_target(
                     {},
                     module.Window("1", 100, 200, 1000, 700),

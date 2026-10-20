@@ -105,8 +105,10 @@ def find_native_receipt(receipt: dict, message: str, private: Path = PRIVATE) ->
     return None
 
 
-def wait_native_receipt(receipt: dict, message: str, *, timeout: float = 10,
+def wait_native_receipt(receipt: dict, message: str, *, timeout: float = 30,
                         private: Path = PRIVATE) -> dict | None:
+    # The incremental store refresh can itself take ten seconds. Allow more than
+    # one refresh cycle without ever resubmitting the outgoing message.
     deadline = time.monotonic() + max(0, timeout)
     while True:
         evidence = find_native_receipt(receipt, message, private)

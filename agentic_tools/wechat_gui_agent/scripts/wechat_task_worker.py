@@ -4583,13 +4583,16 @@ Markdown source:
 {text}
 ```
 """
+    policy = load_worker_model_policy("low")
     result = run_codex_session(
         prompt,
         backend=select_agent_backend({}),
         chat_name="markdown-pdf-companion",
         role=f"translate_{language}",
-        model=os.environ.get("WECHAT_MARKDOWN_TRANSLATION_MODEL", DEFAULT_WORKER_MODEL),
-        reasoning_effort=os.environ.get("WECHAT_MARKDOWN_TRANSLATION_EFFORT", "low"),
+        model=os.environ.get("WECHAT_MARKDOWN_TRANSLATION_MODEL", policy["model"]),
+        reasoning_effort=os.environ.get("WECHAT_MARKDOWN_TRANSLATION_EFFORT", policy["reasoning_effort"]),
+        fallback_model=policy["fallback_model"],
+        fallback_reasoning_effort=policy["fallback_reasoning_effort"],
         sandbox="read-only",
         timeout_seconds=int(os.environ.get("WECHAT_MARKDOWN_TRANSLATION_TIMEOUT_SECONDS", "300")),
         workdir=ROOT,

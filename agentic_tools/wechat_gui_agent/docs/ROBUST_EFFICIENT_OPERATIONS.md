@@ -1,5 +1,10 @@
 # Robust And Efficient Operations
 
+Native Ubuntu recovery must preserve cross-client message identity and completed
+outbox work. See [Ubuntu transport recovery](../../../references/ubuntu-wechat-transport-recovery-2026-10-20.md)
+for cursor reconciliation, session-preserving repair, receipt timing and
+maximized-window file delivery.
+
 For retained Channels cards, use [saved-card recovery](../../../references/wechat-saved-card-recovery-2026-09-27.md).
 Internal retrieval failures must not ask the owner to resend an identified card.
 

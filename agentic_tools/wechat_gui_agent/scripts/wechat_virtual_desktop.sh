@@ -14,7 +14,7 @@ MIN_WINDOW_WIDTH="${WECHAT_MIN_WINDOW_WIDTH:-640}"
 MIN_WINDOW_HEIGHT="${WECHAT_MIN_WINDOW_HEIGHT:-480}"
 START_WAIT_SECONDS="${WECHAT_START_WAIT_SECONDS:-12}"
 RESTART_WAIT_SECONDS="${WECHAT_RESTART_WAIT_SECONDS:-12}"
-AUTO_RECOVER_UNMAPPED="${WECHAT_AUTO_RECOVER_UNMAPPED:-1}"
+AUTO_RECOVER_UNMAPPED="${WECHAT_AUTO_RECOVER_UNMAPPED:-0}"
 X11_PROBE_TIMEOUT_SECONDS="${WECHAT_X11_PROBE_TIMEOUT_SECONDS:-3}"
 mkdir -p "$LOG_DIR"
 mkdir -p "$PRIVATE_DIR"
@@ -140,6 +140,14 @@ fi
   --log-dir "$LOG_DIR" \
   -- /bin/true 9>&- >"$LAUNCH_LOG"
 
+# Keep normal desktop focus/activation semantics without replacing a live WM.
+if command -v openbox >/dev/null 2>&1 && ! \
+  timeout "${X11_PROBE_TIMEOUT_SECONDS}s" env DISPLAY="$DISPLAY_ID" XAUTHORITY= \
+    xprop -root _NET_SUPPORTING_WM_CHECK 2>/dev/null | grep -Eq 'window id # 0x[1-9a-fA-F]'; then
+  env DISPLAY="$DISPLAY_ID" XAUTHORITY= setsid -f openbox --sm-disable \
+    9>&- >>"$LOG_DIR/wechat_window_manager.log" 2>&1
+fi
+
 main_window=""
 visible_window=""
 if [[ "$ACTION" == "restart-client" ]]; then
@@ -187,4 +195,4 @@ fi
 cat "$LAUNCH_LOG"
 echo
 echo "WeChat noVNC:"
-echo "  http://127.0.0.1:${NOVNC_PORT}/vnc_lite.html?host=127.0.0.1&port=${NOVNC_PORT}&autoconnect=1&resize=remote"
+echo "  http://127.0.0.1:${NOVNC_PORT}/vnc.html?host=127.0.0.1&port=${NOVNC_PORT}&autoconnect=1&resize=scale"

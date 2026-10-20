@@ -1874,6 +1874,7 @@ def perform_repairs(
     if (
         "wechat_gui_delivery_stalled" in issue_codes
         and not tiny11_enabled()
+        and os.environ.get("WECHAT_ALLOW_AUTOMATIC_CLIENT_RESTART") == "1"
         and repair_due(
             "wechat_gui_delivery_stalled",
             state,
@@ -2047,6 +2048,10 @@ that remained after normal scripted recovery. Diagnose and repair the live
 runtime in {ROOT}. Reuse the repository's existing supervisors, health probes,
 queue recovery commands, and tests. Inspect only bounded operational logs needed
 for these issue codes. Do not read or quote chat content.
+
+On every transport, clipboard/title/receipt failures alone do not prove a frozen
+client. Never restart an official chat client without explicit owner approval.
+Keep completed answers and retry only delivery after verifying the fault.
 
 When personal WeChat uses Tiny11, a missing/hidden window, login requirement,
 cached-store failure or SSH/network failure never authorizes restarting either
