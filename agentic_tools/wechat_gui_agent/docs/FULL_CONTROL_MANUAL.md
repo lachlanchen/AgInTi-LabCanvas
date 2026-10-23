@@ -99,7 +99,7 @@ full reboot-safe tmux stack:
 | --- | --- |
 | `labcanvas-wechat` | WeChat desktop, decrypt refresh, one direct monitor per chat, worker, media sync, and chat materialization sync. |
 | `labcanvas-web` | LabCanvas web control panel for status and manual actions. |
-| `labcanvas-career-daily` | Daily writing/career/money/self-analysis agent, defaulting to `gpt-5.5` with `xhigh` reasoning and sending to `lachlanchan`. |
+| `labcanvas-career-daily` | Daily writing/career/money/self-analysis agent, using the shared model policy unless explicitly overridden and sending to `lachlanchan`. |
 
 After reboot, run:
 

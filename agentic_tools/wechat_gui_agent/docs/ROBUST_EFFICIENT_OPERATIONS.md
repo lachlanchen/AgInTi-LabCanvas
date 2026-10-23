@@ -1,5 +1,11 @@
 # Robust And Efficient Operations
 
+For failed daily reports, distinguish unavailable reviewers from content defects
+and resume the source-bound reviewed draft. Native header OCR must exclude
+toolbar columns and message-body lines. See
+[schedule and reply recovery](../../../references/wechat-schedule-review-recovery-2026-10-24.md)
+for shared-model boot settings, checkpoints, and verified delivery tests.
+
 Native Ubuntu recovery must preserve cross-client message identity and completed
 outbox work. See [Ubuntu transport recovery](../../../references/ubuntu-wechat-transport-recovery-2026-10-20.md)
 for cursor reconciliation, session-preserving repair, receipt timing and

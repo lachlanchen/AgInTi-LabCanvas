@@ -10,7 +10,7 @@ CAREER_SESSION="${WECHAT_CAREER_SESSION:-labcanvas-career-daily}"
 CAREER_SEND_CHAT="${WECHAT_CAREER_SEND_CHAT:-lachlanchan}"
 CAREER_ORGANIZE_CHAT="${WECHAT_CAREER_ORGANIZE_CHAT:-MEMO写作—外语—挣钱}"
 CAREER_MORNING_TIME="${WECHAT_CAREER_MORNING_TIME:-08:30}"
-CAREER_MODEL="${WECHAT_CAREER_AGENT_MODEL:-gpt-5.6-sol}"
+CAREER_MODEL="${WECHAT_CAREER_AGENT_MODEL:-}"
 CAREER_EFFORT="${WECHAT_CAREER_AGENT_EFFORT:-xhigh}"
 ECHOMIND_ENABLED="${WECHAT_STACK_START_ECHOMIND:-1}"
 ECHOMIND_SCHEDULER="$ROOT/agentic_tools/wechat_gui_agent/scripts/echomind_language_scheduler_tmux.sh"
@@ -41,7 +41,7 @@ Environment:
   WECHAT_CAREER_SEND_CHAT     chat receiving daily report, default lachlanchan
   WECHAT_CAREER_ORGANIZE_CHAT chat receiving the PDF-only recent-items memo
   WECHAT_CAREER_MORNING_TIME  daily run time, default 08:30
-  WECHAT_CAREER_AGENT_MODEL   default gpt-5.6-sol
+  WECHAT_CAREER_AGENT_MODEL   optional override; otherwise shared model policy
   WECHAT_CAREER_AGENT_EFFORT  default xhigh
   WECHAT_STACK_START_ECHOMIND set 0 to leave EchoMind scheduler unmanaged
 EOF

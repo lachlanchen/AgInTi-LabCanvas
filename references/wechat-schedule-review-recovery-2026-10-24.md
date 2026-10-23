@@ -55,7 +55,7 @@ Never disable the title guard or repeat the backend task to repair delivery.
 `tests/test_echomind_language_scheduler.py` covers unavailable versus negative
 audits, source-bound checkpoint reuse, tamper rejection, and a two-attempt recovery
 that sends once without reauthoring or editing after an unavailable audit.
-The repository regression suite passed 2,369 tests with 16 skips, including the
+The repository regression suite passed 2,370 tests with 16 skips, including the
 native-header regression tests. A live read-only
 reply through the shared Codex route succeeded; no test message was posted to a
 group and paid-credit usage remained disabled.
@@ -64,6 +64,9 @@ The resumed EchoMind routine generated and reviewed the previous-day report,
 compiled its four-page PDF, and obtained a native `sent_verified` receipt.
 Two retained reply tasks also reached verified delivery; their answers explicitly
 limited themselves to card evidence where original Channels media was unavailable.
+The career routine also delivered both language PDFs and its concise summary
+through its ordinary artifact sender. The stack launcher passes an empty model
+override by default, with a shell-level regression covering explicit overrides.
 
 Runtime evidence and per-chat state remain under ignored private/output paths.
 Do not include raw source messages, account identities, tokens, or private reports

@@ -61,6 +61,12 @@ for popup isolation, owned-tab cleanup, and the end-to-end verification.
 
 ## Routine Registry
 
+Daily document routines distinguish agent/reviewer failure from a complete
+negative content review. Retain reviewed content with its exact source identity;
+retry the unavailable stage without rewriting approved sections or resending a
+verified artifact. Shared-model defaults and native delivery checks are recorded
+in [schedule recovery](../../../references/wechat-schedule-review-recovery-2026-10-24.md).
+
 The registry lives in:
 
 ```text

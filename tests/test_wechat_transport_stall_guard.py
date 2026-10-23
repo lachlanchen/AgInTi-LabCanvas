@@ -2206,7 +2206,7 @@ class WeChatTransportStallGuardTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertIn("echomind_language_scheduler_tmux.sh", stack)
         self.assertIn("start_echomind", stack)
-        self.assertIn('CAREER_MODEL="${WECHAT_CAREER_AGENT_MODEL:-gpt-5.6-sol}"', stack)
+        self.assertIn('CAREER_MODEL="${WECHAT_CAREER_AGENT_MODEL:-}"', stack)
         self.assertIn('CAREER_EFFORT="${WECHAT_CAREER_AGENT_EFFORT:-xhigh}"', stack)
 
 

@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import shutil
 import sqlite3
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -89,6 +90,23 @@ class WeChatCareerDailyAgentTests(unittest.TestCase):
             self.assertEqual(module.main(), 0)
             self.assertEqual(run.call_args.args[0].model, "explicit-model")
             policy.assert_not_called()
+
+    def test_stack_launcher_preserves_shared_default_and_explicit_model(self):
+        script = ROOT / "agentic_tools/wechat_gui_agent/scripts/wechat_stack_tmux.sh"
+        for model in (None, "explicit-model"):
+            env = dict(os.environ)
+            env.pop("WECHAT_CAREER_AGENT_MODEL", None)
+            env["WECHAT_STACK_START_CAREER"] = "1"
+            if model is not None:
+                env["WECHAT_CAREER_AGENT_MODEL"] = model
+            with self.subTest(model=model):
+                result = subprocess.run(
+                    ["bash", "-c", 'python3() { printf "%s\\0" "$@"; }; '
+                     'export -f python3; bash "$1" restart-career', "test", str(script)],
+                    env=env, check=True, capture_output=True, text=True,
+                )
+                args = result.stdout.split("\0")
+                self.assertEqual(args[args.index("--model") + 1], model or "")
 
     def test_retry_action_reuses_generated_report(self):
         module = load_wechat_career_daily_agent()
