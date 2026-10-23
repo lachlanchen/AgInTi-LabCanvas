@@ -40,7 +40,7 @@ from wechat_message_policy import (  # noqa: E402
     recorded_outbound_file_identity,
 )
 from wechat_mirror import DEFAULT_DB as MIRROR_DB  # noqa: E402
-from wechat_task_worker import send_file  # noqa: E402
+from wechat_task_worker import load_worker_model_policy, send_file  # noqa: E402
 
 CONFIG = PRIVATE / "echomind-direct-chatops.local.json"
 STATE = PRIVATE / "echomind-language-schedule.state.json"
@@ -66,8 +66,12 @@ SCHEDULER_POLL_SECONDS = 5 * 60
 PERIODIC_MAX_CHARS = int(os.environ.get("ECHOMIND_LANGUAGE_MAX_CHARS", "1100"))
 PERIODIC_MODEL = os.environ.get("ECHOMIND_LANGUAGE_MODEL", "gpt-5.3-codex-spark")
 PERIODIC_EFFORT = os.environ.get("ECHOMIND_LANGUAGE_EFFORT", "low")
-PERIODIC_EDITOR_MODEL = os.environ.get("ECHOMIND_LANGUAGE_EDITOR_MODEL", "gpt-5.6-sol")
-DAILY_PDF_MODEL = os.environ.get("ECHOMIND_DAILY_PDF_MODEL", "gpt-5.6-sol")
+PERIODIC_EDITOR_MODEL = os.environ.get(
+    "ECHOMIND_LANGUAGE_EDITOR_MODEL", load_worker_model_policy("low")["model"]
+)
+DAILY_PDF_MODEL = os.environ.get(
+    "ECHOMIND_DAILY_PDF_MODEL", load_worker_model_policy("high")["model"]
+)
 DAILY_PDF_EFFORT = os.environ.get("ECHOMIND_DAILY_PDF_EFFORT", "high")
 DAILY_PDF_EDITOR_MODEL = os.environ.get(
     "ECHOMIND_DAILY_PDF_EDITOR_MODEL", DAILY_PDF_MODEL
@@ -812,6 +816,77 @@ def parse_daily_pdf_audit(raw: str) -> dict[str, Any]:
     }
 
 
+class DailyPdfAuditUnavailable(RuntimeError):
+    """An unavailable reviewer is not evidence of a defective lesson."""
+
+
+def require_complete_daily_pdf_audit(audit: dict, result: dict) -> None:
+    scores = audit.get("scores")
+    valid = (
+        isinstance(audit.get("accepted"), bool)
+        and isinstance(scores, dict)
+        and all(
+            isinstance(scores.get(key), (int, float))
+            and not isinstance(scores.get(key), bool)
+            and 1 <= scores[key] <= 5
+            for key in DAILY_PDF_AUDIT_DIMENSIONS
+        )
+        and isinstance(audit.get("critical_issues"), list)
+        and isinstance(audit.get("revision_instructions"), list)
+    )
+    if result.get("ok") is False or not valid:
+        raise DailyPdfAuditUnavailable(
+            "daily EchoMind PDF reviewer unavailable or returned an incomplete audit; "
+            "reviewed content retained for retry, not approved for delivery"
+        )
+
+
+def daily_pdf_source_identity(report_date: str, messages: list) -> str:
+    payload = [
+        (str(message.source_id), str(message.created_at), str(message.body))
+        for message in messages
+    ]
+    return hashlib.sha256(
+        json.dumps([report_date, payload], ensure_ascii=False).encode("utf-8")
+    ).hexdigest()
+
+
+def load_daily_pdf_checkpoint(path: Path, source_identity: str) -> str:
+    try:
+        checkpoint = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(checkpoint, dict):
+            return ""
+        body = checkpoint["body"]
+        if (
+            checkpoint.get("schema") == "labcanvas.echomind.review_checkpoint.v1"
+            and checkpoint.get("source_identity") == source_identity
+            and isinstance(body, str)
+            and hashlib.sha256(body.encode("utf-8")).hexdigest()
+            == checkpoint.get("body_sha256")
+        ):
+            return body
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    return ""
+
+
+def save_daily_pdf_checkpoint(path: Path, source_identity: str, body: str) -> None:
+    payload = {
+        "schema": "labcanvas.echomind.review_checkpoint.v1",
+        "source_identity": source_identity,
+        "body": body,
+        "body_sha256": hashlib.sha256(body.encode("utf-8")).hexdigest(),
+    }
+    with tempfile.NamedTemporaryFile(
+        mode="w", encoding="utf-8", dir=path.parent, delete=False,
+        prefix=f".{path.name}.", suffix=".tmp",
+    ) as handle:
+        json.dump(payload, handle, ensure_ascii=False)
+        temporary = Path(handle.name)
+    os.chmod(temporary, 0o600)
+    temporary.replace(path)
+
+
 def daily_pdf_semantic_audit_issues(audit: dict[str, Any]) -> list[str]:
     """Fail closed when an independent linguistic audit is weak or incomplete."""
 
@@ -1501,26 +1576,31 @@ only to personalize explanation; do not quote it or replace the previous-day sou
 {longitudinal}
 """
     draft_path = out_dir / f"{artifact_stem}.draft.texbody"
+    checkpoint_path = out_dir / f"{artifact_stem}.review-checkpoint.json"
+    source_identity = daily_pdf_source_identity(yesterday, source_messages)
+    body = load_daily_pdf_checkpoint(checkpoint_path, source_identity)
     draft = ""
     result: dict = {}
-    if draft_path.is_file():
+    if not body and not checkpoint_path.exists() and draft_path.is_file():
         draft = normalize_latex_body(draft_path.read_text(encoding="utf-8"))
         if draft:
             result = {"backend": "recovered_exact_date_draft", "model": ""}
-    if not draft:
-        draft, result = author_daily_pdf_body(prompt, config=config)
-    if not draft:
-        raise RuntimeError("daily EchoMind PDF agent returned no LaTeX body")
-    draft_path.write_text(draft, encoding="utf-8")
-    body, editor_result = review_daily_pdf_body(
-        draft,
-        report_date=yesterday,
-        history=history,
-        config=config,
-        source_messages=source_messages,
-    )
+    editor_result: dict = {"backend": "recovered_source_bound_review", "model": ""}
     if not body:
-        raise RuntimeError("daily EchoMind PDF editor returned no LaTeX body")
+        if not draft:
+            draft, result = author_daily_pdf_body(prompt, config=config)
+        if not draft:
+            raise RuntimeError("daily EchoMind PDF agent returned no LaTeX body")
+        draft_path.write_text(draft, encoding="utf-8")
+        body, editor_result = review_daily_pdf_body(
+            draft,
+            report_date=yesterday,
+            history=history,
+            config=config,
+            source_messages=source_messages,
+        )
+        if not body:
+            raise RuntimeError("daily EchoMind PDF editor returned no LaTeX body")
     (out_dir / f"{artifact_stem}.reviewed.texbody").write_text(body, encoding="utf-8")
     issues: list[str] = []
     final_audit: dict[str, Any] = {}
@@ -1529,6 +1609,7 @@ only to personalize explanation; do not quote it or replace the previous-day sou
     repair_results: list[dict[str, Any]] = []
     full_rewrite_used = False
     for repair_pass in range(DAILY_PDF_MAX_REPAIR_PASSES + 1):
+        save_daily_pdf_checkpoint(checkpoint_path, source_identity, body)
         issues = daily_pdf_contract_issues(body, source_messages=source_messages)
         final_audit, final_audit_result = audit_daily_pdf_body(
             body,
@@ -1537,6 +1618,7 @@ only to personalize explanation; do not quote it or replace the previous-day sou
             config=config,
             source_messages=source_messages,
         )
+        require_complete_daily_pdf_audit(final_audit, final_audit_result)
         issues.extend(daily_pdf_semantic_audit_issues(final_audit))
         issues = list(dict.fromkeys(issues))
         audit_history.append(final_audit)

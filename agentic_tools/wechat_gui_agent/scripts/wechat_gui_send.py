@@ -1845,7 +1845,7 @@ def verify_opened_title(
                 "compose_window": window_to_dict(window),
                 "surface_reject_reason": reject_reason,
             }
-        if title_identity_matches(text, expected_titles):
+        if header_title_identity_matches(text, expected_titles):
             surface_guard = detect_rejected_chat_surface(env, window, screenshot_path, region_crop)
             if surface_guard["reason"]:
                 return rejected_title_guard_result(
@@ -1953,6 +1953,17 @@ def visible_chat_row_identity(
             continue
         return "ocr-single-substitution"
     return ""
+
+
+def header_title_identity_matches(text: str, expected_titles: list[str] | tuple[str, ...]) -> bool:
+    """Keep toolbar OCR and message text out of the native header identity."""
+    lines = [line.strip() for line in str(text or "").splitlines() if line.strip()]
+    if not lines:
+        return False
+    # OCR preserves the wide gap between the title and right-hand toolbar.
+    # Never search subsequent lines: they may contain a quoted group name.
+    title_column = re.split(r"[ \t]{3,}", lines[0], maxsplit=1)[0]
+    return title_identity_matches(title_column, expected_titles)
 
 
 def title_identity_matches(observed_text: str, expected_titles: list[str] | tuple[str, ...]) -> bool:

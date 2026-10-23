@@ -32,6 +32,7 @@ from wechat_message_policy import (
 )
 from wechat_task_worker import (
     ensure_markdown_pdf_companions,
+    load_worker_model_policy,
     send_file,
     send_message,
 )
@@ -124,11 +125,12 @@ def main() -> int:
     parser.add_argument("--send-targets", type=Path, default=DEFAULT_SEND_TARGETS)
     parser.add_argument("--morning-time", default="08:30", help="Loop run time in HH:MM local time.")
     parser.add_argument("--loop-sleep", type=float, default=60.0)
-    parser.add_argument("--model", default=os.environ.get("WECHAT_CAREER_AGENT_MODEL", "gpt-5.5"))
+    parser.add_argument("--model", default=os.environ.get("WECHAT_CAREER_AGENT_MODEL", ""))
     parser.add_argument("--reasoning-effort", default=os.environ.get("WECHAT_CAREER_AGENT_EFFORT", "medium"))
     parser.add_argument("--timeout-seconds", type=int, default=int(os.environ.get("WECHAT_CAREER_AGENT_TIMEOUT", "900")))
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
+    args.model = args.model or load_worker_model_policy(args.reasoning_effort)["model"]
 
     if args.action == "loop":
         return loop_daily(args)

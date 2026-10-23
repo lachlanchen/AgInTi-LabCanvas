@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 import json
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest import mock
 
@@ -11,6 +12,82 @@ from agentic_tools.wechat_gui_agent.scripts import echomind_language_scheduler a
 
 
 class EchoMindLanguageSchedulerTests(unittest.TestCase):
+    def test_invalid_audit_is_not_a_content_revision(self) -> None:
+        with self.assertRaises(scheduler.DailyPdfAuditUnavailable):
+            scheduler.require_complete_daily_pdf_audit(
+                scheduler.parse_daily_pdf_audit(""), {"ok": False}
+            )
+        audit = {
+            "accepted": False,
+            "scores": {key: 3 for key in scheduler.DAILY_PDF_AUDIT_DIMENSIONS},
+            "critical_issues": ["Correct the reading."],
+            "revision_instructions": ["Correct the reading."],
+        }
+        scheduler.require_complete_daily_pdf_audit(audit, {"ok": True})
+        with self.assertRaises(scheduler.DailyPdfAuditUnavailable):
+            scheduler.require_complete_daily_pdf_audit(audit, {"ok": False})
+        audit["scores"]["reading_accuracy"] = True
+        with self.assertRaises(scheduler.DailyPdfAuditUnavailable):
+            scheduler.require_complete_daily_pdf_audit(audit, {"ok": True})
+
+    def test_review_checkpoint_rejects_other_sources_and_modified_body(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "checkpoint.json"
+            scheduler.save_daily_pdf_checkpoint(path, "source-one", "reviewed body")
+            self.assertEqual(
+                scheduler.load_daily_pdf_checkpoint(path, "source-one"), "reviewed body"
+            )
+            self.assertEqual(scheduler.load_daily_pdf_checkpoint(path, "source-two"), "")
+            payload = json.loads(path.read_text())
+            payload["body"] = "unverified edit"
+            path.write_text(json.dumps(payload))
+            self.assertEqual(scheduler.load_daily_pdf_checkpoint(path, "source-one"), "")
+            path.write_text("[]")
+            self.assertEqual(scheduler.load_daily_pdf_checkpoint(path, "source-one"), "")
+
+    def test_daily_retry_resumes_review_without_rewriting_after_audit_failure(self) -> None:
+        source = SimpleNamespace(
+            source_id=8, created_at="2026-07-22T12:00:00", body="A source example"
+        )
+        now = datetime(2026, 7, 23, 6, 5, tzinfo=scheduler.LOCAL_TZ)
+        audit = {
+            "accepted": True,
+            "scores": {key: 5 for key in scheduler.DAILY_PDF_AUDIT_DIMENSIONS},
+            "critical_issues": [], "revision_instructions": [],
+        }
+        def compile_pdf(command, *, cwd, **kwargs):
+            (Path(cwd) / Path(command[-1]).with_suffix(".pdf")).write_bytes(b"test PDF")
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            mock.patch.object(scheduler, "ROOT", Path(tmp)),
+            mock.patch.object(scheduler, "save_state"),
+            mock.patch.object(scheduler, "previous_day_language_messages", return_value=[source]),
+            mock.patch.object(scheduler, "build_context_from_messages", return_value={"snapshot": source.body}),
+            mock.patch.object(scheduler, "long_term_language_context", return_value=""),
+            mock.patch.object(scheduler, "author_daily_pdf_body", return_value=("draft", {"ok": True})) as author,
+            mock.patch.object(scheduler, "review_daily_pdf_body", return_value=("reviewed", {"ok": True})) as editor,
+            mock.patch.object(scheduler, "audit_daily_pdf_body", side_effect=[({}, {"ok": False}), (audit, {"ok": True})]),
+            mock.patch.object(scheduler, "daily_pdf_contract_issues", return_value=[]),
+            mock.patch.object(scheduler, "repair_daily_pdf_body") as repair,
+            mock.patch.object(scheduler, "rewrite_daily_pdf_body") as rewrite,
+            mock.patch.object(scheduler.subprocess, "run", side_effect=compile_pdf),
+            mock.patch.object(scheduler, "daily_pdf_delivery_recorded", return_value=False),
+            mock.patch.object(scheduler, "send_scheduled_file") as send,
+        ):
+            state = {}
+            with self.assertRaises(scheduler.DailyPdfAuditUnavailable):
+                scheduler.run_daily_pdf({}, state, now=now, force=True)
+            send.assert_not_called()
+            result = scheduler.run_daily_pdf({}, state, now=now, force=True)
+            self.assertEqual(result["status"], "sent_verified")
+            author.assert_called_once()
+            editor.assert_called_once()
+            repair.assert_not_called()
+            rewrite.assert_not_called()
+            send.assert_called_once()
+
     def write_accepted_daily_pdf_quality(
         self,
         pdf: Path,

@@ -1324,6 +1324,29 @@ class WeChatGuiSendTests(unittest.TestCase):
 
         self.assertTrue(module.title_identity_matches("陳苗", ["陈苗"]))
 
+    def test_header_identity_ignores_separate_toolbar_column(self):
+        module = load_wechat_gui_send()
+        self.assertTrue(module.header_title_identity_matches(
+            "LightMind核心高层(10) C>               品\nmessage preview",
+            ["LightMind核心高层"],
+        ))
+        self.assertTrue(module.header_title_identity_matches(
+            "My devices (12)              ...", ["My devices"],
+        ))
+
+    def test_header_identity_does_not_match_body_or_another_column(self):
+        module = load_wechat_gui_send()
+        for text in (
+            "Shares\nLightMind核心高层",
+            "Shares             LightMind核心高层",
+            "Other group (10) C>             品",
+            "",
+        ):
+            with self.subTest(text=text):
+                self.assertFalse(module.header_title_identity_matches(
+                    text, ["LightMind核心高层"],
+                ))
+
     def test_visible_chat_list_match_accepts_separator_ocr_variant(self):
         module = load_wechat_gui_send()
         tsv = "\n".join(

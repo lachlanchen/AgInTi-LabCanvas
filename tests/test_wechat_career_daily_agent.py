@@ -8,6 +8,7 @@ import sqlite3
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -61,18 +62,33 @@ class WeChatCareerDailyAgentTests(unittest.TestCase):
         captured = {}
         original_argv = sys.argv[:]
         original_effort = os.environ.pop("WECHAT_CAREER_AGENT_EFFORT", None)
+        original_model = os.environ.pop("WECHAT_CAREER_AGENT_MODEL", None)
         try:
             sys.argv = ["wechat_career_daily_agent.py"]
+            module.load_worker_model_policy = lambda effort: {"model": "shared-model"}
             module.run_daily = lambda args: captured.update({"model": args.model, "effort": args.reasoning_effort}) or {"ok": True, "summary": "ok"}
             rc = module.main()
         finally:
             sys.argv = original_argv
             if original_effort is not None:
                 os.environ["WECHAT_CAREER_AGENT_EFFORT"] = original_effort
+            if original_model is not None:
+                os.environ["WECHAT_CAREER_AGENT_MODEL"] = original_model
 
         self.assertEqual(rc, 0)
-        self.assertEqual(captured["model"], "gpt-5.5")
+        self.assertEqual(captured["model"], "shared-model")
         self.assertEqual(captured["effort"], "medium")
+
+    def test_explicit_career_model_remains_authoritative(self):
+        module = load_wechat_career_daily_agent()
+        with (
+            mock.patch.object(sys, "argv", ["career", "--model", "explicit-model"]),
+            mock.patch.object(module, "load_worker_model_policy") as policy,
+            mock.patch.object(module, "run_daily", return_value={"ok": True}) as run,
+        ):
+            self.assertEqual(module.main(), 0)
+            self.assertEqual(run.call_args.args[0].model, "explicit-model")
+            policy.assert_not_called()
 
     def test_retry_action_reuses_generated_report(self):
         module = load_wechat_career_daily_agent()
