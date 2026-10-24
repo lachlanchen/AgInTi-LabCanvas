@@ -590,7 +590,7 @@ def send_file_to_open_chat(
     click(env, *find_native_file_button(preflight_path, window))
     time.sleep(max(0.5, pause))
     chooser = wait_for_verified_file_chooser(env, window)
-    paste_path_into_file_chooser(env, path)
+    paste_path_into_file_chooser(env, path, chooser, window)
     time.sleep(max(0.5, pause))
     wait_for_wechat_focus_after_picker(env, window)
 
@@ -847,12 +847,52 @@ def wait_for_wechat_focus_after_picker(
     )
 
 
-def paste_path_into_file_chooser(env: dict[str, str], path: Path) -> None:
-    hotkey(env, "ctrl+l")
+def paste_path_into_file_chooser(
+    env: dict[str, str],
+    path: Path,
+    chooser: WindowIdentity,
+    wechat_window: Window,
+) -> None:
+    if not is_verified_file_chooser(chooser, wechat_window):
+        raise RuntimeError("WECHAT_FILE_CHOOSER_NOT_OPEN: unverified file chooser")
+    run(["xdotool", "windowfocus", "--sync", chooser.wid], env=env)
+    active = active_window_identity(env)
+    if active != chooser:
+        raise RuntimeError("WECHAT_FILE_CHOOSER_FOCUS_CHANGED: refusing to paste a local path")
+
+    # Qt's Ctrl+L edits the directory, not the filename. Keep clipboard ownership
+    # through the paste, then read the field back with a fresh clipboard nonce.
+    native_qt = "wechat" in chooser.window_class.casefold().split()
+    hotkey(env, "alt+n" if native_qt else "ctrl+l")
     time.sleep(0.2)
-    paste_text(env, str(path))
-    time.sleep(0.2)
-    key(env, "Return")
+    proc = subprocess.Popen(
+        ["xclip", "-selection", "clipboard", "-quiet"],
+        stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL, text=True, env=env,
+    )
+    try:
+        assert proc.stdin is not None
+        proc.stdin.write(str(path))
+        proc.stdin.close()
+        time.sleep(0.2)
+        if active_window_identity(env) != chooser:
+            raise RuntimeError("WECHAT_FILE_CHOOSER_FOCUS_CHANGED: refusing to paste a local path")
+        run(["xdotool", "key", "--clearmodifiers", "ctrl+a"], env=env)
+        run(["xdotool", "key", "--clearmodifiers", "ctrl+v"], env=env)
+        time.sleep(0.2)
+        if read_composer_text(env) != str(path):
+            raise RuntimeError("WECHAT_FILE_PATH_VERIFY_FAILED: filename field does not match the artifact")
+        if active_window_identity(env) != chooser:
+            raise RuntimeError("WECHAT_FILE_CHOOSER_FOCUS_CHANGED: refusing to select a file")
+        key(env, "Return")
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=1)
 
 
 def raise_if_wechat_locked(

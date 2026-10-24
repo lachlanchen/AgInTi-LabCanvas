@@ -50,13 +50,33 @@ body lines or another column for the expected title. Keep the remaining title
 and rejected-surface guards, then retry only the retained undelivered result.
 Never disable the title guard or repeat the backend task to repair delivery.
 
+## Native File Picker Recovery
+
+The MEMO PDF was generated and quality-approved, but its native Qt `Open`
+dialog remained visible with an empty filename field. Clipboard consumption
+alone did not prove file selection. The previous `Ctrl+L` path-entry routine
+did not reliably populate Qt's filename field.
+
+Bind the dialog to the exact WeChat parent and verify focus. For the native Qt
+dialog, use its filename mnemonic (`Alt+N`); retain `Ctrl+L` for the existing
+GTK location-entry route. Keep a bounded clipboard owner alive during paste,
+then copy the focused field with a fresh clipboard nonce and require an exact
+path match. Recheck dialog identity before pressing Enter. On a mismatch, do
+not submit. Existing chat-title and native attachment-receipt gates still apply.
+
+Retry only the preserved, reviewed report through the normal organizer sender.
+The `retry-organize` script action bypasses delivery backoff, not quality checks
+or duplicate suppression. It does not regenerate an already accepted PDF.
+
 ## Verification
 
 `tests/test_echomind_language_scheduler.py` covers unavailable versus negative
 audits, source-bound checkpoint reuse, tamper rejection, and a two-attempt recovery
 that sends once without reauthoring or editing after an unavailable audit.
-The repository regression suite passed 2,370 tests with 16 skips, including the
-native-header regression tests. A live read-only
+The repository regression suite passed 2,372 tests with 16 skips, including the
+native-header and file-picker regression tests. Picker tests cover exact path
+readback, wrong parent, changed focus, cleanup, and refusal to submit on mismatch.
+A live read-only
 reply through the shared Codex route succeeded; no test message was posted to a
 group and paid-credit usage remained disabled.
 
@@ -67,6 +87,10 @@ limited themselves to card evidence where original Channels media was unavailabl
 The career routine also delivered both language PDFs and its concise summary
 through its ordinary artifact sender. The stack launcher passes an empty model
 override by default, with a shell-level regression covering explicit overrides.
+The MEMO delivery-only retry sent its accepted seven-page interactive PDF;
+the next catch-up check returned `already_delivered` for both daily reports,
+with no regeneration or duplicate send. EchoMind's periodic loop also delivered
+its next lesson automatically after quiet hours and retained the six-hour interval.
 
 Runtime evidence and per-chat state remain under ignored private/output paths.
 Do not include raw source messages, account identities, tokens, or private reports

@@ -398,6 +398,64 @@ class WeChatGuiSendTests(unittest.TestCase):
         self.assertEqual(identity, module.WindowIdentity("18874419", "Open", "wechat wechat", "18874384"))
         self.assertFalse(any("getwindowclassname" in call for call in calls))
 
+    def test_file_picker_verifies_exact_path_before_selecting(self):
+        module = load_wechat_gui_send()
+        main = module.Window("main", 0, 0, 1000, 700)
+        path = Path("/private/reports/today report.pdf")
+        for chooser, shortcut in (
+            (module.WindowIdentity("picker", "Open", "wechat wechat", "main"), "alt+n"),
+            (module.WindowIdentity("picker", "Open File", "GtkFileChooserDialog"), "ctrl+l"),
+        ):
+            for copied in (str(path), "", str(path) + " "):
+                with self.subTest(chooser=chooser, copied=copied):
+                    process = mock.Mock()
+                    process.poll.return_value = None
+                    with mock.patch.object(module.subprocess, "Popen", return_value=process) as popen, \
+                         mock.patch.object(module, "active_window_identity", return_value=chooser), \
+                         mock.patch.object(module, "read_composer_text", return_value=copied), \
+                         mock.patch.object(module, "run"), \
+                         mock.patch.object(module, "hotkey") as hotkey, \
+                         mock.patch.object(module, "key") as key, \
+                         mock.patch.object(module.time, "sleep"):
+                        if copied == str(path):
+                            module.paste_path_into_file_chooser({}, path, chooser, main)
+                            key.assert_called_once_with({}, "Return")
+                        else:
+                            with self.assertRaisesRegex(RuntimeError, "WECHAT_FILE_PATH_VERIFY_FAILED"):
+                                module.paste_path_into_file_chooser({}, path, chooser, main)
+                            key.assert_not_called()
+                    hotkey.assert_called_once_with({}, shortcut)
+                    self.assertEqual(popen.call_args.args[0], ["xclip", "-selection", "clipboard", "-quiet"])
+                    process.stdin.write.assert_called_once_with(str(path))
+                    process.terminate.assert_called_once()
+
+    def test_file_picker_rejects_wrong_parent_or_focus_change(self):
+        module = load_wechat_gui_send()
+        main = module.Window("main", 0, 0, 1000, 700)
+        chooser = module.WindowIdentity("picker", "Open", "wechat wechat", "main")
+        other = module.WindowIdentity("other", "Open", "wechat wechat", "other-main")
+        for selected, active in (
+            (other, [other]),
+            (chooser, [other]),
+            (chooser, [chooser, other]),
+            (chooser, [chooser, chooser, other]),
+        ):
+            with self.subTest(selected=selected, active=active):
+                process = mock.Mock()
+                process.poll.return_value = None
+                with mock.patch.object(module.subprocess, "Popen", return_value=process), \
+                     mock.patch.object(module, "active_window_identity", side_effect=active), \
+                     mock.patch.object(module, "read_composer_text", return_value="/report.pdf"), \
+                     mock.patch.object(module, "run"), \
+                     mock.patch.object(module, "hotkey"), \
+                     mock.patch.object(module, "key") as key, \
+                     mock.patch.object(module.time, "sleep"):
+                    with self.assertRaisesRegex(RuntimeError, "WECHAT_FILE_CHOOSER_"):
+                        module.paste_path_into_file_chooser({}, Path("/report.pdf"), selected, main)
+                    key.assert_not_called()
+                if selected == chooser and len(active) > 1:
+                    process.terminate.assert_called_once()
+
     def test_active_window_falls_back_to_input_focus_without_window_manager(self):
         module = load_wechat_gui_send()
         chooser = module.WindowIdentity("18874419", "Open", "wechat wechat", "18874384")
