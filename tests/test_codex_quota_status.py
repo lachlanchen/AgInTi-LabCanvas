@@ -34,6 +34,22 @@ def load_module():
 
 
 class CodexQuotaStatusTests(unittest.TestCase):
+    def test_quota_refresh_preserves_only_live_model_rejections(self) -> None:
+        module = load_module()
+        now = time.time()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "pool.json"
+            path.write_text(json.dumps({"accounts": {"lab": {
+                "model_unavailable_until": {"blocked-model": now + 600, "expired-model": now - 1}
+            }}}))
+            with mock.patch.object(module, "agentshell_codex_command", return_value=["agent-codex"]):
+                result = module.probe_account_pool(
+                    cache_path=path, accounts=["lab"],
+                    reader=lambda **kw: self.sample_response(codex_used=1),
+                )
+            self.assertEqual(result["accounts"]["lab"]["model_unavailable_until"],
+                             {"blocked-model": now + 600})
+
     def sample_response(
         self,
         *,

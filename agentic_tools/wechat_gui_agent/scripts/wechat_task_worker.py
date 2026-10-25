@@ -23139,6 +23139,8 @@ def worker_result_is_infrastructure_failure(text: str) -> bool:
         "failed to connect to responses_websocket",
         "failed to refresh available models",
         "timeout waiting for child process to exit",
+        "requires node.js",
+        "err_unsupported_node_version",
     ]
     return any(marker in text for marker in markers)
 

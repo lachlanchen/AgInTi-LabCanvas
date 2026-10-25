@@ -643,6 +643,32 @@ class WeChatCodexSessionTests(unittest.TestCase):
         self.assertEqual(result["account_failover_count"], 1)
         self.assertEqual(run.call_count, 2)
 
+    def test_model_rejection_is_not_a_transient_startup_or_broken_thread(self) -> None:
+        sessions = load_sessions()
+        result = {"ok": False, "returncode": 1, "message": "",
+                  "execution_started": True, "tool_activity": False,
+                  "stderr_tail": "failed to connect to websocket",
+                  "stdout_tail": '{"error":{"code":"model_not_found"}}'}
+        self.assertTrue(sessions.codex_account_model_rejected(result))
+        self.assertFalse(sessions.codex_startup_retryable(result))
+        self.assertFalse(sessions.codex_empty_resumed_turn_failure(result))
+        self.assertTrue(sessions.codex_account_switch_retryable(result))
+
+    def test_model_rejection_is_cached_without_blocking_whole_account(self) -> None:
+        sessions = load_sessions()
+        rejected = {"ok": False, "returncode": 1, "message": "",
+                    "tool_activity": False, "stdout_tail": "model_not_found"}
+        with mock.patch.object(sessions, "codex_account_candidates", return_value=["lab"]), \
+                mock.patch.object(sessions, "codex_account_attempts", return_value=iter([
+                    {"account": "lab", "model": "gpt-6-astra", "quota_pool": "regular"}
+                ])), mock.patch.object(sessions, "run_codex_with_startup_retries", return_value=rejected), \
+                mock.patch.object(sessions, "mark_codex_account_runtime_unavailable") as mark:
+            sessions.run_codex_across_accounts(
+                "hello", thread_id="", model="gpt-6-astra", reasoning_effort="low",
+                sandbox="read-only", timeout_seconds=30, workdir=ROOT, web_search=False,
+            )
+        mark.assert_called_once_with("lab", reason="runtime_model_rejection", model="gpt-6-astra")
+
     def test_no_verified_account_never_invokes_default_codex(self) -> None:
         sessions = load_sessions()
         with mock.patch.object(sessions, "codex_account_candidates", return_value=[]), \

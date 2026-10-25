@@ -148,10 +148,9 @@ The failed queue row is terminal and is not replayed after restart.
 ## Central Model Policy
 
 LabCanvas and the WeChat/WeCom worker read the repository-level
-`configs/model-policy.json`. Normal chat uses `auto-code-review` at low
-reasoning; ordinary durable work uses the same alias at medium. Complex
-implementation can use GPT-5.6 SOL high, while demanding autonomous research,
-design, and presentation synthesis can use GPT-5.6 SOL xhigh. Matching
+`configs/model-policy.json`. Normal chat uses GPT-6 Astra at low
+reasoning; ordinary durable work uses it at medium. Complex implementation,
+research, design, and presentation synthesis may use high or xhigh. Matching
 `gpt-5.6-sol` fallbacks are retained for every effort. If a preferred alias is
 rejected as unknown, invalid, unsupported, or missing, the worker retries the
 same task/session lane with that fallback before using AgInTi. Explicit
@@ -185,12 +184,14 @@ overrides and reapplied last, so a stale config cannot enable host shell,
 destructive access, MCP, wrappers, SCS, or unrelated profiles behind the role
 policy.
 
-Normal Codex rolling quota and purchased credits are separate signals. A low
-or empty weekly window raises a notice only when purchased credits are below
-`LABCANVAS_CODEX_QUOTA_CREDIT_WARNING_FLOOR` (default `1000`); a larger or
-unlimited balance suppresses repetitive chat warnings while keeping private
-quota telemetry. After a real Codex quota response, retry the same normal Codex
-model once when purchased credits are available before trying AgInTi.
+Normal Codex quota, reserve quota, model entitlement, and purchased credits are
+separate signals. The current policy forbids paid credits. Use verified
+AgentShell subscription/reserve capacity, then AgInTi/DeepSeek when unavailable.
+A model rejection is cached per account/model, not treated as account exhaustion.
+AgInTi must start with the Node runtime belonging to its npm installation, even
+under a minimal service PATH. Runtime incompatibility is not repaired by higher
+reasoning or by switching the same broken CLI to another provider. See
+[backend runtime recovery](../../../references/wechat-backend-fallback-runtime-recovery-2026-10-25.md).
 
 The worker must not dump the whole queue row into the backend prompt. Build a
 bounded task packet containing the current request, exact source IDs, recent

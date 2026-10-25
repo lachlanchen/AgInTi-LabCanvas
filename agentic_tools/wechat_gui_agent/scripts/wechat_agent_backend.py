@@ -30,6 +30,7 @@ from wechat_codex_sessions import (
     DEFAULT_REGISTRY,
     ROOT,
     resolve_codex_binary,
+    codex_account_model_rejected,
     run_codex_session,
     run_process_group,
     session_key,
@@ -813,7 +814,9 @@ def classify_backend_failure(result: dict[str, Any]) -> str:
     ).casefold()
     if any(marker in text for marker in QUOTA_FAILURE_MARKERS):
         return "quota"
-    if any(marker in text for marker in MODEL_FAILURE_MARKERS):
+    if "requires node.js" in text or "err_unsupported_node_version" in text:
+        return "unavailable"
+    if codex_account_model_rejected(result) or any(marker in text for marker in MODEL_FAILURE_MARKERS):
         return "model_unavailable"
     if any(
         marker in text
@@ -1232,7 +1235,7 @@ def run_aginti_provider_once(
             input=stdin_text,
             cwd=aginti_workdir,
             timeout=timeout_seconds,
-            env=dict(os.environ),
+            env=aginti_subprocess_env(resolved_executable),
         )
     except subprocess.TimeoutExpired:
         return {
@@ -1387,6 +1390,10 @@ def aginti_provider_retry_mode(result: dict[str, Any]) -> str:
         str(result.get(key) or "")
         for key in ("stderr_tail", "stdout_tail", "reason", "message_source")
     ).casefold()
+    # A provider switch cannot repair the shared CLI's Node installation.
+    # Invalid machine JSON here means the CLI never reached the agent.
+    if "requires node.js" in text or "err_unsupported_node_version" in text:
+        return ""
     if returncode == 124 or "timeout" in text or "timed out" in text:
         return "resume_durable_state" if result.get("thread_id") else ""
     if any(marker in text for marker in AGINTI_PROVIDER_PREFLIGHT_FAILURE_MARKERS):
@@ -2155,6 +2162,34 @@ def resolve_command_executable(executable: str) -> str:
         (str(path.resolve()) for path in candidates if path.is_file() and os.access(path, os.X_OK)),
         "",
     )
+
+
+def aginti_subprocess_env(executable: str) -> dict[str, str]:
+    """Use the CLI installation's Node, including for boot-service minimal PATHs."""
+    env = os.environ.copy()
+    path = Path(executable).expanduser().absolute()
+    try:
+        with path.open("rb") as handle:
+            shebang = handle.readline(256).decode("utf-8", errors="replace").strip()
+    except OSError:
+        return env
+    if not shebang.startswith("#!") or not re.search(r"(?:/|\s)node(?:\s|$)", shebang):
+        return env
+    # npm bin symlinks resolve into <prefix>/lib/node_modules. Find the same
+    # prefix's bin/node, not a different installation or a shell login script.
+    for candidate in (path, path.resolve()):
+        for parent in candidate.parents:
+            if parent == Path(parent.anchor):
+                break
+            bin_dir = parent if parent.name == "bin" else parent / "bin"
+            node = bin_dir / "node"
+            if node.is_file() and os.access(node, os.X_OK):
+                entries = env.get("PATH", "").split(os.pathsep)
+                env["PATH"] = os.pathsep.join(
+                    [str(bin_dir)] + [entry for entry in entries if entry != str(bin_dir)]
+                )
+                return env
+    return env
 
 
 def claude_model(codex_model: str, *, role: str, backend_config: dict[str, Any]) -> str:

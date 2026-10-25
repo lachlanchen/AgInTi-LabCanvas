@@ -35,6 +35,10 @@ Never initialize new private queues to hide unavailable or corrupt state.
 
 ## Control Layers
 
+For model-access failures or an AgInTi startup failure under a minimal service
+PATH, follow [backend runtime recovery](../../../references/wechat-backend-fallback-runtime-recovery-2026-10-25.md).
+Check execution independently of login before restarting any GUI client.
+
 ```text
 WeChat official Linux client on Xvfb/noVNC
   -> encrypted local DB/cache under xwechat_files

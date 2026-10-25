@@ -244,8 +244,17 @@ def run_codex_across_accounts(
                 mark_codex_account_runtime_unavailable(account, quota_pool="reserve")
             else:
                 mark_codex_account_runtime_unavailable(account)
+        elif account and codex_account_model_rejected(result):
+            mark_codex_account_runtime_unavailable(
+                account, reason="runtime_model_rejection", model=candidate["model"],
+            )
         if result.get("ok") or not codex_account_switch_retryable(result):
             break
+    if not attempts and accounts:
+        result["stderr_tail"] = (
+            "model_not_found: available subscription accounts recently rejected "
+            "the requested model; try the configured compatible model or backend."
+        )
     result["account_attempts"] = attempts
     result["account_failover_count"] = max(0, len(attempts) - 1)
     return result
@@ -257,6 +266,8 @@ def codex_account_switch_retryable(result: dict[str, Any]) -> bool:
     # shared-history thread and cannot duplicate an external side effect.
     if result.get("ok") or result.get("tool_activity"):
         return False
+    if codex_account_model_rejected(result):
+        return True
     if (
         int(result.get("returncode") or 0) not in {0, 124, 127}
         and not str(result.get("message") or "").strip()
@@ -296,6 +307,18 @@ def codex_account_quota_rejected(result: dict[str, Any]) -> bool:
         marker in text
         for marker in ("usage limit", "rate limit", "quota", "insufficient credit", "out of credits")
     )
+
+
+def codex_account_model_rejected(result: dict[str, Any]) -> bool:
+    if result.get("ok") or result.get("tool_activity"):
+        return False
+    text = " ".join(str(result.get(key) or "") for key in (
+        "message", "stderr_tail", "stdout_tail", "error",
+    )).casefold()
+    return any(marker in text for marker in (
+        "model_not_found", "model is not supported", "unknown model",
+        "model not found", "invalid model", "unsupported model",
+    ))
 
 
 def codex_slot_timeout_result(thread_id: str) -> dict[str, Any]:
@@ -381,6 +404,8 @@ def codex_empty_resumed_turn_failure(result: dict[str, Any]) -> bool:
     """Allow one fresh thread when resume produced no answer or side effect."""
     if result.get("ok") or result.get("tool_activity"):
         return False
+    if codex_account_model_rejected(result) or codex_account_quota_rejected(result):
+        return False
     if int(result.get("returncode") or 0) in {0, 124, 127}:
         return False
     if str(result.get("message") or "").strip():
@@ -390,6 +415,8 @@ def codex_empty_resumed_turn_failure(result: dict[str, Any]) -> bool:
 
 def codex_startup_retryable(result: dict[str, Any]) -> bool:
     if result.get("ok") or result.get("tool_activity"):
+        return False
+    if codex_account_model_rejected(result) or codex_account_quota_rejected(result):
         return False
     if str(result.get("message") or "").strip():
         return False

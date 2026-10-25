@@ -4961,6 +4961,15 @@ stderr: noisy internal trace
         self.assertEqual(next_policy["reasoning_effort"], "xhigh")
         self.assertEqual(next_policy["timeout_seconds"], 1200)
 
+    def test_worker_does_not_escalate_incompatible_node_runtime(self) -> None:
+        worker = load_worker()
+        result = (
+            "Worker failed via aginti: You are running Node.js 18.19.1. "
+            "Playwright requires Node.js 20 or higher."
+        )
+        self.assertFalse(worker.worker_result_needs_escalation(result))
+        self.assertTrue(worker.worker_result_is_private_backend_failure(result))
+
     def test_worker_policy_stops_gpt56_escalation_at_xhigh(self) -> None:
         worker = load_worker()
         with mock.patch.dict(

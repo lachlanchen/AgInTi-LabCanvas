@@ -163,6 +163,7 @@ def mark_codex_account_runtime_unavailable(
     reason: str = "runtime_quota_rejection",
     ttl_seconds: float = 1800.0,
     quota_pool: str = "regular",
+    model: str = "",
 ) -> None:
     if not ACCOUNT_RE.fullmatch(str(account or "")):
         return
@@ -170,7 +171,11 @@ def mark_codex_account_runtime_unavailable(
     accounts = payload.get("accounts") if isinstance(payload.get("accounts"), dict) else {}
     status = accounts.get(account) if isinstance(accounts.get(account), dict) else {}
     status = dict(status)
-    if quota_pool == "reserve":
+    if model:
+        rejected_models = dict(status.get("model_unavailable_until") or {})
+        rejected_models[model] = time.time() + max(60.0, ttl_seconds)
+        status["model_unavailable_until"] = rejected_models
+    elif quota_pool == "reserve":
         status["reserve_runtime_unavailable_until"] = time.time() + max(60.0, ttl_seconds)
     else:
         status["codex_available"] = False
@@ -297,6 +302,8 @@ def codex_reserve_candidates(
             continue
         status = statuses.get(account) or {}
         reserve = status.get("reserve") or {}
+        if float((status.get("model_unavailable_until") or {}).get(reserve_model) or 0) > now:
+            continue
         age = now - float(status.get("observed_at_epoch") or 0)
         if not status.get("ok") or not 0 <= age <= max_age_seconds:
             continue
@@ -329,7 +336,11 @@ def codex_account_attempts(accounts: list[str], model: str) -> Iterator[dict[str
         if reserves:
             yield from reserves
             return
+    statuses = load_account_pool_cache().get("accounts", {})
     for account in accounts or ([""] if paid_codex_credits_allowed() else []):
+        rejected = (statuses.get(account) or {}).get("model_unavailable_until") or {}
+        if float(rejected.get(model) or 0) > time.time():
+            continue
         yield {"account": account, "model": model, "quota_pool": "regular"}
     # Evaluate lazily: callers record quota rejection before asking for the
     # next attempt. They must stop iterating if an answer or tool has started.

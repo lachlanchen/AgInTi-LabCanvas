@@ -12,6 +12,25 @@ from agenticapp import codex_accounts
 
 
 class CodexAccountPoolTests(unittest.TestCase):
+    def test_model_rejection_skips_only_that_model_until_expiry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Path(tmp) / "pool.json"
+            cache.write_text(json.dumps({"accounts": {"lab": {
+                "ok": True, "codex_available": True, "remaining_percent": 100,
+            }}}))
+            codex_accounts.mark_codex_account_runtime_unavailable(
+                "lab", cache_path=cache, model="gpt-6-astra",
+                reason="runtime_model_rejection", ttl_seconds=600,
+            )
+            payload = json.loads(cache.read_text())
+            self.assertTrue(payload["accounts"]["lab"]["codex_available"])
+            with mock.patch.object(codex_accounts, "load_account_pool_cache", return_value=payload), \
+                    mock.patch.object(codex_accounts, "codex_reserve_candidates", return_value=[]):
+                self.assertEqual(list(codex_accounts.codex_account_attempts(["lab"], "gpt-6-astra")), [])
+                self.assertEqual(len(list(codex_accounts.codex_account_attempts(["lab"], "compatible-model"))), 1)
+                payload["accounts"]["lab"]["model_unavailable_until"]["gpt-6-astra"] = time.time() - 1
+                self.assertEqual(len(list(codex_accounts.codex_account_attempts(["lab"], "gpt-6-astra"))), 1)
+
     def test_discovery_reads_existing_profiles_without_creating_names(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

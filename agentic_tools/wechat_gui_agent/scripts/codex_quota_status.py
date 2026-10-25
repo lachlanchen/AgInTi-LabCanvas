@@ -427,6 +427,11 @@ def probe_account_pool(
                 "error": f"{type(exc).__name__}: {str(exc)[:300]}",
             }
         previous_status = previous_accounts.get(account) if isinstance(previous_accounts.get(account), dict) else {}
+        rejected_models = previous_status.get("model_unavailable_until") or {}
+        status["model_unavailable_until"] = {
+            model: until for model, until in rejected_models.items()
+            if isinstance(until, (int, float)) and until > now_epoch()
+        }
         runtime_unavailable_until = float(previous_status.get("runtime_unavailable_until") or 0)
         if runtime_unavailable_until > now_epoch():
             status["codex_available"] = False

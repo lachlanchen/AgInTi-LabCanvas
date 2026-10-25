@@ -1823,6 +1823,54 @@ class WeChatAgentBackendTests(unittest.TestCase):
         self.assertEqual(available, "/opt/aginti")
         resolve.assert_called_once_with("aginti")
 
+    def test_aginti_service_uses_node_from_resolved_npm_installation(self) -> None:
+        backend = load_backend()
+        with tempfile.TemporaryDirectory() as tmp:
+            prefix = Path(tmp) / "node-v22"
+            node = prefix / "bin" / "node"
+            node.parent.mkdir(parents=True)
+            node.write_text("#!/bin/sh\n", encoding="utf-8")
+            node.chmod(0o755)
+            cli = prefix / "lib/node_modules/example/bin/aginti-cli.js"
+            cli.parent.mkdir(parents=True)
+            cli.write_text("#!/usr/bin/env node\n", encoding="utf-8")
+            cli.chmod(0o755)
+            link = prefix / "bin/aginti"
+            link.symlink_to(cli)
+            for executable in (link, cli):
+                with self.subTest(executable=executable), mock.patch.dict(
+                    backend.os.environ, {"PATH": f"/usr/bin:{node.parent}"}
+                ):
+                    env = backend.aginti_subprocess_env(str(executable))
+                    self.assertEqual(env["PATH"].split(":")[0], str(node.parent))
+                    self.assertEqual(env["PATH"].split(":").count(str(node.parent)), 1)
+                    self.assertEqual(backend.os.environ["PATH"], f"/usr/bin:{node.parent}")
+
+    def test_aginti_runtime_error_does_not_retry_another_provider(self) -> None:
+        backend = load_backend()
+        result = {
+            "ok": False, "returncode": 1, "thread_id": "unused-session",
+            "message_source": "invalid_machine_json",
+            "stderr_tail": "You are running Node.js 18.19.1. Playwright requires Node.js 20 or higher.",
+        }
+        self.assertEqual(backend.aginti_provider_retry_mode(result), "")
+
+    def test_aginti_custom_non_node_wrapper_keeps_its_environment(self) -> None:
+        backend = load_backend()
+        with tempfile.TemporaryDirectory() as tmp:
+            wrapper = Path(tmp) / "agent-wrapper"
+            wrapper.write_text("#!/bin/sh\nexec custom-agent\n")
+            with mock.patch.dict(backend.os.environ, {"PATH": "/custom/bin:/usr/bin"}):
+                self.assertEqual(backend.aginti_subprocess_env(str(wrapper))["PATH"],
+                                 "/custom/bin:/usr/bin")
+
+    def test_codex_model_entitlement_error_is_not_empty_or_quota(self) -> None:
+        backend = load_backend()
+        result = {"ok": False, "returncode": 1, "message": "", "stdout_tail":
+                  '{"type":"turn.failed","error":{"code":"model_not_found","message":'
+                  '"The selected model is not supported when using Codex with a ChatGPT account."}}'}
+        self.assertEqual(backend.classify_backend_failure(result), "model_unavailable")
+
     def test_aginti_message_comes_from_final_session_assistant_turn(self) -> None:
         backend = load_backend()
         session_id = "web-agent-11111111-2222-3333-4444-555555555555"
