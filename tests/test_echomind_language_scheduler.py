@@ -243,6 +243,45 @@ class EchoMindLanguageSchedulerTests(unittest.TestCase):
 
         self.assertEqual(rows, [lesson, inbound_filename])
 
+    def test_previous_day_source_excludes_native_outbound_file_envelope(self) -> None:
+        target = datetime(2026, 8, 25, 12, 0, tzinfo=scheduler.LOCAL_TZ)
+        file_xml = (
+            '<msg><appmsg appid="test">'
+            '<title><![CDATA[language-review.pdf]]></title><type>6</type>'
+            '<appattach><totallen>1234</totallen><fileext>pdf</fileext>'
+            '<aeskey>private-test-marker</aeskey></appattach></appmsg></msg>'
+        )
+        outbound_file = SimpleNamespace(
+            direction="outbound", body=file_xml, created_at=target,
+        )
+        inbound_file = SimpleNamespace(
+            direction="inbound", body=file_xml, created_at=target,
+        )
+        lesson = SimpleNamespace(
+            direction="outbound", body="English: Please send the report by Friday.",
+            created_at=target,
+        )
+        with mock.patch.object(
+            scheduler, "exact_chat_language_history",
+            return_value=[outbound_file, inbound_file, lesson],
+        ):
+            rows = scheduler.previous_day_language_messages({}, "2026-08-25")
+        self.assertEqual(rows, [inbound_file, lesson])
+
+    def test_source_filter_preserves_lessons_mentioning_or_quoting_files(self) -> None:
+        for body in (
+            'English: Please read "review.pdf" before the meeting.',
+            '<msg><appmsg><type>57</type><title>Explain this sentence.</title>'
+            '<refermsg><content>&lt;msg&gt;&lt;appmsg&gt;&lt;type&gt;6&lt;/type&gt;'
+            '&lt;/appmsg&gt;&lt;/msg&gt;</content></refermsg></appmsg></msg>',
+            '<msg><appmsg><type>5</type><title>Reading a PDF</title></appmsg></msg>',
+            '<msg><appmsg><type>6</type>',
+        ):
+            with self.subTest(body=body):
+                self.assertTrue(scheduler.is_daily_pdf_source_message(
+                    SimpleNamespace(direction="outbound", body=body)
+                ))
+
     def test_longitudinal_daily_context_can_omit_old_exact_excerpts(self) -> None:
         with (
             mock.patch.object(

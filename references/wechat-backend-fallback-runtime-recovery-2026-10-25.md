@@ -66,3 +66,23 @@ Live checks on October 25 verified a Codex reply, a real DeepSeek reply after a
 simulated Codex quota failure, and a real AgInTi file-tool read. These establish
 backend execution, not successful retrieval of every external video or article.
 Source availability and final chat delivery require their own evidence.
+
+## Daily Review Source Filtering
+
+The daily PDF had a separate source-selection failure. A native outbound file
+message for the previous report remained as an XML attachment envelope in the
+mirror. The filename-only filter missed it, so the coverage validator required
+the next tutorial to cover transport metadata. Rewriting the lesson could not
+satisfy that requirement meaningfully.
+
+The source filter now excludes parsed outbound `msg/appmsg` file messages
+(`type=6`) as well as bare artifact filenames. It preserves inbound attachments,
+normal lesson text mentioning files, and quotation messages. Filtering happens
+before source identity, context construction, and coverage checks. Keep the
+independent language audit and delivery deduplication unchanged; never approve a
+PDF by suppressing a failed quality result.
+
+The completion auditor also distinguishes unavailable source bytes from absent
+analysis capability. A precise missing-source blocker must not be "repaired" by
+inventing content, demanding a resend, or creating a confirmation gate. This
+does not count retrieval as successful or excuse unrelated unfinished requests.

@@ -27,6 +27,17 @@ SPEC.loader.exec_module(audit)
 
 
 class WeChatCompletionAuditTests(unittest.TestCase):
+    def test_missing_source_is_not_a_resend_or_approval_requirement(self) -> None:
+        task = self.task()
+        prompt = audit.completion_audit_prompt(
+            task, {"message": "The exact original image could not be retrieved.", "files": []},
+            audit.coverage_items(task),
+        )
+        self.assertIn("Distinguish unavailable source", prompt)
+        self.assertIn("does not need invented content or a request to resend", prompt)
+        self.assertIn("Do not turn a retrieval failure into a human", prompt)
+        self.assertIn("unrelated actionable", prompt)
+
     def test_audit_requires_named_external_premise_grounding(self) -> None:
         task = self.task()
         task["route_decision"] = {

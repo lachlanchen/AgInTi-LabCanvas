@@ -1150,6 +1150,13 @@ Rules:
   request a duplicate corrective publish.
 - Do not demand publication, payment, account changes, deletion, or another irreversible action unless explicitly authorized by the current request.
 - Mark a legitimate blocker only when the candidate clearly explains why safe completion cannot proceed.
+- An exact-source retrieval failure can be a legitimate missing-source blocker
+  for an image, video, audio, document, or card. Distinguish unavailable source
+  bytes from missing analysis capability. An honest, specific evidence limit
+  does not need invented content or a request to resend, reopen, or paste a link
+  merely to satisfy this checker. Do not turn a retrieval failure into a human
+  approval requirement. Do not claim retrieval succeeded; unrelated actionable
+  requests still need coverage, and a vague excuse is not a legitimate blocker.
 - When a legitimate blocker directly answers one request item, include that item in `covered_item_ids`; do not use one blocked item to cover unrelated messages.
 
 Return JSON only:

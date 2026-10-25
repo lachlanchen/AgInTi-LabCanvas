@@ -10198,11 +10198,13 @@ stderr: noisy internal trace
                     with mock.patch.object(worker, "image_file_metadata", side_effect=fake_metadata):
                         with mock.patch.object(worker, "ocr_image_file", return_value={"status": "empty", "text_path": "", "text_preview": ""}):
                             with mock.patch.object(worker, "materialize_chat_for_media_cache", return_value={"status": "ok", "output_dir": str(tmp_path / "gui")}):
-                                preflight = worker.prepare_media_resolution_preflight(task, tmp_path / "artifact")
+                                with mock.patch.object(worker, "codex_read_image_file", return_value={"status": "empty"}) as vision:
+                                    preflight = worker.prepare_media_resolution_preflight(task, tmp_path / "artifact")
 
         self.assertEqual(preflight["gui_cache_probe"]["status"], "ok")
         self.assertIn("cached_image_too_small", preflight["gui_cache_probe"]["reason"])
         self.assertEqual(Path(preflight["copied"][0]["task_copy_path"]).name, "original.jpg")
+        vision.assert_called_once()
 
     def test_file_intake_result_does_not_auto_attach_saved_copy(self) -> None:
         worker = load_worker()

@@ -18,6 +18,7 @@ import tempfile
 import time
 from typing import Any
 import uuid
+import xml.etree.ElementTree as ET
 from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -207,6 +208,16 @@ def is_daily_pdf_source_message(message: Any) -> bool:
         return False
     if str(getattr(message, "direction", "") or "").casefold() != "outbound":
         return True
+    # The mirror may retain the native attachment envelope instead of its title.
+    # A prior delivery is transport evidence, not another lesson to reproduce.
+    if body.startswith("<"):
+        try:
+            root = ET.fromstring(body)
+        except ET.ParseError:
+            pass
+        else:
+            if root.tag == "msg" and root.findtext("./appmsg/type", "").strip() == "6":
+                return False
     return re.fullmatch(
         r"[^/\\\r\n]{1,240}\.(?:pdf|tex|md|docx?|pptx?|xlsx?|zip|rar|7z)",
         body,
