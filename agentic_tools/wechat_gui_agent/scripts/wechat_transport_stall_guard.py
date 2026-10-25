@@ -67,6 +67,7 @@ GUI_CONFIG = WECOM_PRIVATE / "wecom_gui_bridge.local.json"
 CLI_CONFIG = WECOM_PRIVATE / "wecom_cli_bridge.local.json"
 CLI_TRANSPORT_STATE = WECOM_PRIVATE / "wecom_cli_transport.local.json"
 ECHOMIND_SCHEDULE_STATE = WECHAT_PRIVATE / "echomind-language-schedule.state.json"
+ECHOMIND_SCHEDULE_DISABLED = WECHAT_PRIVATE / "echomind-language-schedule.disabled"
 LABAGENT_SCHEDULE_HEARTBEAT = WECOM_PRIVATE / "wecom_daily_research.health.json"
 ECHOMIND_SCHEDULE_HELPER = (
     ROOT
@@ -577,6 +578,7 @@ def schedule_health(
     career_stale_seconds: float = CAREER_HEARTBEAT_STALE_SECONDS,
 ) -> dict[str, Any]:
     echo_state = read_json(ECHOMIND_SCHEDULE_STATE)
+    echomind_enabled = not ECHOMIND_SCHEDULE_DISABLED.exists()
     career_state = read_json(career_state_path)
     try:
         interval = int(echo_state.get("interval_seconds") or 0)
@@ -641,7 +643,7 @@ def schedule_health(
         and pending_lesson_age > max(2 * ECHOMIND_INTERVAL_SECONDS, 2 * interval)
     )
     pending_lesson_actionable = bool(
-        echomind_pending_lesson
+        echomind_enabled and echomind_pending_lesson
         and not pending_lesson_in_progress
         and not pending_lesson_quiet_hours_deferred
         and (not pending_lesson_retry_pending or pending_lesson_retry_stalled)
@@ -693,7 +695,7 @@ def schedule_health(
         pending_daily_retry_at and pending_daily_retry_at > current
     )
     pending_daily_pdf_actionable = bool(
-        echomind_pending_daily_pdf
+        echomind_enabled and echomind_pending_daily_pdf
         and not pending_daily_retry_pending
         and (
             pending_daily_pdf_age is None
@@ -703,7 +705,7 @@ def schedule_health(
     echomind_delivery_pending = (
         pending_lesson_actionable or pending_daily_pdf_actionable
     )
-    echomind_ok = (
+    echomind_ok = not echomind_enabled or (
         echomind_running
         and echomind_heartbeat_ok
         and not echomind_delivery_pending
@@ -757,17 +759,18 @@ def schedule_health(
         "ok": (
             echomind_ok
             and career_ok
-            and interval == ECHOMIND_INTERVAL_SECONDS
+            and (not echomind_enabled or interval == ECHOMIND_INTERVAL_SECONDS)
             and labagent_ok
         ),
         "echomind": {
+            "enabled": echomind_enabled,
             "running": echomind_running,
             "ok": echomind_ok,
             "interval_seconds": interval,
             "expected_interval_seconds": ECHOMIND_INTERVAL_SECONDS,
             "heartbeat_age_seconds": int(echo_heartbeat_age) if echo_heartbeat_age is not None else None,
             "stale_after_seconds": echo_stale_seconds,
-            "phase": echomind_phase,
+            "phase": echomind_phase if echomind_enabled else "disabled",
             "pending_delivery": echomind_delivery_pending,
             "pending_lesson": echomind_pending_lesson,
             "pending_lesson_actionable": pending_lesson_actionable,
@@ -1518,7 +1521,9 @@ def build_snapshot(*, max_sender_seconds: float = 180.0) -> dict[str, Any]:
             "degraded",
             f"{len(gui_delivery.get('artifact_failure_task_ids') or [])} unresolved native file delivery failure(s)",
         )
-    if not schedules["echomind"]["running"]:
+    if not schedules["echomind"].get("enabled", True):
+        pass  # An owner-disabled schedule is not a recovery target.
+    elif not schedules["echomind"]["running"]:
         issue("schedule_echomind_missing", "degraded", "EchoMind language scheduler is absent")
     elif schedules["echomind"]["heartbeat_age_seconds"] is None or (
         schedules["echomind"]["heartbeat_age_seconds"]
@@ -1889,7 +1894,7 @@ def perform_repairs(
                 [str(WECHAT_VIRTUAL_DESKTOP), "restart-client"],
             )
         )
-    if any(
+    if not ECHOMIND_SCHEDULE_DISABLED.exists() and any(
         code in issue_codes
         and repair_due(
             code,

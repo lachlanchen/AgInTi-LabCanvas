@@ -109,6 +109,37 @@ def schedule_state_reader(
 
 
 class WeChatTransportStallGuardTests(unittest.TestCase):
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        patcher = mock.patch.object(guard, "ECHOMIND_SCHEDULE_DISABLED", Path(temporary.name) / "disabled")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_disabled_echomind_is_not_stalled_or_repaired(self) -> None:
+        guard.ECHOMIND_SCHEDULE_DISABLED.touch()
+        with (
+            mock.patch.object(guard, "tmux_session_live", return_value=False),
+            mock.patch.object(guard, "read_json", side_effect=schedule_state_reader(
+                echo_last_loop_at="2026-07-22T00:00:00+00:00",
+                echomind_pending_daily_pdf=True,
+                echomind_pending_lesson=True,
+            )),
+        ):
+            status = guard.schedule_health(now=datetime(2026, 7, 22, 12, tzinfo=timezone.utc))
+        echo = status["echomind"]
+        self.assertFalse(echo["enabled"])
+        self.assertFalse(echo["running"])
+        self.assertTrue(echo["ok"])
+        self.assertEqual(echo["phase"], "disabled")
+        self.assertFalse(echo["pending_delivery"])
+        with mock.patch.object(guard, "run_repair") as repair:
+            guard.perform_repairs(
+                {"issues": [{"code": "schedule_echomind_missing", "severity": "degraded"}]},
+                {}, consecutive_failures=10, cooldown_seconds=0, max_sender_seconds=180,
+            )
+        repair.assert_not_called()
+
     def test_source_refresh_failure_and_staleness_are_not_healthy(self) -> None:
         now = datetime(2026, 9, 5, 7, 30, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:

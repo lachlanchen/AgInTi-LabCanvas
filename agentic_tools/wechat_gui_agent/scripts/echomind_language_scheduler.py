@@ -45,6 +45,7 @@ from wechat_task_worker import load_worker_model_policy, send_file  # noqa: E402
 
 CONFIG = PRIVATE / "echomind-direct-chatops.local.json"
 STATE = PRIVATE / "echomind-language-schedule.state.json"
+DISABLED_FILE = PRIVATE / "echomind-language-schedule.disabled"
 DAILY_PDF_LOCK = PRIVATE / "echomind-language-daily-pdf.lock"
 MEMORY_DB = Path(
     os.environ.get("WECHAT_MEMORY_DB", str(PRIVATE / "wechat_memory.sqlite"))
@@ -317,6 +318,8 @@ def send_with_busy_retry(sender: Any, *args: Any, **kwargs: Any) -> Any:
     attempts = max(1, int(os.environ.get("WECHAT_DAILY_SEND_ATTEMPTS", "24")))
     delay = max(0.0, float(os.environ.get("WECHAT_DAILY_SEND_RETRY_DELAY", "5")))
     for attempt in range(1, attempts + 1):
+        if DISABLED_FILE.exists():
+            raise RuntimeError("EchoMind schedule is disabled by the owner")
         try:
             return sender(*args, **kwargs)
         except Exception as exc:
@@ -339,6 +342,8 @@ def send_with_busy_retry(sender: Any, *args: Any, **kwargs: Any) -> Any:
 
 
 def send_scheduled_file(pdf: Path, config: dict) -> None:
+    if DISABLED_FILE.exists():
+        raise RuntimeError("EchoMind schedule is disabled by the owner")
     identity = file_transport_identity(pdf)
     task_id = (
         "echomind-daily-pdf-"
@@ -361,6 +366,8 @@ def send_scheduled_message(
     *,
     generated_at: str = "",
 ) -> str:
+    if DISABLED_FILE.exists():
+        raise RuntimeError("EchoMind schedule is disabled by the owner")
     identity = "|".join(
         (
             str(config.get("chat_name") or "EchoMind"),
@@ -1470,6 +1477,8 @@ def run_daily_pdf(
     deliver: bool = True,
 ) -> dict | None:
     """Create and deliver one previous-day EchoMind teaching PDF independently."""
+    if DISABLED_FILE.exists():
+        return {"status": "skipped_disabled"}
     current = now or datetime.now(LOCAL_TZ)
     if current.tzinfo is None:
         current = current.replace(tzinfo=LOCAL_TZ)
@@ -1831,6 +1840,8 @@ def run_daily_pdf_if_due(
     skip_if_busy: bool = False,
 ) -> dict | None:
     """Run and persist the independent daily PDF transaction."""
+    if DISABLED_FILE.exists():
+        return {"status": "skipped_disabled"}
     DAILY_PDF_LOCK.parent.mkdir(parents=True, exist_ok=True)
     with DAILY_PDF_LOCK.open("a+", encoding="utf-8") as lock_handle:
         lock_flags = fcntl.LOCK_EX | (fcntl.LOCK_NB if skip_if_busy else 0)
@@ -1894,6 +1905,8 @@ def run_once(
     interval_seconds: int = INTERVAL,
     force_pending_retry: bool = False,
 ) -> dict:
+    if DISABLED_FILE.exists():
+        return {"ok": True, "status": "skipped_disabled"}
     config = direct.load_config(CONFIG)
     state = load_state()
     pending = state.get("pending_lesson")
@@ -2185,6 +2198,9 @@ def main() -> int:
     interval = max(300, args.interval_seconds)
     if not args.once and not args.loop and not args.daily_pdf_now:
         parser.error("use --once, --loop, or --daily-pdf-now")
+    if DISABLED_FILE.exists():
+        print(json.dumps({"ok": True, "status": "disabled"}), flush=True)
+        return 0
     if args.daily_pdf_now:
         try:
             result = run_daily_pdf_if_due(
@@ -2202,6 +2218,9 @@ def main() -> int:
         state["interval_seconds"] = interval
         save_state(state)
     while True:
+        if DISABLED_FILE.exists():
+            print(json.dumps({"ok": True, "status": "disabled"}), flush=True)
+            return 0
         state = load_state()
         scheduler_heartbeat(state, "loop")
         try:

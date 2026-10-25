@@ -1862,6 +1862,11 @@ uses the idempotent supervisor `ensure` path. EchoMind is managed by
 the remainder of the six-hour interval after restart instead of sending a
 duplicate lesson. `wechat_stack_tmux.sh start` restores both EchoMind and the
 daily career scheduler after reboot.
+EchoMind's explicit `disable` command takes precedence over recovery and boot:
+the ignored `echomind-language-schedule.disabled` marker suppresses both lessons
+and daily PDFs, including pending delivery. A disabled schedule is healthy and
+must not be restarted or reported as missing. Normal EchoMind replies remain
+enabled; `enable` is the deliberate opt-in to resume its proactive schedules.
 - Healthy 30-second health polls read local process, tmux, heartbeat, queue, and
   localhost endpoint state only and spend no model tokens. After repeated
   failure, deterministic repairs run first and the guard re-probes the exact

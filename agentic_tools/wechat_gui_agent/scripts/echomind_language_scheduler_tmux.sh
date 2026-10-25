@@ -7,10 +7,15 @@ INTERVAL_SECONDS="${ECHOMIND_LANGUAGE_INTERVAL_SECONDS:-21600}"
 LOG_DIR="$ROOT/output/wechat_gui_agent/$(date +%F)"
 LOG_FILE="$LOG_DIR/echomind-language-scheduler.log"
 SCRIPT="$ROOT/agentic_tools/wechat_gui_agent/scripts/echomind_language_scheduler.py"
+DISABLED_FILE="$ROOT/agentic_tools/wechat_gui_agent/.private/echomind-language-schedule.disabled"
 mkdir -p "$LOG_DIR"
 export PYTHONPATH="$ROOT/src:${PYTHONPATH:-}"
 
 start() {
+  if [[ -e "$DISABLED_FILE" ]]; then
+    echo "disabled: $SESSION (normal chat replies remain enabled)"
+    return 0
+  fi
   if tmux has-session -t "$SESSION" 2>/dev/null; then
     echo "EchoMind scheduler already running: $SESSION"
     return 0
@@ -30,6 +35,10 @@ stop() {
 }
 
 status() {
+  if [[ -e "$DISABLED_FILE" ]]; then
+    echo "disabled: $SESSION (normal chat replies remain enabled)"
+    return 0
+  fi
   if ! tmux has-session -t "$SESSION" 2>/dev/null; then
     echo "not-running: $SESSION"
     return 1
@@ -54,9 +63,16 @@ PY
 }
 
 case "${1:-start}" in
+  disable)
+    mkdir -p "$(dirname "$DISABLED_FILE")"
+    install -m 600 /dev/null "$DISABLED_FILE"
+    stop
+    echo "Disabled EchoMind periodic lessons and daily PDF across restarts."
+    ;;
+  enable) rm -f "$DISABLED_FILE"; start ;;
   start) start ;;
   stop) stop ;;
   restart) stop; start ;;
   status) status ;;
-  *) echo "Usage: $0 start|stop|restart|status" >&2; exit 2 ;;
+  *) echo "Usage: $0 start|stop|restart|status|disable|enable" >&2; exit 2 ;;
 esac

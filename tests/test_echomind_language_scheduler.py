@@ -12,6 +12,43 @@ from agentic_tools.wechat_gui_agent.scripts import echomind_language_scheduler a
 
 
 class EchoMindLanguageSchedulerTests(unittest.TestCase):
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        patcher = mock.patch.object(scheduler, "DISABLED_FILE", Path(temporary.name) / "disabled")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_disabled_schedule_blocks_forced_runs_and_pending_delivery(self) -> None:
+        scheduler.DISABLED_FILE.touch()
+        with mock.patch.object(scheduler.direct, "load_config") as config:
+            self.assertEqual(scheduler.run_once()["status"], "skipped_disabled")
+            self.assertEqual(scheduler.run_daily_pdf_if_due(force=True)["status"], "skipped_disabled")
+            self.assertEqual(scheduler.run_daily_pdf({}, {}, force=True)["status"], "skipped_disabled")
+            config.assert_not_called()
+        sender = mock.Mock()
+        with self.assertRaisesRegex(RuntimeError, "disabled"):
+            scheduler.send_with_busy_retry(sender)
+        sender.assert_not_called()
+        with self.assertRaisesRegex(RuntimeError, "disabled"):
+            scheduler.send_scheduled_file(Path("not-read.pdf"), {})
+        with self.assertRaisesRegex(RuntimeError, "disabled"):
+            scheduler.send_scheduled_message({}, "Do not deliver")
+
+    def test_disabled_cli_exits_without_schedule_work(self) -> None:
+        scheduler.DISABLED_FILE.touch()
+        for mode in ("--loop", "--once", "--daily-pdf-now"):
+            with (
+                self.subTest(mode=mode),
+                mock.patch.object(scheduler.sys, "argv", ["scheduler", mode]),
+                mock.patch.object(scheduler, "run_daily_pdf_if_due") as daily,
+                mock.patch.object(scheduler, "run_once") as lesson,
+                mock.patch("builtins.print"),
+            ):
+                self.assertEqual(scheduler.main(), 0)
+                daily.assert_not_called()
+                lesson.assert_not_called()
+
     def test_invalid_audit_is_not_a_content_revision(self) -> None:
         with self.assertRaises(scheduler.DailyPdfAuditUnavailable):
             scheduler.require_complete_daily_pdf_audit(

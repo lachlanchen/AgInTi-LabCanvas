@@ -208,6 +208,14 @@ previous-day XeLaTeX review remains scheduled at 06:00 HKT. Oversized or
 incomplete periodic drafts go through a bounded agent editing pass; never clip
 a lesson mid-example merely to satisfy the chat length limit.
 
+To disable both proactive EchoMind schedules without disabling normal replies,
+run `agentic_tools/wechat_gui_agent/scripts/echomind_language_scheduler_tmux.sh disable`.
+This stops the scheduler and persists an ignored
+`.private/echomind-language-schedule.disabled` marker. Startup, forced runs,
+pending scheduled delivery, and health recovery respect that marker. `status`
+reports `disabled`; only an explicit `enable` removes it and resumes scheduling.
+Previously delivered artifacts and ordinary message history are preserved.
+
 Personal-WeChat file attachments default to the allowlisted Android native share
 transport. It stages a meaningful filename, resolves the exact MediaStore row,
 selects the exact chat, verifies the native recipient confirmation, and records
