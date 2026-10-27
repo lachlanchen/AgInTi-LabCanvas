@@ -32,7 +32,7 @@ class Yxra100AnalyzerMountTests(unittest.TestCase):
         self.assertLessEqual(self.data["rotating_assembly_max_interference_mm3_15deg_samples"], 0.01)
 
     def test_print_contract(self):
-        self.assertEqual(len(self.data["print_validation"]), 3)
+        self.assertTrue({"breadboard_foot", "L_support", "GT_adapter"}.issubset(self.data["print_validation"]))
         for record in self.data["print_validation"].values():
             self.assertEqual(record["solids"], 1)
             self.assertTrue(record["watertight"])
@@ -40,6 +40,27 @@ class Yxra100AnalyzerMountTests(unittest.TestCase):
             self.assertAlmostEqual(record["min_z_mm"], 0)
             self.assertTrue(record["first_layer_nonempty"])
             self.assertEqual(record["three_mf_build_items"], 1)
+
+    def test_motor_yoke_m3_bridge_and_mounting(self):
+        yoke = self.data.get("motor_yoke")
+        if not yoke:
+            self.skipTest("Motor yoke extension not built")
+        self.assertEqual(len(yoke["M3_screw_centers_mm"]), 2)
+        self.assertIn("captive real metal M3 nuts", yoke["locking_method"])
+        self.assertTrue(yoke["direct_table_assembly_round_trip_valid"])
+        self.assertEqual(yoke["direct_table_assembly_step"], "yxra100_direct_table_motor_yoke_assembly.step")
+        self.assertEqual(yoke["stand_foot_M6_centers_mm"], [[100, 0], [125, 0]])
+        self.assertEqual(yoke["case_clearance_mm"], {"each_side": 0.5, "below": 0.5, "above": 0.5})
+        self.assertTrue({"motor_yoke_stand_foot", "motor_yoke_direct_table", "motor_yoke_top_bridge"}.issubset(self.data["print_validation"]))
+        for x, y in yoke["table_foot_M6_centers_mm"]:
+            self.assertAlmostEqual(x % 25, 0)
+            self.assertAlmostEqual(y % 25, 0)
+        for value in yoke["interference_volume_mm3"].values():
+            self.assertLessEqual(abs(value), 0.01)
+
+    def test_original_fixture_parts_preserved(self):
+        for name, previous in self.data.get("preserved_run_1_geometry", {}).items():
+            self.assertEqual(previous, self.data["geometry_validation"][name])
 
     def test_optical_limit_not_misrepresented(self):
         optical = self.data["optical_constraints"]

@@ -23,7 +23,7 @@ Project: `cad/designs/yxra100_servo_analyzer_breadboard_mount/`.
 The design separates three functions into editable and individually printable
 parts: an M6/25 mm breadboard foot, a gusseted motor-side L support, and a
 rotating analyzer adapter. The shelf bolts into the stationary stage base;
-neither the motor casing nor the rotor is clamped. Four 5.9 mm locating pins
+the motor casing is not its primary load path and the rotor stays free. Four 5.9 mm locating pins
 on the 30 mm cage pattern carry the GT090101. Its existing side screws retain
 the pins and its manual rotation should be locked. A cage rod must not bridge
 the rotating assembly and the stationary sample holder.
@@ -43,6 +43,31 @@ Final metrology benefits from a metal support and a physical load/clearance test
 part intersections, a sampled rotation sweep, and the print package contract.
 `render_mount.py` supplies full, detail, exploded and exact-print views.
 `sync_handoff.py` copies a clean checksum-verified run to Nutstore.
+
+## Removable Motor Yoke Extension
+
+Run 2 adds a square-Y lower fork and a removable top bridge without changing
+the three accepted run-1 fixture bodies. One lower variant shares the existing
+stand-foot M6 screws; the other has an outboard foot on the 25 mm table grid.
+Install only one lower variant. The same cap fits both.
+
+Use two real M3 x 16 screws and captive metal M3 nuts, rather than small printed
+threads. The cap's screw holes are 3.4 mm and the nut pockets are 5.7 mm across
+flats x 2.6 mm high. Motor support remains secondary to the stage-base screws.
+The 41 mm square envelope leaves 0.5 mm around the genuine 40 mm casing;
+optional thin compliant pads can take up clearance without crushing the case.
+
+The motor reference includes open surfaces, so measuring only closed solids
+misses the casing. `build_motor_yoke.py` sections the complete motor with OCCT
+at X=91, 97, 103 and 105. The selected X=91..103 band clears the connectors.
+It checks rotor, support, casing, M3/M6 paths and the central aperture before
+export. The genuine 30 mm opening is unchanged; a 29.8 mm through-core is clear.
+
+Anti-warp ears must attach to the actual print-bed footprint. On an offset
+yoke, the overall XY bounding box includes the elevated fork. Placing ears
+at those bounds can leave detached islands. Pass explicit foot bounds to
+`ears(..., base_bounds=...)`, then reject any print mesh with more than one
+connected component. The cap prints upside down on its broad top face.
 
 ## Stable Direct-Print Exports
 

@@ -98,12 +98,13 @@ def shape_volume(shape):
     return sum(s.Volume() for s in shape.solids().vals())
 
 
-def ears(shape):
+def ears(shape, *, base_bounds=None):
     b = shape.val().BoundingBox()
-    for x in (b.xmin, b.xmax):
-        for y in (b.ymin, b.ymax):
-            sx = -1 if x == b.xmin else 1
-            sy = -1 if y == b.ymin else 1
+    xmin, xmax, ymin, ymax = base_bounds or (b.xmin, b.xmax, b.ymin, b.ymax)
+    for x in (xmin, xmax):
+        for y in (ymin, ymax):
+            sx = -1 if x == xmin else 1
+            sy = -1 if y == ymin else 1
             polygon = [(-6, -1), (-6, 6), (-2, 12), (9, 12), (12, 9), (12, -2), (6, -6), (-1, -6)]
             points = [(x + sx * u, y + sy * v) for u, v in polygon]
             tab = cq.Workplane("XY").polyline(points).close().extrude(P["ear_thickness"])
@@ -202,11 +203,11 @@ def export_print(name, shape):
     for suffix in ("step", "stl", "3mf"):
         shutil.copy2(ART / f"{stem}.{suffix}", RUN / f"{stem}.{suffix}")
     record.update({"watertight": True, "mesh_components": 1, "min_z_mm": float(mesh.bounds[0, 2]),
-                   "first_layer_nonempty": first_layer, "three_mf_build_items": 1})
+                   "first_layer_nonempty": first_layer, "three_mf_build_items": 1, "stem": stem})
     return record
 
 
-def main():
+def main(*, extra_components=None, extra_prints=None, extra_manifest=None):
     ART.mkdir(exist_ok=True, parents=True)
     RUN.mkdir(exist_ok=True, parents=True)
     source = cq.importers.importStep(str(REF / "YXRA100_100W_servo.step"))
@@ -255,11 +256,14 @@ def main():
             elif part.name == "c12880_board":
                 color = (0.04, 0.40, 0.22)
             components.append((part.name, part.shape.translate((0, 0, microscope_lift)), color))
+    components.extend(extra_components or [])
 
     validation = {}
     for name, body in (("breadboard_foot", foot_body), ("gusseted_L_support", support_body),
                        ("rotating_analyzer_adapter", adapter_body), ("vendor_YXRA100_servo_positioned", vendor_stage)):
         validation[name] = export_part(name, body)
+    for name, shape, _ in extra_components or []:
+        validation[name] = export_part(name, shape)
     assembly = cq.Assembly(name="YXRA100_servo_GT090101_analyzer_integration")
     render_records = []
     for name, shape, color in components:
@@ -280,6 +284,8 @@ def main():
         "L_support": export_print("yxra100_L_support_on_back_with_ears", ears(clean_stand_print)),
         "GT_adapter": export_print("yxra100_full_GT090101_rotating_adapter", adapter_body),
     }
+    for key, (name, shape) in (extra_prints or {}).items():
+        print_records[key] = export_print(name, shape)
     interactions = {}
     for name, hardware in (("stationary_stage", stationary), ("dock", next(p.shape for p in lower if p.name == "dock")),
                            ("sample_holder", next(p.shape for p in lower if p.name == "sample_holder_and_cap"))):
@@ -298,7 +304,8 @@ def main():
     source_files = {"servo_stage": REF / "YXRA100_100W_servo.step", "drawing": REF / "YXRA100_40_servo_specification.pdf",
                     "GT090101": original.SOURCE["gt090101"], "sample_holder": original.SOURCE["sample_holder"]}
     manifest = {
-        "design": DESIGN.name, "status": "measured mechanical integration prototype; optical working distance and load test still required",
+        "design": DESIGN.name, "run_name": RUN.name,
+        "status": "measured mechanical integration prototype; optical working distance and load test still required",
         "selected_motor": "40 mm / 100 W servo", "analyzer": "complete GT090101 mount",
         "parameters_mm": P, "stationary_base_holes_mm": BASE_HOLES, "measured_source_holes_mm": actual_holes,
         "breadboard_holes_mm": TABLE_HOLES, "rotor_attachment_holes_mm": ROTOR_HOLES,
@@ -327,11 +334,13 @@ def main():
                         "Cable bend radius, live specimen access, screw lengths and microscope working distance need physical verification.",
                         "The 25 mm breadboard grid is a metric-board assumption, not a measurement of this particular table."]
     }
+    manifest.update(extra_manifest or {})
     (ART / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     for path in (assembly_path, ART / "manifest.json"):
         shutil.copy2(path, RUN / path.name)
     print(json.dumps({"assembly": str(assembly_path), "checks": interactions, "microscope_lift_mm": microscope_lift,
                       "print_validation": print_records}, indent=2), flush=True)
+    return manifest, components
 
 
 if __name__ == "__main__":

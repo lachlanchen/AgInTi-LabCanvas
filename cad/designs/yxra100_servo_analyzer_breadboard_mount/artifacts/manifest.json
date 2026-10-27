@@ -1,5 +1,6 @@
 {
   "design": "yxra100_servo_analyzer_breadboard_mount",
+  "run_name": "run-2-square-y-motor-yoke-m3-bridge-20261027T145017Z",
   "status": "measured mechanical integration prototype; optical working distance and load test still required",
   "selected_motor": "40 mm / 100 W servo",
   "analyzer": "complete GT090101 mount",
@@ -210,6 +211,132 @@
       },
       "solids": 5,
       "volume_mm3": 361403.1312766289
+    },
+    "motor_yoke_stand_foot": {
+      "bounds_mm": {
+        "min": [
+          90.0,
+          -10.0,
+          8.0
+        ],
+        "max": [
+          140.0,
+          90.0,
+          167.0
+        ],
+        "size": [
+          50.0,
+          100.0,
+          159.0
+        ]
+      },
+      "solids": 1,
+      "volume_mm3": 81421.59574862549
+    },
+    "motor_yoke_top_bridge": {
+      "bounds_mm": {
+        "min": [
+          91.0,
+          18.5,
+          165.0
+        ],
+        "max": [
+          103.0,
+          79.5,
+          175.0
+        ],
+        "size": [
+          12.0,
+          61.0,
+          10.0
+        ]
+      },
+      "solids": 1,
+      "volume_mm3": 6474.952237273142
+    },
+    "bridge_M3_screw_1": {
+      "bounds_mm": {
+        "min": [
+          94.25,
+          20.75,
+          155.8
+        ],
+        "max": [
+          99.75,
+          26.25,
+          174.8
+        ],
+        "size": [
+          5.5,
+          5.5,
+          19.0
+        ]
+      },
+      "solids": 1,
+      "volume_mm3": 174.62943306498255
+    },
+    "bridge_M3_nut_1": {
+      "bounds_mm": {
+        "min": [
+          93.82457351945679,
+          20.749999999999996,
+          156.1
+        ],
+        "max": [
+          100.17542648054246,
+          26.25,
+          158.5
+        ],
+        "size": [
+          6.350852961085664,
+          5.5000000000000036,
+          2.4000000000000057
+        ]
+      },
+      "solids": 1,
+      "volume_mm3": 51.09247186375081
+    },
+    "bridge_M3_screw_2": {
+      "bounds_mm": {
+        "min": [
+          94.25,
+          71.75,
+          155.8
+        ],
+        "max": [
+          99.75,
+          77.25,
+          174.8
+        ],
+        "size": [
+          5.5,
+          5.5,
+          19.0
+        ]
+      },
+      "solids": 1,
+      "volume_mm3": 174.62943306498252
+    },
+    "bridge_M3_nut_2": {
+      "bounds_mm": {
+        "min": [
+          93.82457351945679,
+          71.75,
+          156.1
+        ],
+        "max": [
+          100.17542648054246,
+          77.25,
+          158.5
+        ],
+        "size": [
+          6.350852961085664,
+          5.5,
+          2.4000000000000057
+        ]
+      },
+      "solids": 1,
+      "volume_mm3": 51.09247186375076
     }
   },
   "print_validation": {
@@ -237,7 +364,8 @@
       "mesh_components": 1,
       "min_z_mm": 0.0,
       "first_layer_nonempty": true,
-      "three_mf_build_items": 1
+      "three_mf_build_items": 1,
+      "stem": "PRINT_THIS_yxra100_breadboard_foot_with_ears"
     },
     "L_support": {
       "bounds_mm": {
@@ -263,7 +391,8 @@
       "mesh_components": 1,
       "min_z_mm": 0.0,
       "first_layer_nonempty": true,
-      "three_mf_build_items": 1
+      "three_mf_build_items": 1,
+      "stem": "PRINT_THIS_yxra100_L_support_on_back_with_ears"
     },
     "GT_adapter": {
       "bounds_mm": {
@@ -289,7 +418,89 @@
       "mesh_components": 1,
       "min_z_mm": 0.0,
       "first_layer_nonempty": true,
-      "three_mf_build_items": 1
+      "three_mf_build_items": 1,
+      "stem": "PRINT_THIS_yxra100_full_GT090101_rotating_adapter"
+    },
+    "motor_yoke_stand_foot": {
+      "bounds_mm": {
+        "min": [
+          -37.0,
+          -62.00000000000111,
+          0.0
+        ],
+        "max": [
+          37.0,
+          62.00000000000111,
+          159.0
+        ],
+        "size": [
+          74.0,
+          124.00000000000222,
+          159.0
+        ]
+      },
+      "solids": 1,
+      "volume_mm3": 82459.59574861573,
+      "watertight": true,
+      "mesh_components": 1,
+      "min_z_mm": 0.0,
+      "first_layer_nonempty": true,
+      "three_mf_build_items": 1,
+      "stem": "PRINT_THIS_yxra100_motor_yoke_stand_foot"
+    },
+    "motor_yoke_direct_table": {
+      "bounds_mm": {
+        "min": [
+          -55.49999995,
+          -62.00000000000111,
+          0.0
+        ],
+        "max": [
+          55.50000005,
+          62.00000000000111,
+          167.0
+        ],
+        "size": [
+          111.0,
+          124.00000000000222,
+          167.0
+        ]
+      },
+      "solids": 1,
+      "volume_mm3": 96079.51394664463,
+      "watertight": true,
+      "mesh_components": 1,
+      "min_z_mm": 0.0,
+      "first_layer_nonempty": true,
+      "three_mf_build_items": 1,
+      "stem": "PRINT_THIS_yxra100_motor_yoke_direct_table"
+    },
+    "motor_yoke_top_bridge": {
+      "bounds_mm": {
+        "min": [
+          -6.0,
+          -30.5,
+          -3.9188697572704e-16
+        ],
+        "max": [
+          6.0,
+          30.5,
+          10.000000000000005
+        ],
+        "size": [
+          12.0,
+          61.0,
+          10.000000000000005
+        ]
+      },
+      "solids": 1,
+      "volume_mm3": 6474.952237273141,
+      "watertight": true,
+      "mesh_components": 1,
+      "min_z_mm": -3.9180951578235955e-16,
+      "first_layer_nonempty": true,
+      "three_mf_build_items": 1,
+      "stem": "PRINT_THIS_yxra100_motor_yoke_M3_top_bridge"
     }
   },
   "interference_volume_mm3": {
@@ -688,6 +899,60 @@
         0.25,
         0.28
       ]
+    },
+    {
+      "name": "motor_yoke_stand_foot",
+      "mesh": "scene_motor_yoke_stand_foot.stl",
+      "color": [
+        0.2,
+        0.43,
+        0.51
+      ]
+    },
+    {
+      "name": "motor_yoke_top_bridge",
+      "mesh": "scene_motor_yoke_top_bridge.stl",
+      "color": [
+        0.85,
+        0.56,
+        0.16
+      ]
+    },
+    {
+      "name": "bridge_M3_screw_1",
+      "mesh": "scene_bridge_M3_screw_1.stl",
+      "color": [
+        0.6,
+        0.63,
+        0.67
+      ]
+    },
+    {
+      "name": "bridge_M3_nut_1",
+      "mesh": "scene_bridge_M3_nut_1.stl",
+      "color": [
+        0.6,
+        0.63,
+        0.67
+      ]
+    },
+    {
+      "name": "bridge_M3_screw_2",
+      "mesh": "scene_bridge_M3_screw_2.stl",
+      "color": [
+        0.6,
+        0.63,
+        0.67
+      ]
+    },
+    {
+      "name": "bridge_M3_nut_2",
+      "mesh": "scene_bridge_M3_nut_2.stl",
+      "color": [
+        0.6,
+        0.63,
+        0.67
+      ]
     }
   ],
   "sources": {
@@ -743,5 +1008,192 @@
     "Use rigid metal for final metrology support; printed polymer can creep under the roughly 1.85 kg stage.",
     "Cable bend radius, live specimen access, screw lengths and microscope working distance need physical verification.",
     "The 25 mm breadboard grid is a metric-board assumption, not a measurement of this particular table."
-  ]
+  ],
+  "motor_yoke": {
+    "parameters_mm": {
+      "band_xmin_mm": 91.0,
+      "band_xmax_mm": 103.0,
+      "motor_case_ymin_mm": 29.0,
+      "motor_case_ymax_mm": 69.0,
+      "motor_case_bottom_z_mm": 124.5,
+      "motor_case_top_z_mm": 164.5,
+      "fork_inner_ymin_mm": 28.5,
+      "fork_inner_ymax_mm": 69.5,
+      "fork_inner_bottom_z_mm": 124.0,
+      "bridge_inner_top_z_mm": 165.0,
+      "fork_outer_ymin_mm": 18.5,
+      "fork_outer_ymax_mm": 79.5,
+      "fork_bottom_z_mm": 118.0,
+      "fork_top_z_mm": 167.0,
+      "bridge_top_z_mm": 175.0,
+      "m3_clearance_diameter_mm": 3.4,
+      "m3_nut_pocket_af_mm": 5.7,
+      "m3_nut_pocket_height_mm": 2.6,
+      "dock_foot_bottom_z_mm": 8.0,
+      "table_foot_bottom_z_mm": 0.0,
+      "m6_clearance_diameter_mm": 6.4
+    },
+    "source_section_measurements": [
+      {
+        "x_mm": 91.0,
+        "ymin_mm": 29.00000009999998,
+        "ymax_mm": 69.0000001,
+        "zmin_mm": 124.50000000000001,
+        "zmax_mm": 164.5
+      },
+      {
+        "x_mm": 97.0,
+        "ymin_mm": 29.00000009999998,
+        "ymax_mm": 69.0000001,
+        "zmin_mm": 124.50000000000001,
+        "zmax_mm": 164.5
+      },
+      {
+        "x_mm": 103.0,
+        "ymin_mm": 29.000000099999976,
+        "ymax_mm": 69.0000001,
+        "zmin_mm": 124.50000000000001,
+        "zmax_mm": 164.5
+      },
+      {
+        "x_mm": 105.0,
+        "ymin_mm": 29.000000099999976,
+        "ymax_mm": 69.0000001,
+        "zmin_mm": 124.50000000000001,
+        "zmax_mm": 164.5
+      }
+    ],
+    "M3_screw_centers_mm": [
+      [
+        97.0,
+        23.5
+      ],
+      [
+        97.0,
+        74.5
+      ]
+    ],
+    "stand_foot_M6_centers_mm": [
+      [
+        100.0,
+        0.0
+      ],
+      [
+        125.0,
+        0.0
+      ]
+    ],
+    "table_foot_M6_centers_mm": [
+      [
+        150.0,
+        0.0
+      ],
+      [
+        175.0,
+        0.0
+      ],
+      [
+        150.0,
+        75.0
+      ],
+      [
+        175.0,
+        75.0
+      ]
+    ],
+    "interference_volume_mm3": {
+      "dock_yoke_vs_motor_case": 0,
+      "bridge_vs_motor_case": 0,
+      "bridge_vs_yoke": 0,
+      "dock_yoke_vs_stand": 0,
+      "dock_yoke_vs_foot": 0,
+      "table_yoke_vs_stand": 0,
+      "table_yoke_vs_foot": 0,
+      "dock_yoke_vs_rotor": 0,
+      "table_yoke_vs_rotor": 0,
+      "stage_aperture_core_obstruction": 0,
+      "new_support_aperture_obstruction": 0,
+      "shared_M6_hole_100_0": 0,
+      "shared_M6_hole_125_0": 0,
+      "M3_screw_path_23.5": 0,
+      "M3_screw_path_74.5": 0
+    },
+    "locking_method": "2x M3 x 16 socket screws into captive real metal M3 nuts; screw/nut thread geometry is visualization-only, not a printed thread",
+    "case_clearance_mm": {
+      "each_side": 0.5,
+      "below": 0.5,
+      "above": 0.5
+    },
+    "connector_note": "Band X=91..103 is before the connector protrusions; bore, rotor, coupler and connector faces remain unrestrained.",
+    "installation": "Choose one lower yoke only: stand-foot version shares two M6 mounting holes; direct-table version sits outboard of the existing foot. The top bridge fits either.",
+    "contact_note": "Use optional thin compliant pads to take up the running clearance; close the bridge gently, do not crush the casing or preload the stage bearings.",
+    "role": "Secondary motor-end support/retention. Original three stationary-base mounting screws remain the primary support.",
+    "direct_table_assembly_step": "yxra100_direct_table_motor_yoke_assembly.step",
+    "direct_table_assembly_round_trip_valid": true
+  },
+  "preserved_run_1_geometry": {
+    "breadboard_foot": {
+      "bounds_mm": {
+        "min": [
+          68.0,
+          -80.0,
+          0.0
+        ],
+        "max": [
+          138.0,
+          80.0,
+          8.0
+        ],
+        "size": [
+          70.0,
+          160.0,
+          8.0
+        ]
+      },
+      "solids": 1,
+      "volume_mm3": 85935.33472011278
+    },
+    "gusseted_L_support": {
+      "bounds_mm": {
+        "min": [
+          -62.0,
+          -67.0,
+          8.0
+        ],
+        "max": [
+          84.0,
+          67.0,
+          122.0
+        ],
+        "size": [
+          146.0,
+          134.0,
+          114.0
+        ]
+      },
+      "solids": 1,
+      "volume_mm3": 448365.9729185406
+    },
+    "rotating_analyzer_adapter": {
+      "bounds_mm": {
+        "min": [
+          -39.0,
+          -39.0,
+          0.0
+        ],
+        "max": [
+          39.0,
+          39.0,
+          24.0
+        ],
+        "size": [
+          78.0,
+          78.0,
+          24.0
+        ]
+      },
+      "solids": 1,
+      "volume_mm3": 32008.996397043742
+    }
+  }
 }
