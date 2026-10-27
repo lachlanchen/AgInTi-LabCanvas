@@ -1,0 +1,6 @@
+__pycache__/
+runs/
+USE_THIS_*.step
+artifacts/*
+!artifacts/manifest.json
+reference_media/*.jpeg

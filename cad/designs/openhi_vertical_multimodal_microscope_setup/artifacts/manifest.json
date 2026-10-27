@@ -1,0 +1,2684 @@
+{
+  "name": "openhi_vertical_multimodal_microscope_setup",
+  "mode": "new assembly composed from accepted exact source CAD plus bounded visualization proxies",
+  "optical_axis": {
+    "origin_xy_mm": [
+      0.0,
+      0.0
+    ],
+    "direction": "+Z through lower stack and microscope"
+  },
+  "stack_sequence": [
+    "100 mm dock",
+    "one 5 mm axial spacer layer",
+    "tungsten lamp on Lumileds PCB holder",
+    "two 5 mm axial spacer layers",
+    "QYH1123 LCD with one lower adhered polarizer proxy",
+    "two-piece slide/petri sample holder",
+    "petri sample and upper sample cap",
+    "Hengyang GT090101 analyzer",
+    "OpenHI microscope",
+    "OpenHI f=50 mm 4f relay",
+    "detectors"
+  ],
+  "parameters": {
+    "cage_pitch_mm": 30.0,
+    "cage_rod_diameter_mm": 6.0,
+    "dock_top_z_mm": 30.0,
+    "lamp_holder_center_z_mm": 39.0,
+    "lcd_holder_center_z_mm": 57.0,
+    "sample_holder_bottom_z_mm": 75.0,
+    "sample_holder_height_mm": 34.0,
+    "gt090101_bottom_z_mm": 114.0,
+    "gt090101_top_z_mm": 132.0,
+    "microscope_bottom_z_mm": 140.0,
+    "microscope_source_bottom_z_mm": 174.0,
+    "microscope_source_top_z_mm": 476.0,
+    "openhi_source_bs_mm": [
+      255.0,
+      210.0,
+      600.0
+    ],
+    "openhi_source_a_input_z_mm": 499.8,
+    "openhi_source_b_output_z_mm": 704.4,
+    "openhi_source_c_output_x_mm": 359.4,
+    "primary_a_input_gap_mm": 3.0,
+    "cascade_input_gap_mm": 3.0,
+    "lcd_polarizer_thickness_mm": 0.25,
+    "petri_outer_diameter_mm": 35.0,
+    "petri_inner_diameter_mm": 33.0,
+    "tungsten_bulb_diameter_mm": 3.0
+  },
+  "source_identity": {
+    "dock": {
+      "path": "cad/designs/cage_rod_dock_100mm_base_10mm_holes/runs/run-1-original-no-ears-20260710T130229Z/USE_THIS_cage_rod_dock_100mm_base_10mm_holes.step",
+      "sha256": "c5ce861a831368ca7aa920f1cebf363f8194c11c6ac81c98ca16ff6422037d6c"
+    },
+    "spacer": {
+      "path": "cad/designs/cage_spacer_id6p5_od10p5/USE_THIS_cage_spacer_id6p5_od10p5_single_h5.step",
+      "sha256": "b030ef60e74f5dd844e0d0a1a46058921eeffd2de8af9b4ad55bdf5b3a5893d8"
+    },
+    "lamp_holder": {
+      "path": "cad/designs/lumileds_pcb_aligned_sink_cage_holder/USE_THIS_lumileds_pcb_aligned_sink_cage_holder.step",
+      "sha256": "b460a05cfdd6267e99730d2edf27b05e486ebea2a756608187c77ef8335963c5"
+    },
+    "lamp_pcb": {
+      "path": "cad/designs/lumileds_pcb_aligned_sink_cage_holder/artifacts/lumileds_pcb_aligned_sink_cage_holder_pcb_proxy.step",
+      "sha256": "74b39fbb549e36933059e26055a9dd9f451fdfc8ef14810c0f92a5a958d7d4a0"
+    },
+    "lcd_holder": {
+      "path": "cad/designs/qyh1123_light_valve_centered_clearance_cage_holder/artifacts/qyh1123_light_valve_centered_clearance_cage_holder.step",
+      "sha256": "a8418ca948bdb823426b8df95620c202e5ecf5dc2ec96a868562f84d6dd048df"
+    },
+    "lcd": {
+      "path": "cad/designs/qyh1123_light_valve_centered_clearance_cage_holder/artifacts/qyh1123_light_valve_centered_clearance_cage_holder_valve_proxy.step",
+      "sha256": "f80d90f5388f3a7133d5993d0b1cdec111d5e23ae597a848e1116a1df94727f2"
+    },
+    "sample_holder": {
+      "path": "cad/designs/cage_sample_holder_two_piece_lock_slide_petri35/runs/run-2-correct-30mm-cage-rod-sockets-20260709T032257Z/artifacts/cage_sample_holder_two_piece_lock_slide_petri35_assembled.step",
+      "sha256": "db93bf8092b52f942bf25bac1057f353f54bf3c06bda5d70a88f8395b400eeff"
+    },
+    "gt090101": {
+      "path": "cad/references/hengyang-gt090101/GT-090101.stp",
+      "sha256": "ad6d1b66d761dd97ff2963dfd4794ae73e7354b6353e449c3c3a0ae6b2fec734"
+    },
+    "microscope": {
+      "path": "cad/extracted/OpenHI_STEP/Microscope yx umot large.step.step",
+      "sha256": "709af3e61f120e820edacf45592b4fb38351dceada78a01311f5349b98d8a481"
+    },
+    "four_f": {
+      "path": "cad/designs/openhi_4f_gla11_025_050_same_lens/USE_THIS_gla11_025_050_openhi_4f_assembly.step",
+      "sha256": "d2906267b66c1c7a3e7fbdc09e0ae4bc401ddde9b236d28df71b4fc27c3f5423"
+    },
+    "four_f_manifest": {
+      "path": "cad/designs/openhi_4f_gla11_025_050_same_lens/artifacts/manifest.json",
+      "sha256": "c9a541fc6f9da97fc317e903d8d8c4b92d77de99d9f76ea79136e0130fff3126"
+    },
+    "four_f_meshes": {
+      "path": "cad/designs/openhi_4f_gla11_025_050_same_lens/artifacts/assembly_components",
+      "kind": "directory"
+    },
+    "c12880_socket": {
+      "path": "cad/designs/c12880ma_cmount_spectrometer_module_holder/runs/run-5-restore-pcb-sink-rim-small-pin-correction-table-orientation-print-ready-20260718T110629Z/artifacts/c12880ma_cmount_holder_42x42_mating_orientation_run5_cmount_socket.step",
+      "sha256": "531a5cd430a11bafaa9bd25a6bc3d39e83f4cc2acc8d1642ca5fd780ddb30474"
+    },
+    "c12880_plate": {
+      "path": "cad/designs/c12880ma_cmount_spectrometer_module_holder/runs/run-5-restore-pcb-sink-rim-small-pin-correction-table-orientation-print-ready-20260718T110629Z/artifacts/c12880ma_cmount_holder_42x42_mating_orientation_run5_holder_plate.step",
+      "sha256": "1ac21e5fdc79b0fdfc6b86221190bef400ae6d7fa39ddec7157395e7b5274322"
+    },
+    "c12880_board": {
+      "path": "cad/designs/c12880ma_cmount_spectrometer_module_holder/runs/run-5-restore-pcb-sink-rim-small-pin-correction-table-orientation-print-ready-20260718T110629Z/artifacts/c12880ma_cmount_holder_42x42_mating_orientation_run5_board_proxy.step",
+      "sha256": "97381dd12a06ddff518f9c1244fac465fc9bbc5f7720e05657043c7f7b3cbd29"
+    },
+    "c12880_sensor": {
+      "path": "cad/designs/c12880ma_cmount_spectrometer_module_holder/runs/run-5-restore-pcb-sink-rim-small-pin-correction-table-orientation-print-ready-20260718T110629Z/artifacts/c12880ma_cmount_holder_42x42_mating_orientation_run5_sensor_package_proxy.step",
+      "sha256": "2ffca7752342b037ed50fedd0ec3582dd325cf3849603ff1f1f552619916c3c0"
+    },
+    "c12880_pins": {
+      "path": "cad/designs/c12880ma_cmount_spectrometer_module_holder/runs/run-5-restore-pcb-sink-rim-small-pin-correction-table-orientation-print-ready-20260718T110629Z/artifacts/c12880ma_cmount_holder_42x42_mating_orientation_run5_six_pin_tail_proxy.step",
+      "sha256": "f42a13de4d2a84141756190101747bb16115dfc1cd0d1635c9a99db6b8065df3"
+    }
+  },
+  "photographic_references": {
+    "actual_setup_01": {
+      "path": "cad/designs/openhi_vertical_multimodal_microscope_setup/reference_media/actual_setup_01.jpeg",
+      "sha256": "a2a490c13f47e02bc2f20cfe5ff71e6f4db9878767e24f10002d742899ce99dd",
+      "available": true,
+      "role": "layout and orientation evidence"
+    },
+    "actual_setup_02": {
+      "path": "cad/designs/openhi_vertical_multimodal_microscope_setup/reference_media/actual_setup_02.jpeg",
+      "sha256": "d9c68f61dd023f544128e688ed5be094c89361927708e9301a34fcee6883974f",
+      "available": true,
+      "role": "layout and orientation evidence"
+    },
+    "actual_setup_03": {
+      "path": "cad/designs/openhi_vertical_multimodal_microscope_setup/reference_media/actual_setup_03.jpeg",
+      "sha256": "06561cfe4bd105b1bf7a79849b03521beba3ac4bded37a1dece4d65083bc033f",
+      "available": true,
+      "role": "layout and orientation evidence"
+    }
+  },
+  "four_f_source_contract": {
+    "mechanics": "accepted OpenHI same-lens f=50 mm assembly",
+    "catalog_efl_mm": 50.0,
+    "nominal_a_to_b_2f_mm": 100.0,
+    "nominal_a_to_c_2f_mm": 100.0,
+    "end_to_end_4f_plus_seat_mm": 204.6,
+    "note": "The mechanical relay is the validated f=50 mm OpenHI implementation. The physical apparatus uses ST018-class f=50 mm optics; camera and sample proxies are not manufacturing drawings."
+  },
+  "variants": {
+    "single_4f": {
+      "components": [
+        {
+          "name": "dock",
+          "category": "polymer_mid",
+          "source": "cad/designs/cage_rod_dock_100mm_base_10mm_holes/runs/run-1-original-no-ears-20260710T130229Z/USE_THIS_cage_rod_dock_100mm_base_10mm_holes.step",
+          "exact_source_geometry": true,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/single_4f/dock.stl",
+          "bbox_mm": {
+            "min": [
+              -50.0,
+              -50.0,
+              -0.0
+            ],
+            "max": [
+              50.0,
+              50.0,
+              30.009221
+            ],
+            "size": [
+              100.0,
+              100.0,
+              30.009221
+            ]
+          }
+        },
+        {
+          "name": "cage_rod_1_lower",
+          "category": "metal",
+          "source": "nominal 6 mm cage rod proxy",
+          "exact_source_geometry": false,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/single_4f/cage_rod_1_lower.stl",
+          "bbox_mm": {
+            "min": [
+              -18.0,
+              -18.001007,
+              29.998657
+            ],
+            "max": [
+              -11.998657,
+              -11.998993,
+              81.001343
+            ],
+            "size": [
+              6.001343,
+              6.002014,
+              51.002686
+            ]
+          }
+        },
+        {
+          "name": "cage_rod_1_upper",
+          "category": "metal",
+          "source": "nominal 6 mm cage rod proxy",
+          "exact_source_geometry": false,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/single_4f/cage_rod_1_upper.stl",
+          "bbox_mm": {
+            "min": [
+              -18.0,
+              -18.001007,
+              102.998657
+            ],
+            "max": [
+              -11.998657,
+              -11.998993,
+              132.001343
+            ],
+            "size": [
+              6.001343,
+              6.002014,
+              29.002686
+            ]
+          }
+        },
+        {
+          "name": "cage_rod_2_lower",
+          "category": "metal",
+          "source": "nominal 6 mm cage rod proxy",
+          "exact_source_geometry": false,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/single_4f/cage_rod_2_lower.stl",
+          "bbox_mm": {
+            "min": [
+              -18.0,
+              11.998993,
+              29.998657
+            ],
+            "max": [
+              -11.998657,
+              18.001007,
+              81.001343
+            ],
+            "size": [
+              6.001343,
+              6.002014,
+              51.002686
+            ]
+          }
+        },
+        {
+          "name": "cage_rod_2_upper",
+          "category": "metal",
+          "source": "nominal 6 mm cage rod proxy",
+          "exact_source_geometry": false,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/single_4f/cage_rod_2_upper.stl",
+          "bbox_mm": {
+            "min": [
+              -18.0,
+              11.998993,
+              102.998657
+            ],
+            "max": [
+              -11.998657,
+              18.001007,
+              132.001343
+            ],
+            "size": [
+              6.001343,
+              6.002014,
+              29.002686
+            ]
+          }
+        },
+        {
+          "name": "cage_rod_3_lower",
+          "category": "metal",
+          "source": "nominal 6 mm cage rod proxy",
+          "exact_source_geometry": false,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/single_4f/cage_rod_3_lower.stl",
+          "bbox_mm": {
+            "min": [
+              12.0,
+              -18.001007,
+              29.998657
+            ],
+            "max": [
+              18.001343,
+              -11.998993,
+              81.001343
+            ],
+            "size": [
+              6.001343,
+              6.002014,
+              51.002686
+            ]
+          }
+        },
+        {
+          "name": "cage_rod_3_upper",
+          "category": "metal",
+          "source": "nominal 6 mm cage rod proxy",
+          "exact_source_geometry": false,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/single_4f/cage_rod_3_upper.stl",
+          "bbox_mm": {
+            "min": [
+              12.0,
+              -18.001007,
+              102.998657
+            ],
+            "max": [
+              18.001343,
+              -11.998993,
+              132.001343
+            ],
+            "size": [
+              6.001343,
+              6.002014,
+              29.002686
+            ]
+          }
+        },
+        {
+          "name": "cage_rod_4_lower",
+          "category": "metal",
+          "source": "nominal 6 mm cage rod proxy",
+          "exact_source_geometry": false,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/single_4f/cage_rod_4_lower.stl",
+          "bbox_mm": {
+            "min": [
+              12.0,
+              11.998993,
+              29.998657
+            ],
+            "max": [
+              18.001343,
+              18.001007,
+              81.001343
+            ],
+            "size": [
+              6.001343,
+              6.002014,
+              51.002686
+            ]
+          }
+        },
+        {
+          "name": "cage_rod_4_upper",
+          "category": "metal",
+          "source": "nominal 6 mm cage rod proxy",
+          "exact_source_geometry": false,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/single_4f/cage_rod_4_upper.stl",
+          "bbox_mm": {
+            "min": [
+              12.0,
+              11.998993,
+              102.998657
+            ],
+            "max": [
+              18.001343,
+              18.001007,
+              132.001343
+            ],
+            "size": [
+              6.001343,
+              6.002014,
+              29.002686
+            ]
+          }
+        },
+        {
+          "name": "spacer_L1_1",
+          "category": "metal",
+          "source": "cad/designs/cage_spacer_id6p5_od10p5/USE_THIS_cage_spacer_id6p5_od10p5_single_h5.step",
+          "exact_source_geometry": true,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/single_4f/spacer_L1_1.stl",
+          "bbox_mm": {
+            "min": [
+              -20.25,
+              -20.251762,
+              29.99765
+            ],
+            "max": [
+              -9.74765,
+              -9.748238,
+              35.00235
+            ],
+            "size": [
+              10.50235,
+              10.503525,
+              5.0047
+            ]
+          }
+        },
+        {
+          "name": "spacer_L1_2",
+          "category": "metal",
+          "source": "cad/designs/cage_spacer_id6p5_od10p5/USE_THIS_cage_spacer_id6p5_od10p5_single_h5.step",
+          "exact_source_geometry": true,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/single_4f/spacer_L1_2.stl",
+          "bbox_mm": {
+            "min": [
+              -20.25,
+              9.748238,
+              29.99765
+            ],
+            "max": [
+              -9.74765,
+              20.251762,
+              35.00235
+            ],
+            "size": [
+              10.50235,
+              10.503525,
+              5.0047
+            ]
+          }
+        },
+        {
+          "name": "spacer_L1_3",
+          "category": "metal",
+          "source": "cad/designs/cage_spacer_id6p5_od10p5/USE_THIS_cage_spacer_id6p5_od10p5_single_h5.step",
+          "exact_source_geometry": true,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/single_4f/spacer_L1_3.stl",
+          "bbox_mm": {
+            "min": [
+              9.75,
+              -20.251762,
+              29.99765
+            ],
+            "max": [
+              20.25235,
+              -9.748238,
+              35.00235
+            ],
+            "size": [
+              10.50235,
+              10.503525,
+              5.0047
+            ]
+          }
+        },
+        {
+          "name": "spacer_L1_4",
+          "category": "metal",
+          "source": "cad/designs/cage_spacer_id6p5_od10p5/USE_THIS_cage_spacer_id6p5_od10p5_single_h5.step",
+          "exact_source_geometry": true,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/single_4f/spacer_L1_4.stl",
+          "bbox_mm": {
+            "min": [
+              9.75,
+              9.748238,
+              29.99765
+            ],
+            "max": [
+              20.25235,
+              20.251762,
+              35.00235
+            ],
+            "size": [
+              10.50235,
+              10.503525,
+              5.0047
+            ]
+          }
+        },
+        {
+          "name": "spacer_L2_1",
+          "category": "metal",
+          "source": "cad/designs/cage_spacer_id6p5_od10p5/USE_THIS_cage_spacer_id6p5_od10p5_single_h5.step",
+          "exact_source_geometry": true,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/single_4f/spacer_L2_1.stl",
+          "bbox_mm": {
+            "min": [
+              -20.25,
+              -20.251762,
+              42.99765
+            ],
+            "max": [
+              -9.74765,
+              -9.748238,
+              48.00235
+            ],
+            "size": [
+              10.50235,
+              10.503525,
+              5.0047
+            ]
+          }
+        },
+        {
+          "name": "spacer_L2_2",
+          "category": "metal",
+          "source": "cad/designs/cage_spacer_id6p5_od10p5/USE_THIS_cage_spacer_id6p5_od10p5_single_h5.step",
+          "exact_source_geometry": true,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/single_4f/spacer_L2_2.stl",
+          "bbox_mm": {
+            "min": [
+              -20.25,
+              9.748238,
+              42.99765
+            ],
+            "max": [
+              -9.74765,
+              20.251762,
+              48.00235
+            ],
+            "size": [
+              10.50235,
+              10.503525,
+              5.0047
+            ]
+          }
+        },
+        {
+          "name": "spacer_L2_3",
+          "category": "metal",
+          "source": "cad/designs/cage_spacer_id6p5_od10p5/USE_THIS_cage_spacer_id6p5_od10p5_single_h5.step",
+          "exact_source_geometry": true,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/single_4f/spacer_L2_3.stl",
+          "bbox_mm": {
+            "min": [
+              9.75,
+              -20.251762,
+              42.99765
+            ],
+            "max": [
+              20.25235,
+              -9.748238,
+              48.00235
+            ],
+            "size": [
+              10.50235,
+              10.503525,
+              5.0047
+            ]
+          }
+        },
+        {
+          "name": "spacer_L2_4",
+          "category": "metal",
+          "source": "cad/designs/cage_spacer_id6p5_od10p5/USE_THIS_cage_spacer_id6p5_od10p5_single_h5.step",
+          "exact_source_geometry": true,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/single_4f/spacer_L2_4.stl",
+          "bbox_mm": {
+            "min": [
+              9.75,
+              9.748238,
+              42.99765
+            ],
+            "max": [
+              20.25235,
+              20.251762,
+              48.00235
+            ],
+            "size": [
+              10.50235,
+              10.503525,
+              5.0047
+            ]
+          }
+        },
+        {
+          "name": "spacer_L3_1",
+          "category": "metal",
+          "source": "cad/designs/cage_spacer_id6p5_od10p5/USE_THIS_cage_spacer_id6p5_od10p5_single_h5.step",
+          "exact_source_geometry": true,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/single_4f/spacer_L3_1.stl",
+          "bbox_mm": {
+            "min": [
+              -20.25,
+              -20.251762,
+              47.99765
+            ],
+            "max": [
+              -9.74765,
+              -9.748238,
+              53.00235
+            ],
+            "size": [
+              10.50235,
+              10.503525,
+              5.0047
+            ]
+          }
+        },
+        {
+          "name": "spacer_L3_2",
+          "category": "metal",
+          "source": "cad/designs/cage_spacer_id6p5_od10p5/USE_THIS_cage_spacer_id6p5_od10p5_single_h5.step",
+          "exact_source_geometry": true,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/single_4f/spacer_L3_2.stl",
+          "bbox_mm": {
+            "min": [
+              -20.25,
+              9.748238,
+              47.99765
+            ],
+            "max": [
+              -9.74765,
+              20.251762,
+              53.00235
+            ],
+            "size": [
+              10.50235,
+              10.503525,
+              5.0047
+            ]
+          }
+        },
+        {
+          "name": "spacer_L3_3",
+          "category": "metal",
+          "source": "cad/designs/cage_spacer_id6p5_od10p5/USE_THIS_cage_spacer_id6p5_od10p5_single_h5.step",
+          "exact_source_geometry": true,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/single_4f/spacer_L3_3.stl",
+          "bbox_mm": {
+            "min": [
+              9.75,
+              -20.251762,
+              47.99765
+            ],
+            "max": [
+              20.25235,
+              -9.748238,
+              53.00235
+            ],
+            "size": [
+              10.50235,
+              10.503525,
+              5.0047
+            ]
+          }
+        },
+        {
+          "name": "spacer_L3_4",
+          "category": "metal",
+          "source": "cad/designs/cage_spacer_id6p5_od10p5/USE_THIS_cage_spacer_id6p5_od10p5_single_h5.step",
+          "exact_source_geometry": true,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/single_4f/spacer_L3_4.stl",
+          "bbox_mm": {
+            "min": [
+              9.75,
+              9.748238,
+              47.99765
+            ],
+            "max": [
+              20.25235,
+              20.251762,
+              53.00235
+            ],
+            "size": [
+              10.50235,
+              10.503525,
+              5.0047
+            ]
+          }
+        },
+        {
+          "name": "lamp_holder",
+          "category": "polymer",
+          "source": "cad/designs/lumileds_pcb_aligned_sink_cage_holder/USE_THIS_lumileds_pcb_aligned_sink_cage_holder.step",
+          "exact_source_geometry": true,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/single_4f/lamp_holder.stl",
+          "bbox_mm": {
+            "min": [
+              -21.000339,
+              -21.000339,
+              34.99454
+            ],
+            "max": [
+              21.000339,
+              21.000339,
+              43.002238
+            ],
+            "size": [
+              42.000677,
+              42.000677,
+              8.007698
+            ]
+          }
+        },
+        {
+          "name": "lamp_pcb",
+          "category": "pcb",
+          "source": "cad/designs/lumileds_pcb_aligned_sink_cage_holder/artifacts/lumileds_pcb_aligned_sink_cage_holder_pcb_proxy.step",
+          "exact_source_geometry": true,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/single_4f/lamp_pcb.stl",
+          "bbox_mm": {
+            "min": [
+              -12.0,
+              -12.004028,
+              35.014629
+            ],
+            "max": [
+              12.005371,
+              12.004028,
+              36.625371
+            ],
+            "size": [
+              24.005371,
+              24.008056,
+              1.610742
+            ]
+          }
+        },
+        {
+          "name": "tungsten_bulb",
+          "category": "glass",
+          "source": "3 mm 5 V tungsten bulb visualization proxy",
+          "exact_source_geometry": false,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/single_4f/tungsten_bulb.stl",
+          "bbox_mm": {
+            "min": [
+              -1.501499,
+              -1.502003,
+              36.619329
+            ],
+            "max": [
+              1.50217,
+              1.502003,
+              43.32217
+            ],
+            "size": [
+              3.00367,
+              3.004005,
+              6.702842
+            ]
+          }
+        },
+        {
+          "name": "tungsten_bulb_leads",
+          "category": "metal",
+          "source": "tungsten bulb leads visualization proxy",
+          "exact_source_geometry": false,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/single_4f/tungsten_bulb_leads.stl",
+          "bbox_mm": {
+            "min": [
+              -0.625,
+              -0.125047,
+              34.419937
+            ],
+            "max": [
+              0.625063,
+              0.125047,
+              36.820063
+            ],
+            "size": [
+              1.250063,
+              0.250095,
+              2.400126
+            ]
+          }
+        },
+        {
+          "name": "lcd_holder",
+          "category": "polymer",
+          "source": "cad/designs/qyh1123_light_valve_centered_clearance_cage_holder/artifacts/qyh1123_light_valve_centered_clearance_cage_holder.step",
+          "exact_source_geometry": true,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/single_4f/lcd_holder.stl",
+          "bbox_mm": {
+            "min": [
+              -21.000339,
+              -21.000339,
+              52.998568
+            ],
+            "max": [
+              21.000339,
+              21.000339,
+              61.001432
+            ],
+            "size": [
+              42.000677,
+              42.000677,
+              8.002865
+            ]
+          }
+        },
+        {
+          "name": "qyh1123_lcd",
+          "category": "glass",
+          "source": "cad/designs/qyh1123_light_valve_centered_clearance_cage_holder/artifacts/qyh1123_light_valve_centered_clearance_cage_holder_valve_proxy.step",
+          "exact_source_geometry": true,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/single_4f/qyh1123_lcd.stl",
+          "bbox_mm": {
+            "min": [
+              -9.0,
+              -18.0,
+              58.98
+            ],
+            "max": [
+              9.0,
+              10.0,
+              61.17
+            ],
+            "size": [
+              18.0,
+              28.0,
+              2.19
+            ]
+          }
+        },
+        {
+          "name": "lcd_lower_polarizer",
+          "category": "polarizer",
+          "source": "thin film visualization proxy based on QYH1123 body outline",
+          "exact_source_geometry": false,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/single_4f/lcd_lower_polarizer.stl",
+          "bbox_mm": {
+            "min": [
+              -9.0,
+              -10.0,
+              58.7
+            ],
+            "max": [
+              9.0,
+              10.0,
+              58.95
+            ],
+            "size": [
+              18.0,
+              20.0,
+              0.25
+            ]
+          }
+        },
+        {
+          "name": "sample_holder_and_cap",
+          "category": "polymer_mid",
+          "source": "cad/designs/cage_sample_holder_two_piece_lock_slide_petri35/runs/run-2-correct-30mm-cage-rod-sockets-20260709T032257Z/artifacts/cage_sample_holder_two_piece_lock_slide_petri35_assembled.step",
+          "exact_source_geometry": true,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/single_4f/sample_holder_and_cap.stl",
+          "bbox_mm": {
+            "min": [
+              -55.000339,
+              -35.000339,
+              74.995972
+            ],
+            "max": [
+              55.000339,
+              35.000339,
+              109.004017
+            ],
+            "size": [
+              110.000677,
+              70.000677,
+              34.008045
+            ]
+          }
+        },
+        {
+          "name": "petri_dish",
+          "category": "glass",
+          "source": "33 mm sample-dish visualization proxy",
+          "exact_source_geometry": false,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/single_4f/petri_dish.stl",
+          "bbox_mm": {
+            "min": [
+              -17.5,
+              -17.505874,
+              90.992167
+            ],
+            "max": [
+              17.507833,
+              17.505874,
+              92.607833
+            ],
+            "size": [
+              35.007833,
+              35.011749,
+              1.615665
+            ]
+          }
+        },
+        {
+          "name": "sample_volume",
+          "category": "sample",
+          "source": "sample visualization proxy",
+          "exact_source_geometry": false,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/single_4f/sample_volume.stl",
+          "bbox_mm": {
+            "min": [
+              -15.75,
+              -15.755287,
+              91.542951
+            ],
+            "max": [
+              15.757049,
+              15.755287,
+              92.257049
+            ],
+            "size": [
+              31.507049,
+              31.510574,
+              0.714099
+            ]
+          }
+        },
+        {
+          "name": "gt090101_polarizer",
+          "category": "polymer",
+          "source": "cad/references/hengyang-gt090101/GT-090101.stp",
+          "exact_source_geometry": true,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/single_4f/gt090101_polarizer.stl",
+          "bbox_mm": {
+            "min": [
+              -20.001269,
+              -21.501269,
+              113.991031
+            ],
+            "max": [
+              20.001269,
+              20.001269,
+              132.016
+            ],
+            "size": [
+              40.002538,
+              41.502538,
+              18.024968
+            ]
+          }
+        },
+        {
+          "name": "openhi_microscope",
+          "category": "metal",
+          "source": "cad/extracted/OpenHI_STEP/Microscope yx umot large.step.step",
+          "exact_source_geometry": true,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/single_4f/openhi_microscope.stl",
+          "bbox_mm": {
+            "min": [
+              -25.525425,
+              -26.006177,
+              139.994441
+            ],
+            "max": [
+              24.49187,
+              24.011119,
+              442.005559
+            ],
+            "size": [
+              50.017295,
+              50.017295,
+              302.011119
+            ]
+          }
+        },
+        {
+          "name": "polarizer_to_microscope_adapter",
+          "category": "polymer",
+          "source": "visualization proxy",
+          "exact_source_geometry": false,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/single_4f/polarizer_to_microscope_adapter.stl",
+          "bbox_mm": {
+            "min": [
+              -15.0,
+              -15.005035,
+              131.993286
+            ],
+            "max": [
+              15.006714,
+              15.005035,
+              140.006714
+            ],
+            "size": [
+              30.006714,
+              30.01007,
+              8.013427
+            ]
+          }
+        },
+        {
+          "name": "primary_openhi_4f",
+          "category": "polymer",
+          "source": "cad/designs/openhi_4f_gla11_025_050_same_lens/USE_THIS_gla11_025_050_openhi_4f_assembly.step",
+          "exact_source_geometry": true,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/single_4f/primary_openhi_4f.stl",
+          "bbox_mm": {
+            "min": [
+              -20.734028,
+              -20.375065,
+              444.991049
+            ],
+            "max": [
+              104.40546,
+              20.375065,
+              649.60546
+            ],
+            "size": [
+              125.139489,
+              40.75013,
+              204.614412
+            ]
+          }
+        },
+        {
+          "name": "microscope_to_4f_adapter",
+          "category": "polymer",
+          "source": "visualization proxy",
+          "exact_source_geometry": false,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/single_4f/microscope_to_4f_adapter.stl",
+          "bbox_mm": {
+            "min": [
+              -20.0,
+              -20.006713,
+              441.991049
+            ],
+            "max": [
+              20.008951,
+              20.006713,
+              445.008951
+            ],
+            "size": [
+              40.008952,
+              40.013427,
+              3.017903
+            ]
+          }
+        },
+        {
+          "name": "frame_camera_cmount",
+          "category": "metal",
+          "source": "visualization proxy",
+          "exact_source_geometry": false,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/single_4f/frame_camera_cmount.stl",
+          "bbox_mm": {
+            "min": [
+              -14.5,
+              -14.504867,
+              649.59351
+            ],
+            "max": [
+              14.50649,
+              14.504867,
+              655.60649
+            ],
+            "size": [
+              29.00649,
+              29.009735,
+              6.01298
+            ]
+          }
+        },
+        {
+          "name": "frame_camera_body",
+          "category": "camera",
+          "source": "visualization proxy",
+          "exact_source_geometry": false,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/single_4f/frame_camera_body.stl",
+          "bbox_mm": {
+            "min": [
+              -17.0,
+              -17.0,
+              655.6
+            ],
+            "max": [
+              17.0,
+              17.0,
+              689.6
+            ],
+            "size": [
+              34.0,
+              34.0,
+              34.0
+            ]
+          }
+        },
+        {
+          "name": "c12880_socket",
+          "category": "polymer",
+          "source": "cad/designs/c12880ma_cmount_spectrometer_module_holder/runs/run-5-restore-pcb-sink-rim-small-pin-correction-table-orientation-print-ready-20260718T110629Z/artifacts/c12880ma_cmount_holder_42x42_mating_orientation_run5_cmount_socket.step",
+          "exact_source_geometry": true,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/single_4f/c12880_socket.stl",
+          "bbox_mm": {
+            "min": [
+              107.392391,
+              -20.6,
+              528.194294
+            ],
+            "max": [
+              123.407609,
+              13.407609,
+              562.205706
+            ],
+            "size": [
+              16.015218,
+              34.007609,
+              34.011413
+            ]
+          }
+        },
+        {
+          "name": "c12880_plate",
+          "category": "polymer_mid",
+          "source": "cad/designs/c12880ma_cmount_spectrometer_module_holder/runs/run-5-restore-pcb-sink-rim-small-pin-correction-table-orientation-print-ready-20260718T110629Z/artifacts/c12880ma_cmount_holder_42x42_mating_orientation_run5_holder_plate.step",
+          "exact_source_geometry": true,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/single_4f/c12880_plate.stl",
+          "bbox_mm": {
+            "min": [
+              123.399339,
+              -21.000635,
+              524.199365
+            ],
+            "max": [
+              130.400635,
+              21.000635,
+              566.200635
+            ],
+            "size": [
+              7.001296,
+              42.001269,
+              42.001269
+            ]
+          }
+        },
+        {
+          "name": "c12880_board",
+          "category": "pcb",
+          "source": "cad/designs/c12880ma_cmount_spectrometer_module_holder/runs/run-5-restore-pcb-sink-rim-small-pin-correction-table-orientation-print-ready-20260718T110629Z/artifacts/c12880ma_cmount_holder_42x42_mating_orientation_run5_board_proxy.step",
+          "exact_source_geometry": true,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/single_4f/c12880_board.stl",
+          "bbox_mm": {
+            "min": [
+              128.399463,
+              -19.15,
+              534.9
+            ],
+            "max": [
+              129.900537,
+              19.15,
+              557.7
+            ],
+            "size": [
+              1.501074,
+              38.3,
+              22.8
+            ]
+          }
+        },
+        {
+          "name": "c12880_sensor",
+          "category": "sensor",
+          "source": "cad/designs/c12880ma_cmount_spectrometer_module_holder/runs/run-5-restore-pcb-sink-rim-small-pin-correction-table-orientation-print-ready-20260718T110629Z/artifacts/c12880ma_cmount_holder_42x42_mating_orientation_run5_sensor_package_proxy.step",
+          "exact_source_geometry": true,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/single_4f/c12880_sensor.stl",
+          "bbox_mm": {
+            "min": [
+              112.899284,
+              -13.850592,
+              538.699408
+            ],
+            "max": [
+              128.400592,
+              6.650592,
+              551.700592
+            ],
+            "size": [
+              15.501309,
+              20.501185,
+              13.001185
+            ]
+          }
+        },
+        {
+          "name": "c12880_pins",
+          "category": "metal",
+          "source": "cad/designs/c12880ma_cmount_spectrometer_module_holder/runs/run-5-restore-pcb-sink-rim-small-pin-correction-table-orientation-print-ready-20260718T110629Z/artifacts/c12880ma_cmount_holder_42x42_mating_orientation_run5_six_pin_tail_proxy.step",
+          "exact_source_geometry": true,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/single_4f/c12880_pins.stl",
+          "bbox_mm": {
+            "min": [
+              126.899776,
+              -10.85,
+              553.999832
+            ],
+            "max": [
+              129.700224,
+              2.850224,
+              555.000168
+            ],
+            "size": [
+              2.800448,
+              13.700224,
+              1.000336
+            ]
+          }
+        }
+      ],
+      "validation": {
+        "step_round_trip_valid": true,
+        "solid_count": 64,
+        "bbox_mm": {
+          "min": [
+            -55.0,
+            -50.0,
+            0.0
+          ],
+          "max": [
+            130.4,
+            50.0,
+            689.6
+          ],
+          "size": [
+            185.4,
+            100.0,
+            689.6
+          ]
+        },
+        "volume_mm3": 781378.972474
+      },
+      "datums_mm": {
+        "primary_bs_z": 545.2,
+        "primary_a_input_z": 445.0,
+        "primary_b_output_z": 649.6,
+        "primary_c_output_x": 104.4,
+        "microscope_top_z": 442.0
+      },
+      "secondary_4f": null,
+      "detector_contract": {
+        "straight_port": "frame camera visualization proxy",
+        "split_port": "accepted C12880MA holder and module proxies",
+        "event_camera": "swappable alternative, not simultaneously mounted in this variant"
+      },
+      "optical_paths": [
+        {
+          "name": "illumination",
+          "points": [
+            [
+              0,
+              0,
+              36
+            ],
+            [
+              0,
+              0,
+              140
+            ]
+          ],
+          "color": "warm"
+        },
+        {
+          "name": "primary_input",
+          "points": [
+            [
+              0,
+              0,
+              140
+            ],
+            [
+              0,
+              0,
+              545.2
+            ]
+          ],
+          "color": "cyan"
+        },
+        {
+          "name": "primary_frame_output",
+          "points": [
+            [
+              -0.367,
+              0,
+              545.2
+            ],
+            [
+              -0.367,
+              0,
+              655.6
+            ]
+          ],
+          "color": "cyan"
+        },
+        {
+          "name": "primary_spectral_output",
+          "points": [
+            [
+              0,
+              0,
+              545.2
+            ],
+            [
+              110.39999999999998,
+              0,
+              545.2
+            ]
+          ],
+          "color": "green"
+        }
+      ],
+      "assembly_step": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/openhi_vertical_multimodal_microscope_setup_single_4f_assembly.step",
+      "use_this_step": "cad/designs/openhi_vertical_multimodal_microscope_setup/USE_THIS_openhi_vertical_multimodal_microscope_setup_single_4f.step",
+      "four_f_render_components": [
+        {
+          "source": "cad/designs/openhi_4f_gla11_025_050_same_lens/artifacts/assembly_components/A.stl",
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/single_4f/primary_4f_A.stl"
+        },
+        {
+          "source": "cad/designs/openhi_4f_gla11_025_050_same_lens/artifacts/assembly_components/A_C_BS.stl",
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/single_4f/primary_4f_A_C_BS.stl"
+        },
+        {
+          "source": "cad/designs/openhi_4f_gla11_025_050_same_lens/artifacts/assembly_components/B.stl",
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/single_4f/primary_4f_B.stl"
+        },
+        {
+          "source": "cad/designs/openhi_4f_gla11_025_050_same_lens/artifacts/assembly_components/C.stl",
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/single_4f/primary_4f_C.stl"
+        },
+        {
+          "source": "cad/designs/openhi_4f_gla11_025_050_same_lens/artifacts/assembly_components/Lens_B_holder.stl",
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/single_4f/primary_4f_Lens_B_holder.stl"
+        },
+        {
+          "source": "cad/designs/openhi_4f_gla11_025_050_same_lens/artifacts/assembly_components/Lens_C_holder.stl",
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/single_4f/primary_4f_Lens_C_holder.stl"
+        },
+        {
+          "source": "cad/designs/openhi_4f_gla11_025_050_same_lens/artifacts/assembly_components/beam_splitter_reference.stl",
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/single_4f/primary_4f_beam_splitter_reference.stl"
+        },
+        {
+          "source": "cad/designs/openhi_4f_gla11_025_050_same_lens/artifacts/assembly_components/lens_A.stl",
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/single_4f/primary_4f_lens_A.stl"
+        },
+        {
+          "source": "cad/designs/openhi_4f_gla11_025_050_same_lens/artifacts/assembly_components/lens_B.stl",
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/single_4f/primary_4f_lens_B.stl"
+        },
+        {
+          "source": "cad/designs/openhi_4f_gla11_025_050_same_lens/artifacts/assembly_components/lens_C.stl",
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/single_4f/primary_4f_lens_C.stl"
+        }
+      ]
+    },
+    "dual_4f": {
+      "components": [
+        {
+          "name": "dock",
+          "category": "polymer_mid",
+          "source": "cad/designs/cage_rod_dock_100mm_base_10mm_holes/runs/run-1-original-no-ears-20260710T130229Z/USE_THIS_cage_rod_dock_100mm_base_10mm_holes.step",
+          "exact_source_geometry": true,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/dual_4f/dock.stl",
+          "bbox_mm": {
+            "min": [
+              -50.0,
+              -50.0,
+              -0.0
+            ],
+            "max": [
+              50.0,
+              50.0,
+              30.009221
+            ],
+            "size": [
+              100.0,
+              100.0,
+              30.009221
+            ]
+          }
+        },
+        {
+          "name": "cage_rod_1_lower",
+          "category": "metal",
+          "source": "nominal 6 mm cage rod proxy",
+          "exact_source_geometry": false,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/dual_4f/cage_rod_1_lower.stl",
+          "bbox_mm": {
+            "min": [
+              -18.0,
+              -18.001007,
+              29.998657
+            ],
+            "max": [
+              -11.998657,
+              -11.998993,
+              81.001343
+            ],
+            "size": [
+              6.001343,
+              6.002014,
+              51.002686
+            ]
+          }
+        },
+        {
+          "name": "cage_rod_1_upper",
+          "category": "metal",
+          "source": "nominal 6 mm cage rod proxy",
+          "exact_source_geometry": false,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/dual_4f/cage_rod_1_upper.stl",
+          "bbox_mm": {
+            "min": [
+              -18.0,
+              -18.001007,
+              102.998657
+            ],
+            "max": [
+              -11.998657,
+              -11.998993,
+              132.001343
+            ],
+            "size": [
+              6.001343,
+              6.002014,
+              29.002686
+            ]
+          }
+        },
+        {
+          "name": "cage_rod_2_lower",
+          "category": "metal",
+          "source": "nominal 6 mm cage rod proxy",
+          "exact_source_geometry": false,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/dual_4f/cage_rod_2_lower.stl",
+          "bbox_mm": {
+            "min": [
+              -18.0,
+              11.998993,
+              29.998657
+            ],
+            "max": [
+              -11.998657,
+              18.001007,
+              81.001343
+            ],
+            "size": [
+              6.001343,
+              6.002014,
+              51.002686
+            ]
+          }
+        },
+        {
+          "name": "cage_rod_2_upper",
+          "category": "metal",
+          "source": "nominal 6 mm cage rod proxy",
+          "exact_source_geometry": false,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/dual_4f/cage_rod_2_upper.stl",
+          "bbox_mm": {
+            "min": [
+              -18.0,
+              11.998993,
+              102.998657
+            ],
+            "max": [
+              -11.998657,
+              18.001007,
+              132.001343
+            ],
+            "size": [
+              6.001343,
+              6.002014,
+              29.002686
+            ]
+          }
+        },
+        {
+          "name": "cage_rod_3_lower",
+          "category": "metal",
+          "source": "nominal 6 mm cage rod proxy",
+          "exact_source_geometry": false,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/dual_4f/cage_rod_3_lower.stl",
+          "bbox_mm": {
+            "min": [
+              12.0,
+              -18.001007,
+              29.998657
+            ],
+            "max": [
+              18.001343,
+              -11.998993,
+              81.001343
+            ],
+            "size": [
+              6.001343,
+              6.002014,
+              51.002686
+            ]
+          }
+        },
+        {
+          "name": "cage_rod_3_upper",
+          "category": "metal",
+          "source": "nominal 6 mm cage rod proxy",
+          "exact_source_geometry": false,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/dual_4f/cage_rod_3_upper.stl",
+          "bbox_mm": {
+            "min": [
+              12.0,
+              -18.001007,
+              102.998657
+            ],
+            "max": [
+              18.001343,
+              -11.998993,
+              132.001343
+            ],
+            "size": [
+              6.001343,
+              6.002014,
+              29.002686
+            ]
+          }
+        },
+        {
+          "name": "cage_rod_4_lower",
+          "category": "metal",
+          "source": "nominal 6 mm cage rod proxy",
+          "exact_source_geometry": false,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/dual_4f/cage_rod_4_lower.stl",
+          "bbox_mm": {
+            "min": [
+              12.0,
+              11.998993,
+              29.998657
+            ],
+            "max": [
+              18.001343,
+              18.001007,
+              81.001343
+            ],
+            "size": [
+              6.001343,
+              6.002014,
+              51.002686
+            ]
+          }
+        },
+        {
+          "name": "cage_rod_4_upper",
+          "category": "metal",
+          "source": "nominal 6 mm cage rod proxy",
+          "exact_source_geometry": false,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/dual_4f/cage_rod_4_upper.stl",
+          "bbox_mm": {
+            "min": [
+              12.0,
+              11.998993,
+              102.998657
+            ],
+            "max": [
+              18.001343,
+              18.001007,
+              132.001343
+            ],
+            "size": [
+              6.001343,
+              6.002014,
+              29.002686
+            ]
+          }
+        },
+        {
+          "name": "spacer_L1_1",
+          "category": "metal",
+          "source": "cad/designs/cage_spacer_id6p5_od10p5/USE_THIS_cage_spacer_id6p5_od10p5_single_h5.step",
+          "exact_source_geometry": true,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/dual_4f/spacer_L1_1.stl",
+          "bbox_mm": {
+            "min": [
+              -20.25,
+              -20.251762,
+              29.99765
+            ],
+            "max": [
+              -9.74765,
+              -9.748238,
+              35.00235
+            ],
+            "size": [
+              10.50235,
+              10.503525,
+              5.0047
+            ]
+          }
+        },
+        {
+          "name": "spacer_L1_2",
+          "category": "metal",
+          "source": "cad/designs/cage_spacer_id6p5_od10p5/USE_THIS_cage_spacer_id6p5_od10p5_single_h5.step",
+          "exact_source_geometry": true,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/dual_4f/spacer_L1_2.stl",
+          "bbox_mm": {
+            "min": [
+              -20.25,
+              9.748238,
+              29.99765
+            ],
+            "max": [
+              -9.74765,
+              20.251762,
+              35.00235
+            ],
+            "size": [
+              10.50235,
+              10.503525,
+              5.0047
+            ]
+          }
+        },
+        {
+          "name": "spacer_L1_3",
+          "category": "metal",
+          "source": "cad/designs/cage_spacer_id6p5_od10p5/USE_THIS_cage_spacer_id6p5_od10p5_single_h5.step",
+          "exact_source_geometry": true,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/dual_4f/spacer_L1_3.stl",
+          "bbox_mm": {
+            "min": [
+              9.75,
+              -20.251762,
+              29.99765
+            ],
+            "max": [
+              20.25235,
+              -9.748238,
+              35.00235
+            ],
+            "size": [
+              10.50235,
+              10.503525,
+              5.0047
+            ]
+          }
+        },
+        {
+          "name": "spacer_L1_4",
+          "category": "metal",
+          "source": "cad/designs/cage_spacer_id6p5_od10p5/USE_THIS_cage_spacer_id6p5_od10p5_single_h5.step",
+          "exact_source_geometry": true,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/dual_4f/spacer_L1_4.stl",
+          "bbox_mm": {
+            "min": [
+              9.75,
+              9.748238,
+              29.99765
+            ],
+            "max": [
+              20.25235,
+              20.251762,
+              35.00235
+            ],
+            "size": [
+              10.50235,
+              10.503525,
+              5.0047
+            ]
+          }
+        },
+        {
+          "name": "spacer_L2_1",
+          "category": "metal",
+          "source": "cad/designs/cage_spacer_id6p5_od10p5/USE_THIS_cage_spacer_id6p5_od10p5_single_h5.step",
+          "exact_source_geometry": true,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/dual_4f/spacer_L2_1.stl",
+          "bbox_mm": {
+            "min": [
+              -20.25,
+              -20.251762,
+              42.99765
+            ],
+            "max": [
+              -9.74765,
+              -9.748238,
+              48.00235
+            ],
+            "size": [
+              10.50235,
+              10.503525,
+              5.0047
+            ]
+          }
+        },
+        {
+          "name": "spacer_L2_2",
+          "category": "metal",
+          "source": "cad/designs/cage_spacer_id6p5_od10p5/USE_THIS_cage_spacer_id6p5_od10p5_single_h5.step",
+          "exact_source_geometry": true,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/dual_4f/spacer_L2_2.stl",
+          "bbox_mm": {
+            "min": [
+              -20.25,
+              9.748238,
+              42.99765
+            ],
+            "max": [
+              -9.74765,
+              20.251762,
+              48.00235
+            ],
+            "size": [
+              10.50235,
+              10.503525,
+              5.0047
+            ]
+          }
+        },
+        {
+          "name": "spacer_L2_3",
+          "category": "metal",
+          "source": "cad/designs/cage_spacer_id6p5_od10p5/USE_THIS_cage_spacer_id6p5_od10p5_single_h5.step",
+          "exact_source_geometry": true,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/dual_4f/spacer_L2_3.stl",
+          "bbox_mm": {
+            "min": [
+              9.75,
+              -20.251762,
+              42.99765
+            ],
+            "max": [
+              20.25235,
+              -9.748238,
+              48.00235
+            ],
+            "size": [
+              10.50235,
+              10.503525,
+              5.0047
+            ]
+          }
+        },
+        {
+          "name": "spacer_L2_4",
+          "category": "metal",
+          "source": "cad/designs/cage_spacer_id6p5_od10p5/USE_THIS_cage_spacer_id6p5_od10p5_single_h5.step",
+          "exact_source_geometry": true,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/dual_4f/spacer_L2_4.stl",
+          "bbox_mm": {
+            "min": [
+              9.75,
+              9.748238,
+              42.99765
+            ],
+            "max": [
+              20.25235,
+              20.251762,
+              48.00235
+            ],
+            "size": [
+              10.50235,
+              10.503525,
+              5.0047
+            ]
+          }
+        },
+        {
+          "name": "spacer_L3_1",
+          "category": "metal",
+          "source": "cad/designs/cage_spacer_id6p5_od10p5/USE_THIS_cage_spacer_id6p5_od10p5_single_h5.step",
+          "exact_source_geometry": true,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/dual_4f/spacer_L3_1.stl",
+          "bbox_mm": {
+            "min": [
+              -20.25,
+              -20.251762,
+              47.99765
+            ],
+            "max": [
+              -9.74765,
+              -9.748238,
+              53.00235
+            ],
+            "size": [
+              10.50235,
+              10.503525,
+              5.0047
+            ]
+          }
+        },
+        {
+          "name": "spacer_L3_2",
+          "category": "metal",
+          "source": "cad/designs/cage_spacer_id6p5_od10p5/USE_THIS_cage_spacer_id6p5_od10p5_single_h5.step",
+          "exact_source_geometry": true,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/dual_4f/spacer_L3_2.stl",
+          "bbox_mm": {
+            "min": [
+              -20.25,
+              9.748238,
+              47.99765
+            ],
+            "max": [
+              -9.74765,
+              20.251762,
+              53.00235
+            ],
+            "size": [
+              10.50235,
+              10.503525,
+              5.0047
+            ]
+          }
+        },
+        {
+          "name": "spacer_L3_3",
+          "category": "metal",
+          "source": "cad/designs/cage_spacer_id6p5_od10p5/USE_THIS_cage_spacer_id6p5_od10p5_single_h5.step",
+          "exact_source_geometry": true,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/dual_4f/spacer_L3_3.stl",
+          "bbox_mm": {
+            "min": [
+              9.75,
+              -20.251762,
+              47.99765
+            ],
+            "max": [
+              20.25235,
+              -9.748238,
+              53.00235
+            ],
+            "size": [
+              10.50235,
+              10.503525,
+              5.0047
+            ]
+          }
+        },
+        {
+          "name": "spacer_L3_4",
+          "category": "metal",
+          "source": "cad/designs/cage_spacer_id6p5_od10p5/USE_THIS_cage_spacer_id6p5_od10p5_single_h5.step",
+          "exact_source_geometry": true,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/dual_4f/spacer_L3_4.stl",
+          "bbox_mm": {
+            "min": [
+              9.75,
+              9.748238,
+              47.99765
+            ],
+            "max": [
+              20.25235,
+              20.251762,
+              53.00235
+            ],
+            "size": [
+              10.50235,
+              10.503525,
+              5.0047
+            ]
+          }
+        },
+        {
+          "name": "lamp_holder",
+          "category": "polymer",
+          "source": "cad/designs/lumileds_pcb_aligned_sink_cage_holder/USE_THIS_lumileds_pcb_aligned_sink_cage_holder.step",
+          "exact_source_geometry": true,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/dual_4f/lamp_holder.stl",
+          "bbox_mm": {
+            "min": [
+              -21.000339,
+              -21.000339,
+              34.99454
+            ],
+            "max": [
+              21.000339,
+              21.000339,
+              43.002238
+            ],
+            "size": [
+              42.000677,
+              42.000677,
+              8.007698
+            ]
+          }
+        },
+        {
+          "name": "lamp_pcb",
+          "category": "pcb",
+          "source": "cad/designs/lumileds_pcb_aligned_sink_cage_holder/artifacts/lumileds_pcb_aligned_sink_cage_holder_pcb_proxy.step",
+          "exact_source_geometry": true,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/dual_4f/lamp_pcb.stl",
+          "bbox_mm": {
+            "min": [
+              -12.0,
+              -12.004028,
+              35.014629
+            ],
+            "max": [
+              12.005371,
+              12.004028,
+              36.625371
+            ],
+            "size": [
+              24.005371,
+              24.008056,
+              1.610742
+            ]
+          }
+        },
+        {
+          "name": "tungsten_bulb",
+          "category": "glass",
+          "source": "3 mm 5 V tungsten bulb visualization proxy",
+          "exact_source_geometry": false,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/dual_4f/tungsten_bulb.stl",
+          "bbox_mm": {
+            "min": [
+              -1.501499,
+              -1.502003,
+              36.619329
+            ],
+            "max": [
+              1.50217,
+              1.502003,
+              43.32217
+            ],
+            "size": [
+              3.00367,
+              3.004005,
+              6.702842
+            ]
+          }
+        },
+        {
+          "name": "tungsten_bulb_leads",
+          "category": "metal",
+          "source": "tungsten bulb leads visualization proxy",
+          "exact_source_geometry": false,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/dual_4f/tungsten_bulb_leads.stl",
+          "bbox_mm": {
+            "min": [
+              -0.625,
+              -0.125047,
+              34.419937
+            ],
+            "max": [
+              0.625063,
+              0.125047,
+              36.820063
+            ],
+            "size": [
+              1.250063,
+              0.250095,
+              2.400126
+            ]
+          }
+        },
+        {
+          "name": "lcd_holder",
+          "category": "polymer",
+          "source": "cad/designs/qyh1123_light_valve_centered_clearance_cage_holder/artifacts/qyh1123_light_valve_centered_clearance_cage_holder.step",
+          "exact_source_geometry": true,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/dual_4f/lcd_holder.stl",
+          "bbox_mm": {
+            "min": [
+              -21.000339,
+              -21.000339,
+              52.998568
+            ],
+            "max": [
+              21.000339,
+              21.000339,
+              61.001432
+            ],
+            "size": [
+              42.000677,
+              42.000677,
+              8.002865
+            ]
+          }
+        },
+        {
+          "name": "qyh1123_lcd",
+          "category": "glass",
+          "source": "cad/designs/qyh1123_light_valve_centered_clearance_cage_holder/artifacts/qyh1123_light_valve_centered_clearance_cage_holder_valve_proxy.step",
+          "exact_source_geometry": true,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/dual_4f/qyh1123_lcd.stl",
+          "bbox_mm": {
+            "min": [
+              -9.0,
+              -18.0,
+              58.98
+            ],
+            "max": [
+              9.0,
+              10.0,
+              61.17
+            ],
+            "size": [
+              18.0,
+              28.0,
+              2.19
+            ]
+          }
+        },
+        {
+          "name": "lcd_lower_polarizer",
+          "category": "polarizer",
+          "source": "thin film visualization proxy based on QYH1123 body outline",
+          "exact_source_geometry": false,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/dual_4f/lcd_lower_polarizer.stl",
+          "bbox_mm": {
+            "min": [
+              -9.0,
+              -10.0,
+              58.7
+            ],
+            "max": [
+              9.0,
+              10.0,
+              58.95
+            ],
+            "size": [
+              18.0,
+              20.0,
+              0.25
+            ]
+          }
+        },
+        {
+          "name": "sample_holder_and_cap",
+          "category": "polymer_mid",
+          "source": "cad/designs/cage_sample_holder_two_piece_lock_slide_petri35/runs/run-2-correct-30mm-cage-rod-sockets-20260709T032257Z/artifacts/cage_sample_holder_two_piece_lock_slide_petri35_assembled.step",
+          "exact_source_geometry": true,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/dual_4f/sample_holder_and_cap.stl",
+          "bbox_mm": {
+            "min": [
+              -55.000339,
+              -35.000339,
+              74.995972
+            ],
+            "max": [
+              55.000339,
+              35.000339,
+              109.004017
+            ],
+            "size": [
+              110.000677,
+              70.000677,
+              34.008045
+            ]
+          }
+        },
+        {
+          "name": "petri_dish",
+          "category": "glass",
+          "source": "33 mm sample-dish visualization proxy",
+          "exact_source_geometry": false,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/dual_4f/petri_dish.stl",
+          "bbox_mm": {
+            "min": [
+              -17.5,
+              -17.505874,
+              90.992167
+            ],
+            "max": [
+              17.507833,
+              17.505874,
+              92.607833
+            ],
+            "size": [
+              35.007833,
+              35.011749,
+              1.615665
+            ]
+          }
+        },
+        {
+          "name": "sample_volume",
+          "category": "sample",
+          "source": "sample visualization proxy",
+          "exact_source_geometry": false,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/dual_4f/sample_volume.stl",
+          "bbox_mm": {
+            "min": [
+              -15.75,
+              -15.755287,
+              91.542951
+            ],
+            "max": [
+              15.757049,
+              15.755287,
+              92.257049
+            ],
+            "size": [
+              31.507049,
+              31.510574,
+              0.714099
+            ]
+          }
+        },
+        {
+          "name": "gt090101_polarizer",
+          "category": "polymer",
+          "source": "cad/references/hengyang-gt090101/GT-090101.stp",
+          "exact_source_geometry": true,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/dual_4f/gt090101_polarizer.stl",
+          "bbox_mm": {
+            "min": [
+              -20.001269,
+              -21.501269,
+              113.991031
+            ],
+            "max": [
+              20.001269,
+              20.001269,
+              132.016
+            ],
+            "size": [
+              40.002538,
+              41.502538,
+              18.024968
+            ]
+          }
+        },
+        {
+          "name": "openhi_microscope",
+          "category": "metal",
+          "source": "cad/extracted/OpenHI_STEP/Microscope yx umot large.step.step",
+          "exact_source_geometry": true,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/dual_4f/openhi_microscope.stl",
+          "bbox_mm": {
+            "min": [
+              -25.525425,
+              -26.006177,
+              139.994441
+            ],
+            "max": [
+              24.49187,
+              24.011119,
+              442.005559
+            ],
+            "size": [
+              50.017295,
+              50.017295,
+              302.011119
+            ]
+          }
+        },
+        {
+          "name": "polarizer_to_microscope_adapter",
+          "category": "polymer",
+          "source": "visualization proxy",
+          "exact_source_geometry": false,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/dual_4f/polarizer_to_microscope_adapter.stl",
+          "bbox_mm": {
+            "min": [
+              -15.0,
+              -15.005035,
+              131.993286
+            ],
+            "max": [
+              15.006714,
+              15.005035,
+              140.006714
+            ],
+            "size": [
+              30.006714,
+              30.01007,
+              8.013427
+            ]
+          }
+        },
+        {
+          "name": "primary_openhi_4f",
+          "category": "polymer",
+          "source": "cad/designs/openhi_4f_gla11_025_050_same_lens/USE_THIS_gla11_025_050_openhi_4f_assembly.step",
+          "exact_source_geometry": true,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/dual_4f/primary_openhi_4f.stl",
+          "bbox_mm": {
+            "min": [
+              -20.734028,
+              -20.375065,
+              444.991049
+            ],
+            "max": [
+              104.40546,
+              20.375065,
+              649.60546
+            ],
+            "size": [
+              125.139489,
+              40.75013,
+              204.614412
+            ]
+          }
+        },
+        {
+          "name": "microscope_to_4f_adapter",
+          "category": "polymer",
+          "source": "visualization proxy",
+          "exact_source_geometry": false,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/dual_4f/microscope_to_4f_adapter.stl",
+          "bbox_mm": {
+            "min": [
+              -20.0,
+              -20.006713,
+              441.991049
+            ],
+            "max": [
+              20.008951,
+              20.006713,
+              445.008951
+            ],
+            "size": [
+              40.008952,
+              40.013427,
+              3.017903
+            ]
+          }
+        },
+        {
+          "name": "frame_camera_cmount",
+          "category": "metal",
+          "source": "visualization proxy",
+          "exact_source_geometry": false,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/dual_4f/frame_camera_cmount.stl",
+          "bbox_mm": {
+            "min": [
+              -14.5,
+              -14.504867,
+              649.59351
+            ],
+            "max": [
+              14.50649,
+              14.504867,
+              655.60649
+            ],
+            "size": [
+              29.00649,
+              29.009735,
+              6.01298
+            ]
+          }
+        },
+        {
+          "name": "frame_camera_body",
+          "category": "camera",
+          "source": "visualization proxy",
+          "exact_source_geometry": false,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/dual_4f/frame_camera_body.stl",
+          "bbox_mm": {
+            "min": [
+              -17.0,
+              -17.0,
+              655.6
+            ],
+            "max": [
+              17.0,
+              17.0,
+              689.6
+            ],
+            "size": [
+              34.0,
+              34.0,
+              34.0
+            ]
+          }
+        },
+        {
+          "name": "secondary_openhi_4f",
+          "category": "polymer",
+          "source": "cad/designs/openhi_4f_gla11_025_050_same_lens/USE_THIS_gla11_025_050_openhi_4f_assembly.step",
+          "exact_source_geometry": true,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/dual_4f/secondary_openhi_4f.stl",
+          "bbox_mm": {
+            "min": [
+              107.391049,
+              -20.375065,
+              440.79454
+            ],
+            "max": [
+              312.00546,
+              20.375065,
+              565.934028
+            ],
+            "size": [
+              204.614412,
+              40.75013,
+              125.139489
+            ]
+          }
+        },
+        {
+          "name": "c12880_socket",
+          "category": "polymer",
+          "source": "cad/designs/c12880ma_cmount_spectrometer_module_holder/runs/run-5-restore-pcb-sink-rim-small-pin-correction-table-orientation-print-ready-20260718T110629Z/artifacts/c12880ma_cmount_holder_42x42_mating_orientation_run5_cmount_socket.step",
+          "exact_source_geometry": true,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/dual_4f/c12880_socket.stl",
+          "bbox_mm": {
+            "min": [
+              314.992391,
+              -20.6,
+              528.194294
+            ],
+            "max": [
+              331.007609,
+              13.407609,
+              562.205706
+            ],
+            "size": [
+              16.015218,
+              34.007609,
+              34.011413
+            ]
+          }
+        },
+        {
+          "name": "c12880_plate",
+          "category": "polymer_mid",
+          "source": "cad/designs/c12880ma_cmount_spectrometer_module_holder/runs/run-5-restore-pcb-sink-rim-small-pin-correction-table-orientation-print-ready-20260718T110629Z/artifacts/c12880ma_cmount_holder_42x42_mating_orientation_run5_holder_plate.step",
+          "exact_source_geometry": true,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/dual_4f/c12880_plate.stl",
+          "bbox_mm": {
+            "min": [
+              330.999339,
+              -21.000635,
+              524.199365
+            ],
+            "max": [
+              338.000635,
+              21.000635,
+              566.200635
+            ],
+            "size": [
+              7.001296,
+              42.001269,
+              42.001269
+            ]
+          }
+        },
+        {
+          "name": "c12880_board",
+          "category": "pcb",
+          "source": "cad/designs/c12880ma_cmount_spectrometer_module_holder/runs/run-5-restore-pcb-sink-rim-small-pin-correction-table-orientation-print-ready-20260718T110629Z/artifacts/c12880ma_cmount_holder_42x42_mating_orientation_run5_board_proxy.step",
+          "exact_source_geometry": true,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/dual_4f/c12880_board.stl",
+          "bbox_mm": {
+            "min": [
+              335.999463,
+              -19.15,
+              534.9
+            ],
+            "max": [
+              337.500537,
+              19.15,
+              557.7
+            ],
+            "size": [
+              1.501074,
+              38.3,
+              22.8
+            ]
+          }
+        },
+        {
+          "name": "c12880_sensor",
+          "category": "sensor",
+          "source": "cad/designs/c12880ma_cmount_spectrometer_module_holder/runs/run-5-restore-pcb-sink-rim-small-pin-correction-table-orientation-print-ready-20260718T110629Z/artifacts/c12880ma_cmount_holder_42x42_mating_orientation_run5_sensor_package_proxy.step",
+          "exact_source_geometry": true,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/dual_4f/c12880_sensor.stl",
+          "bbox_mm": {
+            "min": [
+              320.499284,
+              -13.850592,
+              538.699408
+            ],
+            "max": [
+              336.000592,
+              6.650592,
+              551.700592
+            ],
+            "size": [
+              15.501309,
+              20.501185,
+              13.001185
+            ]
+          }
+        },
+        {
+          "name": "c12880_pins",
+          "category": "metal",
+          "source": "cad/designs/c12880ma_cmount_spectrometer_module_holder/runs/run-5-restore-pcb-sink-rim-small-pin-correction-table-orientation-print-ready-20260718T110629Z/artifacts/c12880ma_cmount_holder_42x42_mating_orientation_run5_six_pin_tail_proxy.step",
+          "exact_source_geometry": true,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/dual_4f/c12880_pins.stl",
+          "bbox_mm": {
+            "min": [
+              334.499776,
+              -10.85,
+              553.999832
+            ],
+            "max": [
+              337.300224,
+              2.850224,
+              555.000168
+            ],
+            "size": [
+              2.800448,
+              13.700224,
+              1.000336
+            ]
+          }
+        },
+        {
+          "name": "event_camera_cmount",
+          "category": "metal",
+          "source": "visualization proxy",
+          "exact_source_geometry": false,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/dual_4f/event_camera_cmount.stl",
+          "bbox_mm": {
+            "min": [
+              193.1,
+              -14.504867,
+              434.79351
+            ],
+            "max": [
+              222.10649,
+              14.504867,
+              440.80649
+            ],
+            "size": [
+              29.00649,
+              29.009735,
+              6.01298
+            ]
+          }
+        },
+        {
+          "name": "event_camera_body",
+          "category": "event_camera",
+          "source": "visualization proxy",
+          "exact_source_geometry": false,
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/dual_4f/event_camera_body.stl",
+          "bbox_mm": {
+            "min": [
+              187.6,
+              -20.0,
+              396.8
+            ],
+            "max": [
+              227.6,
+              20.0,
+              434.8
+            ],
+            "size": [
+              40.0,
+              40.0,
+              38.0
+            ]
+          }
+        }
+      ],
+      "validation": {
+        "step_round_trip_valid": true,
+        "solid_count": 76,
+        "bbox_mm": {
+          "min": [
+            -55.0,
+            -50.0,
+            0.0
+          ],
+          "max": [
+            338.0,
+            50.0,
+            689.6
+          ],
+          "size": [
+            393.0,
+            100.0,
+            689.6
+          ]
+        },
+        "volume_mm3": 1082896.875989
+      },
+      "datums_mm": {
+        "primary_bs_z": 545.2,
+        "primary_a_input_z": 445.0,
+        "primary_b_output_z": 649.6,
+        "primary_c_output_x": 104.4,
+        "microscope_top_z": 442.0
+      },
+      "secondary_4f": {
+        "beam_splitter_center_mm": [
+          207.6,
+          0.0,
+          545.2
+        ],
+        "rotation_y_deg": 90.0,
+        "a_input_x_mm": 107.4,
+        "b_output_x_mm": 312.0,
+        "c_output_z_mm": 440.8
+      },
+      "detector_contract": {
+        "first_straight_port": "frame camera visualization proxy",
+        "first_split_port": "second accepted 4f assembly input",
+        "second_straight_port": "accepted C12880MA holder and module proxies",
+        "second_split_port": "event camera visualization proxy"
+      },
+      "optical_paths": [
+        {
+          "name": "illumination",
+          "points": [
+            [
+              0,
+              0,
+              36
+            ],
+            [
+              0,
+              0,
+              140
+            ]
+          ],
+          "color": "warm"
+        },
+        {
+          "name": "primary_input",
+          "points": [
+            [
+              0,
+              0,
+              140
+            ],
+            [
+              0,
+              0,
+              545.2
+            ]
+          ],
+          "color": "cyan"
+        },
+        {
+          "name": "primary_frame_output",
+          "points": [
+            [
+              -0.367,
+              0,
+              545.2
+            ],
+            [
+              -0.367,
+              0,
+              655.6
+            ]
+          ],
+          "color": "cyan"
+        },
+        {
+          "name": "cascade_link",
+          "points": [
+            [
+              0,
+              0,
+              545.2
+            ],
+            [
+              207.59999999999997,
+              0,
+              545.2
+            ]
+          ],
+          "color": "green"
+        },
+        {
+          "name": "secondary_spectral_output",
+          "points": [
+            [
+              207.59999999999997,
+              0,
+              545.2
+            ],
+            [
+              317.99999999999994,
+              0,
+              545.2
+            ]
+          ],
+          "color": "green"
+        },
+        {
+          "name": "secondary_event_output",
+          "points": [
+            [
+              207.59999999999997,
+              0,
+              545.2
+            ],
+            [
+              207.59999999999997,
+              0,
+              434.80000000000007
+            ]
+          ],
+          "color": "orange"
+        }
+      ],
+      "assembly_step": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/openhi_vertical_multimodal_microscope_setup_dual_4f_assembly.step",
+      "use_this_step": "cad/designs/openhi_vertical_multimodal_microscope_setup/USE_THIS_openhi_vertical_multimodal_microscope_setup_dual_4f.step",
+      "four_f_render_components": [
+        {
+          "source": "cad/designs/openhi_4f_gla11_025_050_same_lens/artifacts/assembly_components/A.stl",
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/dual_4f/primary_4f_A.stl"
+        },
+        {
+          "source": "cad/designs/openhi_4f_gla11_025_050_same_lens/artifacts/assembly_components/A_C_BS.stl",
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/dual_4f/primary_4f_A_C_BS.stl"
+        },
+        {
+          "source": "cad/designs/openhi_4f_gla11_025_050_same_lens/artifacts/assembly_components/B.stl",
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/dual_4f/primary_4f_B.stl"
+        },
+        {
+          "source": "cad/designs/openhi_4f_gla11_025_050_same_lens/artifacts/assembly_components/C.stl",
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/dual_4f/primary_4f_C.stl"
+        },
+        {
+          "source": "cad/designs/openhi_4f_gla11_025_050_same_lens/artifacts/assembly_components/Lens_B_holder.stl",
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/dual_4f/primary_4f_Lens_B_holder.stl"
+        },
+        {
+          "source": "cad/designs/openhi_4f_gla11_025_050_same_lens/artifacts/assembly_components/Lens_C_holder.stl",
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/dual_4f/primary_4f_Lens_C_holder.stl"
+        },
+        {
+          "source": "cad/designs/openhi_4f_gla11_025_050_same_lens/artifacts/assembly_components/beam_splitter_reference.stl",
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/dual_4f/primary_4f_beam_splitter_reference.stl"
+        },
+        {
+          "source": "cad/designs/openhi_4f_gla11_025_050_same_lens/artifacts/assembly_components/lens_A.stl",
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/dual_4f/primary_4f_lens_A.stl"
+        },
+        {
+          "source": "cad/designs/openhi_4f_gla11_025_050_same_lens/artifacts/assembly_components/lens_B.stl",
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/dual_4f/primary_4f_lens_B.stl"
+        },
+        {
+          "source": "cad/designs/openhi_4f_gla11_025_050_same_lens/artifacts/assembly_components/lens_C.stl",
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/dual_4f/primary_4f_lens_C.stl"
+        },
+        {
+          "source": "cad/designs/openhi_4f_gla11_025_050_same_lens/artifacts/assembly_components/A.stl",
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/dual_4f/secondary_4f_A.stl"
+        },
+        {
+          "source": "cad/designs/openhi_4f_gla11_025_050_same_lens/artifacts/assembly_components/A_C_BS.stl",
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/dual_4f/secondary_4f_A_C_BS.stl"
+        },
+        {
+          "source": "cad/designs/openhi_4f_gla11_025_050_same_lens/artifacts/assembly_components/B.stl",
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/dual_4f/secondary_4f_B.stl"
+        },
+        {
+          "source": "cad/designs/openhi_4f_gla11_025_050_same_lens/artifacts/assembly_components/C.stl",
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/dual_4f/secondary_4f_C.stl"
+        },
+        {
+          "source": "cad/designs/openhi_4f_gla11_025_050_same_lens/artifacts/assembly_components/Lens_B_holder.stl",
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/dual_4f/secondary_4f_Lens_B_holder.stl"
+        },
+        {
+          "source": "cad/designs/openhi_4f_gla11_025_050_same_lens/artifacts/assembly_components/Lens_C_holder.stl",
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/dual_4f/secondary_4f_Lens_C_holder.stl"
+        },
+        {
+          "source": "cad/designs/openhi_4f_gla11_025_050_same_lens/artifacts/assembly_components/beam_splitter_reference.stl",
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/dual_4f/secondary_4f_beam_splitter_reference.stl"
+        },
+        {
+          "source": "cad/designs/openhi_4f_gla11_025_050_same_lens/artifacts/assembly_components/lens_A.stl",
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/dual_4f/secondary_4f_lens_A.stl"
+        },
+        {
+          "source": "cad/designs/openhi_4f_gla11_025_050_same_lens/artifacts/assembly_components/lens_B.stl",
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/dual_4f/secondary_4f_lens_B.stl"
+        },
+        {
+          "source": "cad/designs/openhi_4f_gla11_025_050_same_lens/artifacts/assembly_components/lens_C.stl",
+          "mesh": "cad/designs/openhi_vertical_multimodal_microscope_setup/artifacts/render_meshes/dual_4f/secondary_4f_lens_C.stl"
+        }
+      ]
+    }
+  },
+  "checks": {
+    "all_cage_centers_share_xy_origin": true,
+    "cage_rods_are_on_30mm_square": true,
+    "lamp_lcd_sample_polarizer_microscope_are_coaxial": true,
+    "primary_openhi_input_is_coaxial_with_microscope": true,
+    "cascade_gap_matches_contract": true,
+    "single_has_one_4f_and_two_detector_ports": true,
+    "dual_has_two_4f_relays_and_three_detector_ports": true,
+    "all_step_round_trips_valid": true
+  },
+  "proxy_policy": {
+    "exact_parts": "dock, spacers, lamp holder/PCB, LCD holder/LCD, sample holder/cap, GT090101, microscope, OpenHI relay, and C12880 holder/module proxies imported from accepted CAD",
+    "visualization_only": "tungsten bulb body/leads, thin LCD polarizer film, petri sample volume, short adapters, frame-camera housing, and event-camera housing",
+    "manufacturing_warning": "Do not manufacture camera proxies or inter-module adapter proxies from this assembly without a separate measured design review."
+  }
+}
