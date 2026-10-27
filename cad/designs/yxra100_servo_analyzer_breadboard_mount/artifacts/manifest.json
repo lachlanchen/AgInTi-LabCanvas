@@ -1,7 +1,7 @@
 {
   "design": "yxra100_servo_analyzer_breadboard_mount",
-  "run_name": "run-2-square-y-motor-yoke-m3-bridge-20261027T145017Z",
-  "status": "measured mechanical integration prototype; optical working distance and load test still required",
+  "run_name": "run-3-horizontal-dual-4f-rotary-analyzer-20261027T163343Z",
+  "status": "CAD and publication-view update; not an acquisition or optical-performance validation",
   "selected_motor": "40 mm / 100 W servo",
   "analyzer": "complete GT090101 mount",
   "parameters_mm": {
@@ -515,444 +515,1615 @@
   "render_components": [
     {
       "name": "breadboard_foot",
-      "mesh": "scene_breadboard_foot.stl",
+      "mesh": "render_meshes/breadboard_foot.stl",
       "color": [
         0.16,
         0.34,
         0.42
-      ]
+      ],
+      "origin": "rotary_run_2",
+      "source_translation_mm": [
+        0,
+        0,
+        0
+      ],
+      "geometry": {
+        "solids": 1,
+        "shells": 1,
+        "faces": 36,
+        "valid": true,
+        "closed_solids_valid": true,
+        "volume_mm3": 85935.33472011305,
+        "bounds_mm": [
+          68.0,
+          -80.0,
+          0.0,
+          138.0,
+          80.0,
+          8.0
+        ]
+      }
     },
     {
       "name": "gusseted_L_support",
-      "mesh": "scene_gusseted_L_support.stl",
+      "mesh": "render_meshes/gusseted_L_support.stl",
       "color": [
         0.2,
         0.43,
         0.51
-      ]
+      ],
+      "origin": "rotary_run_2",
+      "source_translation_mm": [
+        0,
+        0,
+        0
+      ],
+      "geometry": {
+        "solids": 1,
+        "shells": 1,
+        "faces": 57,
+        "valid": true,
+        "closed_solids_valid": true,
+        "volume_mm3": 448365.97291854094,
+        "bounds_mm": [
+          -62.0,
+          -67.0,
+          8.0,
+          84.0,
+          67.0,
+          122.0
+        ]
+      }
     },
     {
       "name": "YXRA100_servo_vendor",
-      "mesh": "scene_YXRA100_servo_vendor.stl",
+      "mesh": "render_meshes/YXRA100_servo_vendor.stl",
       "color": [
         0.1,
         0.11,
         0.13
-      ]
+      ],
+      "origin": "rotary_run_2",
+      "source_translation_mm": [
+        0,
+        0,
+        0
+      ],
+      "geometry": {
+        "solids": 5,
+        "shells": 50,
+        "faces": 2557,
+        "valid": true,
+        "closed_solids_valid": true,
+        "volume_mm3": 361400.0573461229,
+        "bounds_mm": [
+          -49.99999999997502,
+          -50.00000000000001,
+          122.0,
+          163.4156543886663,
+          70.0000001,
+          167.00000010000005
+        ]
+      }
     },
     {
       "name": "rotating_analyzer_adapter",
-      "mesh": "scene_rotating_analyzer_adapter.stl",
+      "mesh": "render_meshes/rotating_analyzer_adapter.stl",
       "color": [
         0.85,
         0.56,
         0.16
-      ]
+      ],
+      "origin": "rotary_run_2",
+      "source_translation_mm": [
+        0,
+        0,
+        0
+      ],
+      "geometry": {
+        "solids": 1,
+        "shells": 1,
+        "faces": 24,
+        "valid": true,
+        "closed_solids_valid": true,
+        "volume_mm3": 32008.996397042603,
+        "bounds_mm": [
+          -39.0,
+          -39.0,
+          167.0,
+          39.0,
+          39.0,
+          191.0
+        ]
+      }
     },
     {
       "name": "GT090101_analyzer",
-      "mesh": "scene_GT090101_analyzer.stl",
+      "mesh": "render_meshes/GT090101_analyzer.stl",
       "color": [
         0.12,
         0.13,
         0.15
-      ]
+      ],
+      "origin": "rotary_run_2",
+      "source_translation_mm": [
+        0,
+        0,
+        0
+      ],
+      "geometry": {
+        "solids": 4,
+        "shells": 5,
+        "faces": 406,
+        "valid": true,
+        "closed_solids_valid": true,
+        "volume_mm3": 10961.661697176345,
+        "bounds_mm": [
+          -20.0000001,
+          -21.5000001,
+          175.0,
+          20.0000001,
+          20.0000001,
+          193.00000020027477
+        ]
+      }
     },
     {
       "name": "dock",
-      "mesh": "scene_dock.stl",
+      "mesh": "render_meshes/dock.stl",
       "color": [
         0.24,
         0.26,
         0.29
-      ]
+      ],
+      "origin": "rotary_run_2",
+      "source_translation_mm": [
+        0,
+        0,
+        0
+      ],
+      "geometry": {
+        "solids": 1,
+        "shells": 1,
+        "faces": 30,
+        "valid": true,
+        "closed_solids_valid": true,
+        "volume_mm3": 292020.21776838956,
+        "bounds_mm": [
+          -50.00000000000091,
+          -50.0,
+          0.0,
+          50.00000000000173,
+          50.00000000000173,
+          30.00000000000044
+        ]
+      }
     },
     {
       "name": "cage_rod_1_lower",
-      "mesh": "scene_cage_rod_1_lower.stl",
+      "mesh": "render_meshes/cage_rod_1_lower.stl",
       "color": [
         0.58,
         0.62,
         0.66
-      ]
+      ],
+      "origin": "rotary_run_2",
+      "source_translation_mm": [
+        0,
+        0,
+        0
+      ],
+      "geometry": {
+        "solids": 1,
+        "shells": 1,
+        "faces": 3,
+        "valid": true,
+        "closed_solids_valid": true,
+        "volume_mm3": 1441.9910279977148,
+        "bounds_mm": [
+          -18.0,
+          -18.0,
+          30.0,
+          -12.0,
+          -12.0,
+          81.0
+        ]
+      }
     },
     {
       "name": "cage_rod_2_lower",
-      "mesh": "scene_cage_rod_2_lower.stl",
+      "mesh": "render_meshes/cage_rod_2_lower.stl",
       "color": [
         0.58,
         0.62,
         0.66
-      ]
+      ],
+      "origin": "rotary_run_2",
+      "source_translation_mm": [
+        0,
+        0,
+        0
+      ],
+      "geometry": {
+        "solids": 1,
+        "shells": 1,
+        "faces": 3,
+        "valid": true,
+        "closed_solids_valid": true,
+        "volume_mm3": 1441.9910279977148,
+        "bounds_mm": [
+          -18.0,
+          12.0,
+          30.0,
+          -12.0,
+          18.0,
+          81.0
+        ]
+      }
     },
     {
       "name": "cage_rod_3_lower",
-      "mesh": "scene_cage_rod_3_lower.stl",
+      "mesh": "render_meshes/cage_rod_3_lower.stl",
       "color": [
         0.58,
         0.62,
         0.66
-      ]
+      ],
+      "origin": "rotary_run_2",
+      "source_translation_mm": [
+        0,
+        0,
+        0
+      ],
+      "geometry": {
+        "solids": 1,
+        "shells": 1,
+        "faces": 3,
+        "valid": true,
+        "closed_solids_valid": true,
+        "volume_mm3": 1441.9910279977148,
+        "bounds_mm": [
+          12.0,
+          -18.0,
+          30.0,
+          18.0,
+          -12.0,
+          81.0
+        ]
+      }
     },
     {
       "name": "cage_rod_4_lower",
-      "mesh": "scene_cage_rod_4_lower.stl",
+      "mesh": "render_meshes/cage_rod_4_lower.stl",
       "color": [
         0.58,
         0.62,
         0.66
-      ]
+      ],
+      "origin": "rotary_run_2",
+      "source_translation_mm": [
+        0,
+        0,
+        0
+      ],
+      "geometry": {
+        "solids": 1,
+        "shells": 1,
+        "faces": 3,
+        "valid": true,
+        "closed_solids_valid": true,
+        "volume_mm3": 1441.9910279977148,
+        "bounds_mm": [
+          12.0,
+          12.0,
+          30.0,
+          18.0,
+          18.0,
+          81.0
+        ]
+      }
     },
     {
       "name": "spacer_L1_1",
-      "mesh": "scene_spacer_L1_1.stl",
+      "mesh": "render_meshes/spacer_L1_1.stl",
       "color": [
         0.58,
         0.62,
         0.66
-      ]
+      ],
+      "origin": "rotary_run_2",
+      "source_translation_mm": [
+        0,
+        0,
+        0
+      ],
+      "geometry": {
+        "solids": 1,
+        "shells": 1,
+        "faces": 4,
+        "valid": true,
+        "closed_solids_valid": true,
+        "volume_mm3": 267.0353755551229,
+        "bounds_mm": [
+          -20.25,
+          -20.25,
+          30.0,
+          -9.75,
+          -9.75,
+          35.0
+        ]
+      }
     },
     {
       "name": "spacer_L1_2",
-      "mesh": "scene_spacer_L1_2.stl",
+      "mesh": "render_meshes/spacer_L1_2.stl",
       "color": [
         0.58,
         0.62,
         0.66
-      ]
+      ],
+      "origin": "rotary_run_2",
+      "source_translation_mm": [
+        0,
+        0,
+        0
+      ],
+      "geometry": {
+        "solids": 1,
+        "shells": 1,
+        "faces": 4,
+        "valid": true,
+        "closed_solids_valid": true,
+        "volume_mm3": 267.03537555512287,
+        "bounds_mm": [
+          -20.25,
+          9.75,
+          30.0,
+          -9.75,
+          20.25,
+          35.0
+        ]
+      }
     },
     {
       "name": "spacer_L1_3",
-      "mesh": "scene_spacer_L1_3.stl",
+      "mesh": "render_meshes/spacer_L1_3.stl",
       "color": [
         0.58,
         0.62,
         0.66
-      ]
+      ],
+      "origin": "rotary_run_2",
+      "source_translation_mm": [
+        0,
+        0,
+        0
+      ],
+      "geometry": {
+        "solids": 1,
+        "shells": 1,
+        "faces": 4,
+        "valid": true,
+        "closed_solids_valid": true,
+        "volume_mm3": 267.0353755551229,
+        "bounds_mm": [
+          9.75,
+          -20.25,
+          30.0,
+          20.25,
+          -9.75,
+          35.0
+        ]
+      }
     },
     {
       "name": "spacer_L1_4",
-      "mesh": "scene_spacer_L1_4.stl",
+      "mesh": "render_meshes/spacer_L1_4.stl",
       "color": [
         0.58,
         0.62,
         0.66
-      ]
+      ],
+      "origin": "rotary_run_2",
+      "source_translation_mm": [
+        0,
+        0,
+        0
+      ],
+      "geometry": {
+        "solids": 1,
+        "shells": 1,
+        "faces": 4,
+        "valid": true,
+        "closed_solids_valid": true,
+        "volume_mm3": 267.03537555512287,
+        "bounds_mm": [
+          9.75,
+          9.75,
+          30.0,
+          20.25,
+          20.25,
+          35.0
+        ]
+      }
     },
     {
       "name": "spacer_L2_1",
-      "mesh": "scene_spacer_L2_1.stl",
+      "mesh": "render_meshes/spacer_L2_1.stl",
       "color": [
         0.58,
         0.62,
         0.66
-      ]
+      ],
+      "origin": "rotary_run_2",
+      "source_translation_mm": [
+        0,
+        0,
+        0
+      ],
+      "geometry": {
+        "solids": 1,
+        "shells": 1,
+        "faces": 4,
+        "valid": true,
+        "closed_solids_valid": true,
+        "volume_mm3": 267.0353755551229,
+        "bounds_mm": [
+          -20.25,
+          -20.25,
+          43.0,
+          -9.75,
+          -9.75,
+          48.0
+        ]
+      }
     },
     {
       "name": "spacer_L2_2",
-      "mesh": "scene_spacer_L2_2.stl",
+      "mesh": "render_meshes/spacer_L2_2.stl",
       "color": [
         0.58,
         0.62,
         0.66
-      ]
+      ],
+      "origin": "rotary_run_2",
+      "source_translation_mm": [
+        0,
+        0,
+        0
+      ],
+      "geometry": {
+        "solids": 1,
+        "shells": 1,
+        "faces": 4,
+        "valid": true,
+        "closed_solids_valid": true,
+        "volume_mm3": 267.03537555512287,
+        "bounds_mm": [
+          -20.25,
+          9.75,
+          43.0,
+          -9.75,
+          20.25,
+          48.0
+        ]
+      }
     },
     {
       "name": "spacer_L2_3",
-      "mesh": "scene_spacer_L2_3.stl",
+      "mesh": "render_meshes/spacer_L2_3.stl",
       "color": [
         0.58,
         0.62,
         0.66
-      ]
+      ],
+      "origin": "rotary_run_2",
+      "source_translation_mm": [
+        0,
+        0,
+        0
+      ],
+      "geometry": {
+        "solids": 1,
+        "shells": 1,
+        "faces": 4,
+        "valid": true,
+        "closed_solids_valid": true,
+        "volume_mm3": 267.0353755551229,
+        "bounds_mm": [
+          9.75,
+          -20.25,
+          43.0,
+          20.25,
+          -9.75,
+          48.0
+        ]
+      }
     },
     {
       "name": "spacer_L2_4",
-      "mesh": "scene_spacer_L2_4.stl",
+      "mesh": "render_meshes/spacer_L2_4.stl",
       "color": [
         0.58,
         0.62,
         0.66
-      ]
+      ],
+      "origin": "rotary_run_2",
+      "source_translation_mm": [
+        0,
+        0,
+        0
+      ],
+      "geometry": {
+        "solids": 1,
+        "shells": 1,
+        "faces": 4,
+        "valid": true,
+        "closed_solids_valid": true,
+        "volume_mm3": 267.03537555512287,
+        "bounds_mm": [
+          9.75,
+          9.75,
+          43.0,
+          20.25,
+          20.25,
+          48.0
+        ]
+      }
     },
     {
       "name": "spacer_L3_1",
-      "mesh": "scene_spacer_L3_1.stl",
+      "mesh": "render_meshes/spacer_L3_1.stl",
       "color": [
         0.58,
         0.62,
         0.66
-      ]
+      ],
+      "origin": "rotary_run_2",
+      "source_translation_mm": [
+        0,
+        0,
+        0
+      ],
+      "geometry": {
+        "solids": 1,
+        "shells": 1,
+        "faces": 4,
+        "valid": true,
+        "closed_solids_valid": true,
+        "volume_mm3": 267.0353755551229,
+        "bounds_mm": [
+          -20.25,
+          -20.25,
+          48.0,
+          -9.75,
+          -9.75,
+          53.0
+        ]
+      }
     },
     {
       "name": "spacer_L3_2",
-      "mesh": "scene_spacer_L3_2.stl",
+      "mesh": "render_meshes/spacer_L3_2.stl",
       "color": [
         0.58,
         0.62,
         0.66
-      ]
+      ],
+      "origin": "rotary_run_2",
+      "source_translation_mm": [
+        0,
+        0,
+        0
+      ],
+      "geometry": {
+        "solids": 1,
+        "shells": 1,
+        "faces": 4,
+        "valid": true,
+        "closed_solids_valid": true,
+        "volume_mm3": 267.03537555512287,
+        "bounds_mm": [
+          -20.25,
+          9.75,
+          48.0,
+          -9.75,
+          20.25,
+          53.0
+        ]
+      }
     },
     {
       "name": "spacer_L3_3",
-      "mesh": "scene_spacer_L3_3.stl",
+      "mesh": "render_meshes/spacer_L3_3.stl",
       "color": [
         0.58,
         0.62,
         0.66
-      ]
+      ],
+      "origin": "rotary_run_2",
+      "source_translation_mm": [
+        0,
+        0,
+        0
+      ],
+      "geometry": {
+        "solids": 1,
+        "shells": 1,
+        "faces": 4,
+        "valid": true,
+        "closed_solids_valid": true,
+        "volume_mm3": 267.0353755551229,
+        "bounds_mm": [
+          9.75,
+          -20.25,
+          48.0,
+          20.25,
+          -9.75,
+          53.0
+        ]
+      }
     },
     {
       "name": "spacer_L3_4",
-      "mesh": "scene_spacer_L3_4.stl",
+      "mesh": "render_meshes/spacer_L3_4.stl",
       "color": [
         0.58,
         0.62,
         0.66
-      ]
+      ],
+      "origin": "rotary_run_2",
+      "source_translation_mm": [
+        0,
+        0,
+        0
+      ],
+      "geometry": {
+        "solids": 1,
+        "shells": 1,
+        "faces": 4,
+        "valid": true,
+        "closed_solids_valid": true,
+        "volume_mm3": 267.03537555512287,
+        "bounds_mm": [
+          9.75,
+          9.75,
+          48.0,
+          20.25,
+          20.25,
+          53.0
+        ]
+      }
     },
     {
       "name": "lamp_holder",
-      "mesh": "scene_lamp_holder.stl",
+      "mesh": "render_meshes/lamp_holder.stl",
       "color": [
         0.24,
         0.26,
         0.29
-      ]
+      ],
+      "origin": "rotary_run_2",
+      "source_translation_mm": [
+        0,
+        0,
+        0
+      ],
+      "geometry": {
+        "solids": 1,
+        "shells": 1,
+        "faces": 25,
+        "valid": true,
+        "closed_solids_valid": true,
+        "volume_mm3": 11650.001234183155,
+        "bounds_mm": [
+          -21.0,
+          -21.0,
+          35.0,
+          21.0,
+          21.0,
+          43.0
+        ]
+      }
     },
     {
       "name": "lamp_pcb",
-      "mesh": "scene_lamp_pcb.stl",
+      "mesh": "render_meshes/lamp_pcb.stl",
       "color": [
         0.05,
         0.36,
         0.18
-      ]
+      ],
+      "origin": "rotary_run_2",
+      "source_translation_mm": [
+        0,
+        0,
+        0
+      ],
+      "geometry": {
+        "solids": 1,
+        "shells": 1,
+        "faces": 9,
+        "valid": true,
+        "closed_solids_valid": true,
+        "volume_mm3": 696.9811797547765,
+        "bounds_mm": [
+          -12.0,
+          -12.0,
+          35.02,
+          12.0,
+          12.0,
+          36.62
+        ]
+      }
     },
     {
       "name": "tungsten_bulb",
-      "mesh": "scene_tungsten_bulb.stl",
+      "mesh": "render_meshes/tungsten_bulb.stl",
       "color": [
         0.24,
         0.26,
         0.29
-      ]
+      ],
+      "origin": "rotary_run_2",
+      "source_translation_mm": [
+        0,
+        0,
+        0
+      ],
+      "geometry": {
+        "solids": 1,
+        "shells": 1,
+        "faces": 3,
+        "valid": true,
+        "closed_solids_valid": true,
+        "volume_mm3": 43.825217517580555,
+        "bounds_mm": [
+          -1.5,
+          -1.5,
+          36.62,
+          1.5,
+          1.5,
+          43.32
+        ]
+      }
     },
     {
       "name": "tungsten_bulb_leads",
-      "mesh": "scene_tungsten_bulb_leads.stl",
+      "mesh": "render_meshes/tungsten_bulb_leads.stl",
       "color": [
         0.24,
         0.26,
         0.29
-      ]
+      ],
+      "origin": "rotary_run_2",
+      "source_translation_mm": [
+        0,
+        0,
+        0
+      ],
+      "geometry": {
+        "solids": 2,
+        "shells": 2,
+        "faces": 6,
+        "valid": true,
+        "closed_solids_valid": true,
+        "volume_mm3": 0.2356194490192343,
+        "bounds_mm": [
+          -0.625,
+          -0.125,
+          34.42,
+          0.625,
+          0.125,
+          36.82
+        ]
+      }
     },
     {
       "name": "lcd_holder",
-      "mesh": "scene_lcd_holder.stl",
+      "mesh": "render_meshes/lcd_holder.stl",
       "color": [
         0.24,
         0.26,
         0.29
-      ]
+      ],
+      "origin": "rotary_run_2",
+      "source_translation_mm": [
+        0,
+        0,
+        0
+      ],
+      "geometry": {
+        "solids": 1,
+        "shells": 1,
+        "faces": 28,
+        "valid": true,
+        "closed_solids_valid": true,
+        "volume_mm3": 11064.965673658078,
+        "bounds_mm": [
+          -21.0,
+          -21.0,
+          53.0,
+          21.0,
+          21.0,
+          61.0
+        ]
+      }
     },
     {
       "name": "qyh1123_lcd",
-      "mesh": "scene_qyh1123_lcd.stl",
+      "mesh": "render_meshes/qyh1123_lcd.stl",
       "color": [
         0.24,
         0.26,
         0.29
-      ]
+      ],
+      "origin": "rotary_run_2",
+      "source_translation_mm": [
+        0,
+        0,
+        0
+      ],
+      "geometry": {
+        "solids": 2,
+        "shells": 2,
+        "faces": 20,
+        "valid": true,
+        "closed_solids_valid": true,
+        "volume_mm3": 766.0999999999997,
+        "bounds_mm": [
+          -9.0,
+          -18.0,
+          58.98,
+          9.0,
+          10.0,
+          61.17
+        ]
+      }
     },
     {
       "name": "lcd_lower_polarizer",
-      "mesh": "scene_lcd_lower_polarizer.stl",
+      "mesh": "render_meshes/lcd_lower_polarizer.stl",
       "color": [
         0.24,
         0.26,
         0.29
-      ]
+      ],
+      "origin": "rotary_run_2",
+      "source_translation_mm": [
+        0,
+        0,
+        0
+      ],
+      "geometry": {
+        "solids": 1,
+        "shells": 1,
+        "faces": 6,
+        "valid": true,
+        "closed_solids_valid": true,
+        "volume_mm3": 90.0,
+        "bounds_mm": [
+          -9.0,
+          -10.0,
+          58.7,
+          9.0,
+          10.0,
+          58.95
+        ]
+      }
     },
     {
       "name": "sample_holder_and_cap",
-      "mesh": "scene_sample_holder_and_cap.stl",
+      "mesh": "render_meshes/sample_holder_and_cap.stl",
       "color": [
         0.24,
         0.26,
         0.29
-      ]
+      ],
+      "origin": "rotary_run_2",
+      "source_translation_mm": [
+        0,
+        0,
+        0
+      ],
+      "geometry": {
+        "solids": 2,
+        "shells": 2,
+        "faces": 96,
+        "valid": true,
+        "closed_solids_valid": true,
+        "volume_mm3": 96233.6438854975,
+        "bounds_mm": [
+          -55.0,
+          -35.0,
+          75.0,
+          55.0,
+          35.0,
+          109.0
+        ]
+      }
     },
     {
       "name": "petri_dish",
-      "mesh": "scene_petri_dish.stl",
+      "mesh": "render_meshes/petri_dish.stl",
       "color": [
         0.12,
         0.66,
         0.65
-      ]
+      ],
+      "origin": "rotary_run_2",
+      "source_translation_mm": [
+        0,
+        0,
+        0
+      ],
+      "geometry": {
+        "solids": 1,
+        "shells": 1,
+        "faces": 5,
+        "valid": true,
+        "closed_solids_valid": true,
+        "volume_mm3": 641.3168703221809,
+        "bounds_mm": [
+          -17.5,
+          -17.5,
+          91.0,
+          17.5,
+          17.5,
+          92.6
+        ]
+      }
     },
     {
       "name": "sample_volume",
-      "mesh": "scene_sample_volume.stl",
+      "mesh": "render_meshes/sample_volume.stl",
       "color": [
         0.12,
         0.66,
         0.65
-      ]
+      ],
+      "origin": "rotary_run_2",
+      "source_translation_mm": [
+        0,
+        0,
+        0
+      ],
+      "geometry": {
+        "solids": 1,
+        "shells": 1,
+        "faces": 3,
+        "valid": true,
+        "closed_solids_valid": true,
+        "volume_mm3": 545.5179293417849,
+        "bounds_mm": [
+          -15.75,
+          -15.75,
+          91.55,
+          15.75,
+          15.75,
+          92.25
+        ]
+      }
     },
     {
       "name": "openhi_microscope_relocated",
-      "mesh": "scene_openhi_microscope_relocated.stl",
+      "mesh": "render_meshes/openhi_microscope_relocated.stl",
       "color": [
         0.57,
         0.6,
         0.63
-      ]
+      ],
+      "origin": "rotary_run_2",
+      "source_translation_mm": [
+        0,
+        0,
+        0
+      ],
+      "geometry": {
+        "solids": 2,
+        "shells": 2,
+        "faces": 99,
+        "valid": true,
+        "closed_solids_valid": true,
+        "volume_mm3": 39232.6121673333,
+        "bounds_mm": [
+          -25.514306415,
+          -26.0,
+          201.00000020027,
+          24.485693585,
+          24.0,
+          503.00000020027
+        ]
+      }
     },
     {
       "name": "GT_to_microscope_proxy",
-      "mesh": "scene_GT_to_microscope_proxy.stl",
+      "mesh": "render_meshes/GT_to_microscope_proxy.stl",
       "color": [
         0.35,
         0.38,
         0.41
-      ]
+      ],
+      "origin": "rotary_run_2",
+      "source_translation_mm": [
+        0,
+        0,
+        0
+      ],
+      "geometry": {
+        "solids": 1,
+        "shells": 1,
+        "faces": 4,
+        "valid": true,
+        "closed_solids_valid": true,
+        "volume_mm3": 2035.7520395261868,
+        "bounds_mm": [
+          -15.0,
+          -15.0,
+          193.00000020027,
+          15.0,
+          15.0,
+          201.00000020027
+        ]
+      }
     },
     {
       "name": "primary_openhi_4f",
-      "mesh": "scene_primary_openhi_4f.stl",
+      "mesh": "render_meshes/primary_openhi_4f.stl",
       "color": [
         0.22,
         0.25,
         0.28
-      ]
+      ],
+      "origin": "rotary_run_2",
+      "source_translation_mm": [
+        0,
+        0,
+        0
+      ],
+      "geometry": {
+        "solids": 10,
+        "shells": 10,
+        "faces": 273,
+        "valid": true,
+        "closed_solids_valid": true,
+        "volume_mm3": 239097.0427384107,
+        "bounds_mm": [
+          -20.734,
+          -20.367,
+          506.00000010027,
+          104.4000001,
+          20.367,
+          710.6000003002699
+        ]
+      }
     },
     {
       "name": "microscope_to_4f_adapter",
-      "mesh": "scene_microscope_to_4f_adapter.stl",
+      "mesh": "render_meshes/microscope_to_4f_adapter.stl",
       "color": [
         0.22,
         0.25,
         0.28
-      ]
+      ],
+      "origin": "rotary_run_2",
+      "source_translation_mm": [
+        0,
+        0,
+        0
+      ],
+      "geometry": {
+        "solids": 1,
+        "shells": 1,
+        "faces": 4,
+        "valid": true,
+        "closed_solids_valid": true,
+        "volume_mm3": 2297.2896279375364,
+        "bounds_mm": [
+          -20.0,
+          -20.0,
+          503.00000020027,
+          20.0,
+          20.0,
+          506.00000020027
+        ]
+      }
     },
     {
       "name": "frame_camera_cmount",
-      "mesh": "scene_frame_camera_cmount.stl",
+      "mesh": "render_meshes/frame_camera_cmount.stl",
       "color": [
         0.22,
         0.25,
         0.28
-      ]
+      ],
+      "origin": "rotary_run_2",
+      "source_translation_mm": [
+        0,
+        0,
+        0
+      ],
+      "geometry": {
+        "solids": 1,
+        "shells": 1,
+        "faces": 4,
+        "valid": true,
+        "closed_solids_valid": true,
+        "volume_mm3": 1577.4722111837752,
+        "bounds_mm": [
+          -14.5,
+          -14.5,
+          710.60000020027,
+          14.5,
+          14.5,
+          716.60000020027
+        ]
+      }
     },
     {
       "name": "frame_camera_body",
-      "mesh": "scene_frame_camera_body.stl",
+      "mesh": "render_meshes/frame_camera_body.stl",
       "color": [
         0.12,
         0.32,
         0.48
-      ]
-    },
-    {
-      "name": "c12880_socket",
-      "mesh": "scene_c12880_socket.stl",
-      "color": [
-        0.22,
-        0.25,
-        0.28
-      ]
-    },
-    {
-      "name": "c12880_plate",
-      "mesh": "scene_c12880_plate.stl",
-      "color": [
-        0.22,
-        0.25,
-        0.28
-      ]
-    },
-    {
-      "name": "c12880_board",
-      "mesh": "scene_c12880_board.stl",
-      "color": [
-        0.04,
-        0.4,
-        0.22
-      ]
-    },
-    {
-      "name": "c12880_sensor",
-      "mesh": "scene_c12880_sensor.stl",
-      "color": [
-        0.22,
-        0.25,
-        0.28
-      ]
-    },
-    {
-      "name": "c12880_pins",
-      "mesh": "scene_c12880_pins.stl",
-      "color": [
-        0.22,
-        0.25,
-        0.28
-      ]
+      ],
+      "origin": "rotary_run_2",
+      "source_translation_mm": [
+        0,
+        0,
+        0
+      ],
+      "geometry": {
+        "solids": 1,
+        "shells": 1,
+        "faces": 6,
+        "valid": true,
+        "closed_solids_valid": true,
+        "volume_mm3": 39303.99999999999,
+        "bounds_mm": [
+          -17.0,
+          -17.0,
+          716.60000020027,
+          17.0,
+          17.0,
+          750.60000020027
+        ]
+      }
     },
     {
       "name": "motor_yoke_stand_foot",
-      "mesh": "scene_motor_yoke_stand_foot.stl",
+      "mesh": "render_meshes/motor_yoke_stand_foot.stl",
       "color": [
         0.2,
         0.43,
         0.51
-      ]
+      ],
+      "origin": "rotary_run_2",
+      "source_translation_mm": [
+        0,
+        0,
+        0
+      ],
+      "geometry": {
+        "solids": 1,
+        "shells": 1,
+        "faces": 41,
+        "valid": true,
+        "closed_solids_valid": true,
+        "volume_mm3": 81421.59574862558,
+        "bounds_mm": [
+          90.0,
+          -10.0,
+          8.0,
+          140.0,
+          90.0,
+          167.0
+        ]
+      }
     },
     {
       "name": "motor_yoke_top_bridge",
-      "mesh": "scene_motor_yoke_top_bridge.stl",
+      "mesh": "render_meshes/motor_yoke_top_bridge.stl",
       "color": [
         0.85,
         0.56,
         0.16
-      ]
+      ],
+      "origin": "rotary_run_2",
+      "source_translation_mm": [
+        0,
+        0,
+        0
+      ],
+      "geometry": {
+        "solids": 1,
+        "shells": 1,
+        "faces": 16,
+        "valid": true,
+        "closed_solids_valid": true,
+        "volume_mm3": 6474.952237273149,
+        "bounds_mm": [
+          91.0,
+          18.5,
+          165.0,
+          103.0,
+          79.5,
+          175.0
+        ]
+      }
     },
     {
       "name": "bridge_M3_screw_1",
-      "mesh": "scene_bridge_M3_screw_1.stl",
+      "mesh": "render_meshes/bridge_M3_screw_1.stl",
       "color": [
         0.6,
         0.63,
         0.67
-      ]
+      ],
+      "origin": "rotary_run_2",
+      "source_translation_mm": [
+        0,
+        0,
+        0
+      ],
+      "geometry": {
+        "solids": 1,
+        "shells": 1,
+        "faces": 12,
+        "valid": true,
+        "closed_solids_valid": true,
+        "volume_mm3": 174.62943306497684,
+        "bounds_mm": [
+          94.25,
+          20.75,
+          155.8,
+          99.75,
+          26.25,
+          174.8
+        ]
+      }
     },
     {
       "name": "bridge_M3_nut_1",
-      "mesh": "scene_bridge_M3_nut_1.stl",
+      "mesh": "render_meshes/bridge_M3_nut_1.stl",
       "color": [
         0.6,
         0.63,
         0.67
-      ]
+      ],
+      "origin": "rotary_run_2",
+      "source_translation_mm": [
+        0,
+        0,
+        0
+      ],
+      "geometry": {
+        "solids": 1,
+        "shells": 1,
+        "faces": 9,
+        "valid": true,
+        "closed_solids_valid": true,
+        "volume_mm3": 51.092471863751264,
+        "bounds_mm": [
+          93.82457351945679,
+          20.749999999999996,
+          156.1,
+          100.17542648054246,
+          26.25,
+          158.5
+        ]
+      }
     },
     {
       "name": "bridge_M3_screw_2",
-      "mesh": "scene_bridge_M3_screw_2.stl",
+      "mesh": "render_meshes/bridge_M3_screw_2.stl",
       "color": [
         0.6,
         0.63,
         0.67
-      ]
+      ],
+      "origin": "rotary_run_2",
+      "source_translation_mm": [
+        0,
+        0,
+        0
+      ],
+      "geometry": {
+        "solids": 1,
+        "shells": 1,
+        "faces": 12,
+        "valid": true,
+        "closed_solids_valid": true,
+        "volume_mm3": 174.62943306497678,
+        "bounds_mm": [
+          94.25,
+          71.75,
+          155.8,
+          99.75,
+          77.25,
+          174.8
+        ]
+      }
     },
     {
       "name": "bridge_M3_nut_2",
-      "mesh": "scene_bridge_M3_nut_2.stl",
+      "mesh": "render_meshes/bridge_M3_nut_2.stl",
       "color": [
         0.6,
         0.63,
         0.67
-      ]
+      ],
+      "origin": "rotary_run_2",
+      "source_translation_mm": [
+        0,
+        0,
+        0
+      ],
+      "geometry": {
+        "solids": 1,
+        "shells": 1,
+        "faces": 9,
+        "valid": true,
+        "closed_solids_valid": true,
+        "volume_mm3": 51.09247186375122,
+        "bounds_mm": [
+          93.82457351945679,
+          71.75,
+          156.1,
+          100.17542648054246,
+          77.25,
+          158.5
+        ]
+      }
+    },
+    {
+      "name": "c12880_board",
+      "mesh": "render_meshes/c12880_board.stl",
+      "color": [
+        0.04,
+        0.4,
+        0.22
+      ],
+      "origin": "horizontal_relay_run_2",
+      "source_translation_mm": [
+        0,
+        0,
+        61.000000200277725
+      ],
+      "geometry": {
+        "solids": 1,
+        "shells": 1,
+        "faces": 8,
+        "valid": true,
+        "closed_solids_valid": true,
+        "volume_mm3": 1296.288319736503,
+        "bounds_mm": [
+          336.0,
+          -19.15,
+          595.9000002002776,
+          337.5,
+          19.15,
+          618.7000002002778
+        ]
+      }
+    },
+    {
+      "name": "c12880_pins",
+      "mesh": "render_meshes/c12880_pins.stl",
+      "color": [
+        0.22,
+        0.25,
+        0.28
+      ],
+      "origin": "horizontal_relay_run_2",
+      "source_translation_mm": [
+        0,
+        0,
+        61.000000200277725
+      ],
+      "geometry": {
+        "solids": 6,
+        "shells": 6,
+        "faces": 18,
+        "valid": true,
+        "closed_solids_valid": true,
+        "volume_mm3": 13.194689145077483,
+        "bounds_mm": [
+          334.5,
+          -10.85,
+          615.0000002002778,
+          337.3,
+          2.85,
+          616.0000002002778
+        ]
+      }
+    },
+    {
+      "name": "c12880_plate",
+      "mesh": "render_meshes/c12880_plate.stl",
+      "color": [
+        0.22,
+        0.25,
+        0.28
+      ],
+      "origin": "horizontal_relay_run_2",
+      "source_translation_mm": [
+        0,
+        0,
+        61.000000200277725
+      ],
+      "geometry": {
+        "solids": 1,
+        "shells": 1,
+        "faces": 39,
+        "valid": true,
+        "closed_solids_valid": true,
+        "volume_mm3": 8905.935348358913,
+        "bounds_mm": [
+          331.0,
+          -21.0,
+          585.2000002002778,
+          338.0,
+          21.0,
+          627.2000002002778
+        ]
+      }
+    },
+    {
+      "name": "c12880_sensor",
+      "mesh": "render_meshes/c12880_sensor.stl",
+      "color": [
+        0.22,
+        0.25,
+        0.28
+      ],
+      "origin": "horizontal_relay_run_2",
+      "source_translation_mm": [
+        0,
+        0,
+        61.000000200277725
+      ],
+      "geometry": {
+        "solids": 1,
+        "shells": 1,
+        "faces": 12,
+        "valid": true,
+        "closed_solids_valid": true,
+        "volume_mm3": 3976.2840626121106,
+        "bounds_mm": [
+          320.5,
+          -13.85,
+          599.7000002002777,
+          336.0,
+          6.65,
+          612.7000002002778
+        ]
+      }
+    },
+    {
+      "name": "c12880_socket",
+      "mesh": "render_meshes/c12880_socket.stl",
+      "color": [
+        0.22,
+        0.25,
+        0.28
+      ],
+      "origin": "horizontal_relay_run_2",
+      "source_translation_mm": [
+        0,
+        0,
+        61.000000200277725
+      ],
+      "geometry": {
+        "solids": 1,
+        "shells": 1,
+        "faces": 16,
+        "valid": true,
+        "closed_solids_valid": true,
+        "volume_mm3": 6633.018789619626,
+        "bounds_mm": [
+          314.99999987297997,
+          -20.600000100000003,
+          589.2000001002779,
+          331.0000001,
+          13.4000001,
+          623.2000003002778
+        ]
+      }
+    },
+    {
+      "name": "event_camera_body",
+      "mesh": "render_meshes/event_camera_body.stl",
+      "color": [
+        0.55,
+        0.16,
+        0.12
+      ],
+      "origin": "horizontal_relay_run_2",
+      "source_translation_mm": [
+        0,
+        0,
+        61.000000200277725
+      ],
+      "geometry": {
+        "solids": 1,
+        "shells": 1,
+        "faces": 6,
+        "valid": true,
+        "closed_solids_valid": true,
+        "volume_mm3": 60799.999999999985,
+        "bounds_mm": [
+          187.6,
+          -20.0,
+          457.80000020027774,
+          227.6,
+          20.0,
+          495.80000020027774
+        ]
+      }
+    },
+    {
+      "name": "event_camera_cmount",
+      "mesh": "render_meshes/event_camera_cmount.stl",
+      "color": [
+        0.55,
+        0.58,
+        0.61
+      ],
+      "origin": "horizontal_relay_run_2",
+      "source_translation_mm": [
+        0,
+        0,
+        61.000000200277725
+      ],
+      "geometry": {
+        "solids": 1,
+        "shells": 1,
+        "faces": 4,
+        "valid": true,
+        "closed_solids_valid": true,
+        "volume_mm3": 1577.4722111837746,
+        "bounds_mm": [
+          193.1,
+          -14.5,
+          495.80000020027774,
+          222.1,
+          14.5,
+          501.80000020027774
+        ]
+      }
+    },
+    {
+      "name": "secondary_openhi_4f",
+      "mesh": "render_meshes/secondary_openhi_4f.stl",
+      "color": [
+        0.22,
+        0.25,
+        0.28
+      ],
+      "origin": "horizontal_relay_run_2",
+      "source_translation_mm": [
+        0,
+        0,
+        61.000000200277725
+      ],
+      "geometry": {
+        "solids": 10,
+        "shells": 10,
+        "faces": 273,
+        "valid": true,
+        "closed_solids_valid": true,
+        "volume_mm3": 239097.04273840232,
+        "bounds_mm": [
+          107.39999990000001,
+          -20.367,
+          501.8000001002777,
+          312.0000001,
+          20.367,
+          626.9340002002778
+        ]
+      }
     }
   ],
   "sources": {
@@ -1003,11 +2174,13 @@
     "GT090101 side-lock screws clamp the four 5.9 mm printed locating pins; do not retain any rods joining it to the stationary sample stage"
   ],
   "limitations": [
-    "No stage motion or electrical control was performed.",
-    "The support is a fit/clearance prototype, not a structural or thermal load certification.",
-    "Use rigid metal for final metrology support; printed polymer can creep under the roughly 1.85 kg stage.",
-    "Cable bend radius, live specimen access, screw lengths and microscope working distance need physical verification.",
-    "The 25 mm breadboard grid is a metric-board assumption, not a measurement of this particular table."
+    "Proposed motorized apparatus layout; the earlier four-angle measurements did not use motorized rotation.",
+    "No firmware, raw measurements, reconstruction, Windows manuscript, stage motion or acquisition was changed.",
+    "Accepted relay geometry, lens seats, threads and optical datums are reused, not redesigned or optically recalibrated.",
+    "The existing microscope lift and objective-free gap are preserved; focus, conjugate planes and working distance remain unvalidated.",
+    "Frame/event camera bodies and existing interface/sample proxies are illustrative, not supplier-complete devices.",
+    "The rotary fixture remains a fit/clearance prototype requiring physical load, thermal, cable and fastening checks.",
+    "The lower-stack detail intentionally hides the rotary hardware and upper apparatus; it is not a literal crop or alternate physical assembly."
   ],
   "motor_yoke": {
     "parameters_mm": {
@@ -1195,5 +2368,902 @@
       "solids": 1,
       "volume_mm3": 32008.996397043742
     }
-  }
+  },
+  "configuration": "horizontal_dual_4f_rotary_analyzer",
+  "assembly_step": "yxra100_rotary_analyzer_horizontal_dual_4f_assembly.step",
+  "frozen_sources": {
+    "rotary_run_2": {
+      "path": "cad/designs/yxra100_servo_analyzer_breadboard_mount/runs/run-2-square-y-motor-yoke-m3-bridge-20261027T145017Z/USE_THIS_yxra100_servo_analyzer_breadboard_mount_assembly.step",
+      "sha256": "40c94cc78273da201831885eb7721e7f1f9735dae5b12d5714fd432bdb70e468"
+    },
+    "horizontal_relay_run_2": {
+      "path": "cad/designs/openhi_vertical_multimodal_microscope_setup/runs/run-2-vertical-cascade-full-frame-20261027T140302Z/USE_THIS_openhi_vertical_multimodal_microscope_setup_dual_4f.step",
+      "sha256": "e7df70325152f177f08a8a8ef0e31cffe6ad12ff83ffc3e999eec7def653870d"
+    },
+    "rotary_manifest": {
+      "path": "cad/designs/yxra100_servo_analyzer_breadboard_mount/runs/run-2-square-y-motor-yoke-m3-bridge-20261027T145017Z/manifest.json",
+      "sha256": "b920310c8e2263e505585d2936919bebe5c55fffd121e0ea4514280381a59a0a"
+    },
+    "relay_manifest": {
+      "path": "cad/designs/openhi_vertical_multimodal_microscope_setup/runs/run-2-vertical-cascade-full-frame-20261027T140302Z/manifest.json",
+      "sha256": "4304eea8639e6743049fa8cae6a25b8b33dc47d239ba24a78380a30bb373bdc5"
+    }
+  },
+  "cascade": {
+    "source_variant": "dual_4f",
+    "vertical_cascade": false,
+    "existing_microscope_lift_mm": 61.000000200277725,
+    "additional_relay_redesign": false,
+    "datums_mm": {
+      "primary_bs_z": 606.2,
+      "primary_a_input_z": 506.0,
+      "primary_b_output_z": 710.6,
+      "primary_c_output_x": 104.4,
+      "microscope_top_z": 503.0
+    },
+    "secondary_4f": {
+      "beam_splitter_center_mm": [
+        207.6,
+        0.0,
+        606.2
+      ],
+      "rotation_y_deg": 90.0,
+      "a_input_x_mm": 107.4,
+      "b_output_x_mm": 312.0,
+      "c_output_z_mm": 501.8
+    },
+    "interface_gap_mm": 3.0,
+    "detector_contract": {
+      "first_straight_port": "frame camera visualization proxy",
+      "first_split_port": "second accepted 4f assembly input",
+      "second_straight_port": "accepted C12880MA holder and module proxies",
+      "second_split_port": "event camera visualization proxy"
+    },
+    "source_b_axis_shift_mm": -0.367
+  },
+  "preserved_base_components": {
+    "breadboard_foot": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 2.3283064365386963e-10,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "gusseted_L_support": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 5.820766091346741e-10,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "YXRA100_servo_vendor": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 0.0,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "rotating_analyzer_adapter": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 2.4301698431372643e-09,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "GT090101_analyzer": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 6.239133654162288e-10,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "dock": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 0.0,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "cage_rod_1_lower": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 0.0,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "cage_rod_2_lower": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 0.0,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "cage_rod_3_lower": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 0.0,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "cage_rod_4_lower": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 0.0,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "spacer_L1_1": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 9.492850949754938e-12,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "spacer_L1_2": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 9.549694368615746e-12,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "spacer_L1_3": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 9.492850949754938e-12,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "spacer_L1_4": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 9.549694368615746e-12,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "spacer_L2_1": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 9.492850949754938e-12,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "spacer_L2_2": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 9.549694368615746e-12,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "spacer_L2_3": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 9.492850949754938e-12,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "spacer_L2_4": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 9.549694368615746e-12,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "spacer_L3_1": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 9.492850949754938e-12,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "spacer_L3_2": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 9.549694368615746e-12,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "spacer_L3_3": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 9.492850949754938e-12,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "spacer_L3_4": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 9.549694368615746e-12,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "lamp_holder": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 2.000888343900442e-11,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "lamp_pcb": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 3.808509063674137e-11,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "tungsten_bulb": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 7.247535904753022e-13,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "tungsten_bulb_leads": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 2.7755575615628914e-17,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "lcd_holder": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 3.637978807091713e-11,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "qyh1123_lcd": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 0.0,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "lcd_lower_polarizer": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 0.0,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "sample_holder_and_cap": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 1.4551915228366852e-11,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "petri_dish": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 1.7053025658242404e-12,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "sample_volume": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 2.2737367544323206e-13,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "openhi_microscope_relocated": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 0.0,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "GT_to_microscope_proxy": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 7.09405867382884e-11,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "primary_openhi_4f": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 2.852175384759903e-09,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "microscope_to_4f_adapter": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 1.0186340659856796e-10,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "frame_camera_cmount": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 6.912159733474255e-11,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "frame_camera_body": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 0.0,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "motor_yoke_stand_foot": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 1.0186340659856796e-10,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "motor_yoke_top_bridge": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 5.4569682106375694e-12,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "bridge_M3_screw_1": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 1.1425527191022411e-11,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "bridge_M3_nut_1": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 4.476419235288631e-13,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "bridge_M3_screw_2": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 1.1368683772161603e-11,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "bridge_M3_nut_2": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 4.476419235288631e-13,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    }
+  },
+  "step_component_round_trip": {
+    "breadboard_foot": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 2.3283064365386963e-10,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "gusseted_L_support": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 5.820766091346741e-10,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "YXRA100_servo_vendor": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 0.0,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "rotating_analyzer_adapter": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 2.4301698431372643e-09,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "GT090101_analyzer": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 6.239133654162288e-10,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "dock": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 0.0,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "cage_rod_1_lower": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 0.0,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "cage_rod_2_lower": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 0.0,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "cage_rod_3_lower": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 0.0,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "cage_rod_4_lower": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 0.0,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "spacer_L1_1": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 9.492850949754938e-12,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "spacer_L1_2": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 9.549694368615746e-12,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "spacer_L1_3": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 9.492850949754938e-12,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "spacer_L1_4": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 9.549694368615746e-12,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "spacer_L2_1": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 9.492850949754938e-12,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "spacer_L2_2": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 9.549694368615746e-12,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "spacer_L2_3": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 9.492850949754938e-12,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "spacer_L2_4": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 9.549694368615746e-12,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "spacer_L3_1": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 9.492850949754938e-12,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "spacer_L3_2": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 9.549694368615746e-12,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "spacer_L3_3": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 9.492850949754938e-12,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "spacer_L3_4": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 9.549694368615746e-12,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "lamp_holder": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 2.000888343900442e-11,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "lamp_pcb": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 3.808509063674137e-11,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "tungsten_bulb": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 7.247535904753022e-13,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "tungsten_bulb_leads": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 2.7755575615628914e-17,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "lcd_holder": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 3.637978807091713e-11,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "qyh1123_lcd": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 0.0,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "lcd_lower_polarizer": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 0.0,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "sample_holder_and_cap": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 1.4551915228366852e-11,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "petri_dish": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 1.7053025658242404e-12,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "sample_volume": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 2.2737367544323206e-13,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "openhi_microscope_relocated": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 0.0,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "GT_to_microscope_proxy": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 7.09405867382884e-11,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "primary_openhi_4f": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 2.852175384759903e-09,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "microscope_to_4f_adapter": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 1.0186340659856796e-10,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "frame_camera_cmount": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 6.912159733474255e-11,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "frame_camera_body": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 0.0,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "motor_yoke_stand_foot": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 1.0186340659856796e-10,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "motor_yoke_top_bridge": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 5.4569682106375694e-12,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "bridge_M3_screw_1": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 1.1425527191022411e-11,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "bridge_M3_nut_1": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 4.476419235288631e-13,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "bridge_M3_screw_2": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 1.1368683772161603e-11,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "bridge_M3_nut_2": {
+      "bounds_max_error_mm": 0.0,
+      "volume_error_mm3": 4.476419235288631e-13,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "c12880_board": {
+      "bounds_max_error_mm": 7.844391802791506e-12,
+      "volume_error_mm3": 1.3642420526593924e-11,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "c12880_pins": {
+      "bounds_max_error_mm": 7.73070496506989e-12,
+      "volume_error_mm3": 3.588240815588506e-13,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "c12880_plate": {
+      "bounds_max_error_mm": 7.844391802791506e-12,
+      "volume_error_mm3": 1.8189894035458565e-11,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "c12880_sensor": {
+      "bounds_max_error_mm": 7.844391802791506e-12,
+      "volume_error_mm3": 1.1368683772161603e-11,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "c12880_socket": {
+      "bounds_max_error_mm": 7.844391802791506e-12,
+      "volume_error_mm3": 3.1672989280195907e-06,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "event_camera_body": {
+      "bounds_max_error_mm": 7.73070496506989e-12,
+      "volume_error_mm3": 1.4551915228366852e-11,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "event_camera_cmount": {
+      "bounds_max_error_mm": 7.73070496506989e-12,
+      "volume_error_mm3": 7.071321306284517e-11,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    },
+    "secondary_openhi_4f": {
+      "bounds_max_error_mm": 7.844391802791506e-12,
+      "volume_error_mm3": 4.016328603029251e-09,
+      "solid_shell_face_counts_match": true,
+      "valid": true,
+      "source_compound_valid": true,
+      "exported_closed_solids_valid": true
+    }
+  },
+  "new_components": [
+    "c12880_board",
+    "c12880_pins",
+    "c12880_plate",
+    "c12880_sensor",
+    "c12880_socket",
+    "event_camera_body",
+    "event_camera_cmount",
+    "secondary_openhi_4f"
+  ],
+  "new_vs_retained_max_interference_mm3": 0.0,
+  "detail_view": {
+    "type": "explanatory visibility-only detail",
+    "geometry_transform": "none",
+    "included_components": [
+      "cage_rod_1_lower",
+      "cage_rod_2_lower",
+      "cage_rod_3_lower",
+      "cage_rod_4_lower",
+      "dock",
+      "lamp_holder",
+      "lamp_pcb",
+      "lcd_holder",
+      "lcd_lower_polarizer",
+      "petri_dish",
+      "qyh1123_lcd",
+      "sample_holder_and_cap",
+      "sample_volume",
+      "spacer_L1_1",
+      "spacer_L1_2",
+      "spacer_L1_3",
+      "spacer_L1_4",
+      "spacer_L2_1",
+      "spacer_L2_2",
+      "spacer_L2_3",
+      "spacer_L2_4",
+      "spacer_L3_1",
+      "spacer_L3_2",
+      "spacer_L3_3",
+      "spacer_L3_4",
+      "tungsten_bulb",
+      "tungsten_bulb_leads"
+    ],
+    "omitted_components": [
+      "GT090101_analyzer",
+      "GT_to_microscope_proxy",
+      "YXRA100_servo_vendor",
+      "breadboard_foot",
+      "bridge_M3_nut_1",
+      "bridge_M3_nut_2",
+      "bridge_M3_screw_1",
+      "bridge_M3_screw_2",
+      "c12880_board",
+      "c12880_pins",
+      "c12880_plate",
+      "c12880_sensor",
+      "c12880_socket",
+      "event_camera_body",
+      "event_camera_cmount",
+      "frame_camera_body",
+      "frame_camera_cmount",
+      "gusseted_L_support",
+      "microscope_to_4f_adapter",
+      "motor_yoke_stand_foot",
+      "motor_yoke_top_bridge",
+      "openhi_microscope_relocated",
+      "primary_openhi_4f",
+      "rotating_analyzer_adapter",
+      "secondary_openhi_4f"
+    ],
+    "label": "Shared lower optical stack; rotary hardware and upper apparatus hidden"
+  },
+  "historical_measurements_motorized": false
 }

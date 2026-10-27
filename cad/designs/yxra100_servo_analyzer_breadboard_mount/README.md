@@ -5,12 +5,73 @@ servo rotary stage on a metric optical breadboard. A separate rotating adapter
 carries the complete Hengyang GT090101 analyzer mount. Existing OpenHI CAD
 parts and their previous runs remain unchanged.
 
+## Horizontal Two-Relay Apparatus
+
+The latest apparatus run is
+`runs/run-3-horizontal-dual-4f-rotary-analyzer-20261027T163343Z/`.
+It imports the frozen rotary run-2 STEP, retains 44 components without geometry
+or placement changes, and imports the second relay and detector branches from
+the accepted `dual_4f` STEP in the OpenHI apparatus run 2. No lens seat, thread,
+chamfer, fixture or supplier-stage geometry is regenerated.
+
+The second relay is on the first relay's lateral/split output, not above it.
+Its source rotation is +90 degrees about Y. The rotary setup's existing 61 mm
+microscope lift is applied to the accepted horizontal branches as one rigid
+translation. Primary and secondary beam splitters lie at (0,0,606.2) and
+(207.6,0,606.2) mm. The accepted 3 mm interface gap and -0.367 mm per-relay
+B-axis correction remain in the source geometry. Detector assignments are:
+
+- First straight output: frame-camera proxy.
+- First lateral output: second accepted relay input.
+- Second straight output: C12880MA holder and module proxies.
+- Second split output: downward-facing event-camera proxy.
+
+Current publication assets are under that run's `renders/` directory:
+
+- `rotary_horizontal_dual_4f_overview.png`: full 3000 x 3200 white-background
+  apparatus with all 52 components and every detector branch inside safe margins.
+- `shared_lower_stack_explanatory_detail.png`: illumination, LCD and specimen
+  stack at their actual assembly coordinates, with rotary hardware and upper
+  optics hidden. This is an explanatory visibility-only view, not a literal crop.
+- `horizontal_cascade_detector_detail.png`: separate view of both relays and
+  their three detector branches.
+
+`yxra100_rotary_analyzer_horizontal_dual_4f_assembly.step` is the corresponding
+full model. The root `USE_THIS_yxra100_servo_analyzer_breadboard_mount_assembly.step`
+now selects this latest configuration; the archived run-2 STEP is unchanged.
+`rotary_horizontal_dual_4f_scene.blend` preserves the editable scene and overview
+camera. No new fixture prints are required. Synced `unchanged_fixture_prints/`
+contains the exact run-2 STEP/STL/3MF packages for reference.
+
+This is a proposed apparatus update. The earlier four-angle measurements did
+not use motorized rotation. Focus, detector conjugates, structural strength,
+motor control and experimental performance are not newly validated here.
+Firmware, raw measurements, reconstruction and the Windows manuscript remain
+outside this CAD update.
+
+Rebuild the current apparatus from the repository and its frozen local runs:
+
+```bash
+cad/.conda/cad-python/bin/python \
+  cad/designs/yxra100_servo_analyzer_breadboard_mount/build_horizontal_cascade.py
+blender --background --threads 6 --python-exit-code 1 --python \
+  cad/designs/yxra100_servo_analyzer_breadboard_mount/render_horizontal_cascade.py
+python -m unittest tests.test_yxra100_horizontal_cascade
+python cad/designs/yxra100_servo_analyzer_breadboard_mount/sync_horizontal_cascade.py \
+  --commit PUBLISHED_CAD_COMMIT
+```
+
+The sync verifies file hashes, source preservation and camera margins before
+writing the machine-readable manuscript handoff. It includes scripts, manifests,
+frozen input assemblies, an editable Blender scene, the full STEP, and the three
+PNG views. It does not assemble or revise manuscript panels.
+
 ## Current Deliverables
 
 - `USE_THIS_yxra100_servo_analyzer_breadboard_mount_assembly.step`: complete
   integration model with supplier stage, GT090101, fixture, current dock,
-  illumination/LCD/sample stack, relocated microscope, first 4f relay,
-  frame-camera proxy and C12880 assembly.
+  illumination/LCD/sample stack, relocated microscope, horizontally cascaded
+  relays and all three detector branches.
 - `artifacts/vendor_YXRA100_servo_positioned.step`: genuine supplier geometry
   placed on the optical axis; no speculative replacement stage was drawn.
 - `artifacts/renders/complete_rotary_analyzer_setup.png`: full assembly.
@@ -26,7 +87,7 @@ parts and their previous runs remain unchanged.
 - `artifacts/manifest.json`: dimensions, source identity, checks, limitations,
   bill of hardware, and print-package validation.
 
-The current timestamped run is
+The unchanged fixture and print-package baseline is
 `runs/run-2-square-y-motor-yoke-m3-bridge-20261027T145017Z/`.
 Run 1 is preserved. Its three original fixture bodies remain geometrically
 unchanged in run 2. The six separate `PRINT_THIS` packages each include STEP,

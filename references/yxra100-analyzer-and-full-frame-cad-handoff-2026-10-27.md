@@ -126,3 +126,39 @@ No claim is made that those session histories or the remote polarizer project
 were read. Local accepted experiment CAD and supplier files are the verified
 sources for this run. Read-only remote integration can resume when an authorized
 non-disruptive shell route becomes available.
+
+## Horizontal Cascade Publication Handoff
+
+The rotary project's run 3 imports its accepted run-2 STEP and the fixed-analyzer
+project's accepted run-2 `dual_4f` STEP. Named assembly import preserves supplier
+surface shells, source B-reps and optical datums. The second relay remains on
+the lateral output with a +90 degree Y rotation; only the established rotary
+microscope lift is applied. The vertical-cascade variant is not used.
+
+Compare preserved components after STEP round trip by solid/shell/face counts,
+volume and analytic bounds. Cached triangulation can pad `BoundingBox()` by a
+few micrometres even when the underlying solid is unchanged. Use
+`BRepBndLib.AddOptimal_s(shape, box, False, False)` for this comparison. STL
+tessellation can also leave a display cache that makes `isValid()` fail on an
+otherwise valid imported body. Verified on both GT090101 and the servo motor:
+they pass before tessellation, fail after, then pass after
+`BRepTools.Clean_s(shape.wrapped)` removes only the triangulation cache. Do not
+relax the validity check or alter the analytic geometry to address that cache.
+Require the input and exported compound and their closed solids to pass after
+cache cleanup, with identical solid/shell/face counts. Keep all supplier surfaces.
+Use explicit adaptive volume integration (`Volume(1e-8)`) for the round-trip
+comparison: the default non-adaptive integration produced a 0.00165 mm3
+disagreement on the unchanged C12880 socket, while adaptive integration reduced
+the disagreement to 0.0000032 mm3 without changing its shape.
+
+The overview includes every apparatus component with the shared 8% camera
+margin. A separate lower-stack view hides rotary hardware and upper optics but
+does not move the remaining parts. Its manifest lists included/omitted objects
+so it cannot be mistaken for a literal crop or another physical arrangement.
+
+`sync_horizontal_cascade.py --commit COMMIT` copies checksum-verified outputs,
+source and manifests into the matching Nutstore run and writes the requested
+`handoffs/vspice_v8_1_reply_20261028.json`. The handoff states explicitly that
+the motorized apparatus is a proposed update, not the apparatus used for the
+earlier four-angle measurements. Manuscript, acquisition, firmware, raw data
+and reconstruction ownership remain with their original sessions.
