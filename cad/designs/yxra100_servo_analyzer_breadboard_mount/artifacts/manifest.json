@@ -1,0 +1,747 @@
+{
+  "design": "yxra100_servo_analyzer_breadboard_mount",
+  "status": "measured mechanical integration prototype; optical working distance and load test still required",
+  "selected_motor": "40 mm / 100 W servo",
+  "analyzer": "complete GT090101 mount",
+  "parameters_mm": {
+    "breadboard_pitch": 25.0,
+    "breadboard_clearance_diameter": 6.4,
+    "breadboard_slot_length": 10.4,
+    "foot_xmin": 68.0,
+    "foot_xmax": 138.0,
+    "foot_y_half": 80.0,
+    "foot_thickness": 8.0,
+    "wall_xmin": 68.0,
+    "wall_xmax": 84.0,
+    "wall_y_half": 67.0,
+    "shelf_bottom": 114.0,
+    "shelf_thickness": 8.0,
+    "shelf_xmin": -62.0,
+    "shelf_xmax": 84.0,
+    "shelf_y_half": 67.0,
+    "shelf_aperture_diameter": 60.0,
+    "stage_bottom": 122.0,
+    "stage_height": 45.0,
+    "stage_aperture_diameter": 30.0,
+    "adapter_diameter": 78.0,
+    "adapter_thickness": 8.0,
+    "adapter_clear_aperture": 30.4,
+    "gt_pin_pitch": 30.0,
+    "gt_pin_diameter": 5.9,
+    "gt_pin_length": 16.0,
+    "ear_thickness": 1.0,
+    "ear_side_contact": 6.0,
+    "ear_diagonal_reach": 12.0,
+    "source_servo_axis_x": -42.3072444512695,
+    "source_servo_axis_y": 39.8466177128033,
+    "source_servo_bottom": -22.5
+  },
+  "stationary_base_holes_mm": [
+    [
+      -37.5,
+      -43.0
+    ],
+    [
+      37.5,
+      -43.0
+    ],
+    [
+      -43.0,
+      50.0
+    ]
+  ],
+  "measured_source_holes_mm": [
+    [
+      -43.0,
+      50.0
+    ],
+    [
+      -37.5,
+      -43.0
+    ],
+    [
+      37.5,
+      -43.0
+    ]
+  ],
+  "breadboard_holes_mm": [
+    [
+      100.0,
+      -50.0
+    ],
+    [
+      100.0,
+      0.0
+    ],
+    [
+      100.0,
+      50.0
+    ],
+    [
+      125.0,
+      -50.0
+    ],
+    [
+      125.0,
+      0.0
+    ],
+    [
+      125.0,
+      50.0
+    ]
+  ],
+  "rotor_attachment_holes_mm": [
+    [
+      -25.0,
+      -12.5
+    ],
+    [
+      -25.0,
+      12.5
+    ],
+    [
+      25.0,
+      -12.5
+    ],
+    [
+      25.0,
+      12.5
+    ]
+  ],
+  "cage_pin_centers_mm": [
+    [
+      -15.0,
+      -15.0
+    ],
+    [
+      -15.0,
+      15.0
+    ],
+    [
+      15.0,
+      -15.0
+    ],
+    [
+      15.0,
+      15.0
+    ]
+  ],
+  "geometry_validation": {
+    "breadboard_foot": {
+      "bounds_mm": {
+        "min": [
+          68.0,
+          -80.0,
+          0.0
+        ],
+        "max": [
+          138.0,
+          80.0,
+          8.0
+        ],
+        "size": [
+          70.0,
+          160.0,
+          8.0
+        ]
+      },
+      "solids": 1,
+      "volume_mm3": 85935.33472011278
+    },
+    "gusseted_L_support": {
+      "bounds_mm": {
+        "min": [
+          -62.0,
+          -67.0,
+          8.0
+        ],
+        "max": [
+          84.0,
+          67.0,
+          122.0
+        ],
+        "size": [
+          146.0,
+          134.0,
+          114.0
+        ]
+      },
+      "solids": 1,
+      "volume_mm3": 448365.9729185406
+    },
+    "rotating_analyzer_adapter": {
+      "bounds_mm": {
+        "min": [
+          -39.0,
+          -39.0,
+          0.0
+        ],
+        "max": [
+          39.0,
+          39.0,
+          24.0
+        ],
+        "size": [
+          78.0,
+          78.0,
+          24.0
+        ]
+      },
+      "solids": 1,
+      "volume_mm3": 32008.996397043742
+    },
+    "vendor_YXRA100_servo_positioned": {
+      "bounds_mm": {
+        "min": [
+          -49.9999999999685,
+          -49.99999999999705,
+          122.0
+        ],
+        "max": [
+          163.41565438867445,
+          70.0000001,
+          167.00000010000005
+        ],
+        "size": [
+          213.41565438864296,
+          120.00000009999704,
+          45.00000010000005
+        ]
+      },
+      "solids": 5,
+      "volume_mm3": 361403.1312766289
+    }
+  },
+  "print_validation": {
+    "breadboard_foot": {
+      "bounds_mm": {
+        "min": [
+          -47.0000001,
+          -92.0000001000011,
+          0.0
+        ],
+        "max": [
+          47.0000001,
+          92.0000001000011,
+          8.0
+        ],
+        "size": [
+          94.0000002,
+          184.0000002000022,
+          8.0
+        ]
+      },
+      "solids": 1,
+      "volume_mm3": 86973.33472491207,
+      "watertight": true,
+      "mesh_components": 1,
+      "min_z_mm": 0.0,
+      "first_layer_nonempty": true,
+      "three_mf_build_items": 1
+    },
+    "L_support": {
+      "bounds_mm": {
+        "min": [
+          -69.0,
+          -79.00000000000111,
+          0.0
+        ],
+        "max": [
+          69.0,
+          79.00000000000111,
+          146.0
+        ],
+        "size": [
+          138.0,
+          158.00000000000222,
+          146.0
+        ]
+      },
+      "solids": 1,
+      "volume_mm3": 449403.9729185387,
+      "watertight": true,
+      "mesh_components": 1,
+      "min_z_mm": 0.0,
+      "first_layer_nonempty": true,
+      "three_mf_build_items": 1
+    },
+    "GT_adapter": {
+      "bounds_mm": {
+        "min": [
+          -39.0,
+          -39.0,
+          0.0
+        ],
+        "max": [
+          39.0,
+          39.0,
+          24.0
+        ],
+        "size": [
+          78.0,
+          78.0,
+          24.0
+        ]
+      },
+      "solids": 1,
+      "volume_mm3": 32008.996397043742,
+      "watertight": true,
+      "mesh_components": 1,
+      "min_z_mm": 0.0,
+      "first_layer_nonempty": true,
+      "three_mf_build_items": 1
+    }
+  },
+  "interference_volume_mm3": {
+    "stationary_stage": 0,
+    "dock": 0,
+    "sample_holder": 0,
+    "rotor_vs_support": 0,
+    "GT_vs_adapter": 0
+  },
+  "rotating_assembly_max_interference_mm3_15deg_samples": 0,
+  "assembly_step_round_trip_valid": true,
+  "render_components": [
+    {
+      "name": "breadboard_foot",
+      "mesh": "scene_breadboard_foot.stl",
+      "color": [
+        0.16,
+        0.34,
+        0.42
+      ]
+    },
+    {
+      "name": "gusseted_L_support",
+      "mesh": "scene_gusseted_L_support.stl",
+      "color": [
+        0.2,
+        0.43,
+        0.51
+      ]
+    },
+    {
+      "name": "YXRA100_servo_vendor",
+      "mesh": "scene_YXRA100_servo_vendor.stl",
+      "color": [
+        0.1,
+        0.11,
+        0.13
+      ]
+    },
+    {
+      "name": "rotating_analyzer_adapter",
+      "mesh": "scene_rotating_analyzer_adapter.stl",
+      "color": [
+        0.85,
+        0.56,
+        0.16
+      ]
+    },
+    {
+      "name": "GT090101_analyzer",
+      "mesh": "scene_GT090101_analyzer.stl",
+      "color": [
+        0.12,
+        0.13,
+        0.15
+      ]
+    },
+    {
+      "name": "dock",
+      "mesh": "scene_dock.stl",
+      "color": [
+        0.24,
+        0.26,
+        0.29
+      ]
+    },
+    {
+      "name": "cage_rod_1_lower",
+      "mesh": "scene_cage_rod_1_lower.stl",
+      "color": [
+        0.58,
+        0.62,
+        0.66
+      ]
+    },
+    {
+      "name": "cage_rod_2_lower",
+      "mesh": "scene_cage_rod_2_lower.stl",
+      "color": [
+        0.58,
+        0.62,
+        0.66
+      ]
+    },
+    {
+      "name": "cage_rod_3_lower",
+      "mesh": "scene_cage_rod_3_lower.stl",
+      "color": [
+        0.58,
+        0.62,
+        0.66
+      ]
+    },
+    {
+      "name": "cage_rod_4_lower",
+      "mesh": "scene_cage_rod_4_lower.stl",
+      "color": [
+        0.58,
+        0.62,
+        0.66
+      ]
+    },
+    {
+      "name": "spacer_L1_1",
+      "mesh": "scene_spacer_L1_1.stl",
+      "color": [
+        0.58,
+        0.62,
+        0.66
+      ]
+    },
+    {
+      "name": "spacer_L1_2",
+      "mesh": "scene_spacer_L1_2.stl",
+      "color": [
+        0.58,
+        0.62,
+        0.66
+      ]
+    },
+    {
+      "name": "spacer_L1_3",
+      "mesh": "scene_spacer_L1_3.stl",
+      "color": [
+        0.58,
+        0.62,
+        0.66
+      ]
+    },
+    {
+      "name": "spacer_L1_4",
+      "mesh": "scene_spacer_L1_4.stl",
+      "color": [
+        0.58,
+        0.62,
+        0.66
+      ]
+    },
+    {
+      "name": "spacer_L2_1",
+      "mesh": "scene_spacer_L2_1.stl",
+      "color": [
+        0.58,
+        0.62,
+        0.66
+      ]
+    },
+    {
+      "name": "spacer_L2_2",
+      "mesh": "scene_spacer_L2_2.stl",
+      "color": [
+        0.58,
+        0.62,
+        0.66
+      ]
+    },
+    {
+      "name": "spacer_L2_3",
+      "mesh": "scene_spacer_L2_3.stl",
+      "color": [
+        0.58,
+        0.62,
+        0.66
+      ]
+    },
+    {
+      "name": "spacer_L2_4",
+      "mesh": "scene_spacer_L2_4.stl",
+      "color": [
+        0.58,
+        0.62,
+        0.66
+      ]
+    },
+    {
+      "name": "spacer_L3_1",
+      "mesh": "scene_spacer_L3_1.stl",
+      "color": [
+        0.58,
+        0.62,
+        0.66
+      ]
+    },
+    {
+      "name": "spacer_L3_2",
+      "mesh": "scene_spacer_L3_2.stl",
+      "color": [
+        0.58,
+        0.62,
+        0.66
+      ]
+    },
+    {
+      "name": "spacer_L3_3",
+      "mesh": "scene_spacer_L3_3.stl",
+      "color": [
+        0.58,
+        0.62,
+        0.66
+      ]
+    },
+    {
+      "name": "spacer_L3_4",
+      "mesh": "scene_spacer_L3_4.stl",
+      "color": [
+        0.58,
+        0.62,
+        0.66
+      ]
+    },
+    {
+      "name": "lamp_holder",
+      "mesh": "scene_lamp_holder.stl",
+      "color": [
+        0.24,
+        0.26,
+        0.29
+      ]
+    },
+    {
+      "name": "lamp_pcb",
+      "mesh": "scene_lamp_pcb.stl",
+      "color": [
+        0.05,
+        0.36,
+        0.18
+      ]
+    },
+    {
+      "name": "tungsten_bulb",
+      "mesh": "scene_tungsten_bulb.stl",
+      "color": [
+        0.24,
+        0.26,
+        0.29
+      ]
+    },
+    {
+      "name": "tungsten_bulb_leads",
+      "mesh": "scene_tungsten_bulb_leads.stl",
+      "color": [
+        0.24,
+        0.26,
+        0.29
+      ]
+    },
+    {
+      "name": "lcd_holder",
+      "mesh": "scene_lcd_holder.stl",
+      "color": [
+        0.24,
+        0.26,
+        0.29
+      ]
+    },
+    {
+      "name": "qyh1123_lcd",
+      "mesh": "scene_qyh1123_lcd.stl",
+      "color": [
+        0.24,
+        0.26,
+        0.29
+      ]
+    },
+    {
+      "name": "lcd_lower_polarizer",
+      "mesh": "scene_lcd_lower_polarizer.stl",
+      "color": [
+        0.24,
+        0.26,
+        0.29
+      ]
+    },
+    {
+      "name": "sample_holder_and_cap",
+      "mesh": "scene_sample_holder_and_cap.stl",
+      "color": [
+        0.24,
+        0.26,
+        0.29
+      ]
+    },
+    {
+      "name": "petri_dish",
+      "mesh": "scene_petri_dish.stl",
+      "color": [
+        0.12,
+        0.66,
+        0.65
+      ]
+    },
+    {
+      "name": "sample_volume",
+      "mesh": "scene_sample_volume.stl",
+      "color": [
+        0.12,
+        0.66,
+        0.65
+      ]
+    },
+    {
+      "name": "openhi_microscope_relocated",
+      "mesh": "scene_openhi_microscope_relocated.stl",
+      "color": [
+        0.57,
+        0.6,
+        0.63
+      ]
+    },
+    {
+      "name": "GT_to_microscope_proxy",
+      "mesh": "scene_GT_to_microscope_proxy.stl",
+      "color": [
+        0.35,
+        0.38,
+        0.41
+      ]
+    },
+    {
+      "name": "primary_openhi_4f",
+      "mesh": "scene_primary_openhi_4f.stl",
+      "color": [
+        0.22,
+        0.25,
+        0.28
+      ]
+    },
+    {
+      "name": "microscope_to_4f_adapter",
+      "mesh": "scene_microscope_to_4f_adapter.stl",
+      "color": [
+        0.22,
+        0.25,
+        0.28
+      ]
+    },
+    {
+      "name": "frame_camera_cmount",
+      "mesh": "scene_frame_camera_cmount.stl",
+      "color": [
+        0.22,
+        0.25,
+        0.28
+      ]
+    },
+    {
+      "name": "frame_camera_body",
+      "mesh": "scene_frame_camera_body.stl",
+      "color": [
+        0.12,
+        0.32,
+        0.48
+      ]
+    },
+    {
+      "name": "c12880_socket",
+      "mesh": "scene_c12880_socket.stl",
+      "color": [
+        0.22,
+        0.25,
+        0.28
+      ]
+    },
+    {
+      "name": "c12880_plate",
+      "mesh": "scene_c12880_plate.stl",
+      "color": [
+        0.22,
+        0.25,
+        0.28
+      ]
+    },
+    {
+      "name": "c12880_board",
+      "mesh": "scene_c12880_board.stl",
+      "color": [
+        0.04,
+        0.4,
+        0.22
+      ]
+    },
+    {
+      "name": "c12880_sensor",
+      "mesh": "scene_c12880_sensor.stl",
+      "color": [
+        0.22,
+        0.25,
+        0.28
+      ]
+    },
+    {
+      "name": "c12880_pins",
+      "mesh": "scene_c12880_pins.stl",
+      "color": [
+        0.22,
+        0.25,
+        0.28
+      ]
+    }
+  ],
+  "sources": {
+    "servo_stage": {
+      "path": "cad/references/yixuan-yxra100/YXRA100_100W_servo.step",
+      "sha256": "bc906f510eb8fb7615cb9799a3f3a960d83953841b2b4cb979cdeee9974b9476"
+    },
+    "drawing": {
+      "path": "cad/references/yixuan-yxra100/YXRA100_40_servo_specification.pdf",
+      "sha256": "457e57848866dcd8f1c01a5b0db9e289482868d0432f57bd8cb340b3d64ffe2c"
+    },
+    "GT090101": {
+      "path": "cad/references/hengyang-gt090101/GT-090101.stp",
+      "sha256": "ad6d1b66d761dd97ff2963dfd4794ae73e7354b6353e449c3c3a0ae6b2fec734"
+    },
+    "sample_holder": {
+      "path": "cad/designs/cage_sample_holder_two_piece_lock_slide_petri35/runs/run-2-correct-30mm-cage-rod-sockets-20260709T032257Z/artifacts/cage_sample_holder_two_piece_lock_slide_petri35_assembled.step",
+      "sha256": "db93bf8092b52f942bf25bac1057f353f54bf3c06bda5d70a88f8395b400eeff"
+    }
+  },
+  "source_transform": "translate optical center to XY origin and underside to Z=0; rotate +90 deg about Z; translate Z=122 mm",
+  "vendor_topology": {
+    "solids": 5,
+    "shells": 50,
+    "note": "The servo motor includes open vendor surface shells. They are preserved, not silently discarded or claimed printable."
+  },
+  "optical_constraints": {
+    "sample_holder_top_z_mm": 109.0,
+    "shelf_bottom_z_mm": 114.0,
+    "vertical_gap_mm": 5.0,
+    "stage_top_z_mm": 167.0,
+    "GT_bottom_z_mm": 175.0,
+    "GT_top_z_mm": 193.00000020027773,
+    "required_microscope_upshift_mm": 61.000000200277725,
+    "focus_validated": false,
+    "note": "Raising the microscope is only a collision-free integration layout, not proof of preserved sample focus. Verify objective working distance before printing the large support."
+  },
+  "remote_context": {
+    "requested_host": "CSG1175-P",
+    "read_success": false,
+    "reason": "Native UU terminal refused because another controller owns the device; no takeover performed."
+  },
+  "hardware": [
+    "6x M6 breadboard screws and washers; use lengths suitable for the actual table",
+    "2x M5 x 20 socket screws and M5 nuts for foot-to-support joint",
+    "3x M6 x 25 socket screws and M6 nuts for stationary stage base",
+    "4x M6 x 10 low-head screws, head height <=4.5 mm, for rotating adapter",
+    "GT090101 side-lock screws clamp the four 5.9 mm printed locating pins; do not retain any rods joining it to the stationary sample stage"
+  ],
+  "limitations": [
+    "No stage motion or electrical control was performed.",
+    "The support is a fit/clearance prototype, not a structural or thermal load certification.",
+    "Use rigid metal for final metrology support; printed polymer can creep under the roughly 1.85 kg stage.",
+    "Cable bend radius, live specimen access, screw lengths and microscope working distance need physical verification.",
+    "The 25 mm breadboard grid is a metric-board assumption, not a measurement of this particular table."
+  ]
+}

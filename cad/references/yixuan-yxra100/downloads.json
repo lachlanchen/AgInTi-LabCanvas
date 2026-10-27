@@ -1,0 +1,48 @@
+{
+  "supplier": "Beijing Yixuan Motion Control",
+  "catalog": "https://a590136ec28bee41f.bj6.agentos-app.net",
+  "files": [
+    {
+      "file": "YXRA100_standard.step",
+      "source": "https://a590136ec28bee41f.bj6.agentos-app.net/api/file/msqvn53v651c670c/download",
+      "catalog_name": "YXRA100三维模型.STEP",
+      "bytes": 2125230,
+      "sha256": "c865dad724e39ebbc263b116794b868b05ba2cfe20a91630ebb6621a3103d6bb"
+    },
+    {
+      "file": "YXRA100_100W_servo.step",
+      "source": "https://a590136ec28bee41f.bj6.agentos-app.net/api/file/msqvjiy06f49145d/download",
+      "catalog_name": "YXRA100-100W伺服.STEP",
+      "bytes": 9109931,
+      "sha256": "bc906f510eb8fb7615cb9799a3f3a960d83953841b2b4cb979cdeee9974b9476"
+    },
+    {
+      "file": "YXRA100_57_motor.step",
+      "source": "https://a590136ec28bee41f.bj6.agentos-app.net/api/file/msqvjjedde4b3504/download",
+      "catalog_name": "YXRA100（57电机）.STEP",
+      "bytes": 1104116,
+      "sha256": "ebe1f4ecdfe22bce5eb17ed38846f7d94cd64d567ed2a90860abc7ec08746337"
+    },
+    {
+      "file": "YXRA100_optical_specification.pdf",
+      "source": "https://a590136ec28bee41f.bj6.agentos-app.net/api/file/msqvles37005fbba/download",
+      "catalog_name": "光学旋转台-YXRA100产品规格书.pdf",
+      "bytes": 6320200,
+      "sha256": "7f241d8b74cc4980a4c59b2e5bca4348729fb5c2189a330a4dbe3c26aacc5689"
+    },
+    {
+      "file": "YXRA100_40_servo_specification.pdf",
+      "source": "https://a590136ec28bee41f.bj6.agentos-app.net/api/file/msqvkaq63fe44189/download",
+      "catalog_name": "YXRA100-40伺服产品规格书.pdf",
+      "bytes": 13453662,
+      "sha256": "457e57848866dcd8f1c01a5b0db9e289482868d0432f57bd8cb340b3d64ffe2c"
+    },
+    {
+      "file": "YXRA100_42PUL_specification.pdf",
+      "source": "https://a590136ec28bee41f.bj6.agentos-app.net/api/file/msqvkhib29847562/download",
+      "catalog_name": "YXRA100-42PUL产品规格书.pdf",
+      "bytes": 17402428,
+      "sha256": "5301e39812d18c039723ccf8f25a51d03f44027215aa0760ce6ff727eaa165c4"
+    }
+  ]
+}

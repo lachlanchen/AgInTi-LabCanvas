@@ -1,0 +1,4 @@
+*.step
+*.pdf
+*.png
+__pycache__/
