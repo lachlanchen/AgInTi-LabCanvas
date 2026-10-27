@@ -10,7 +10,8 @@ DESIGN = ROOT / "cad/designs/openhi_vertical_multimodal_microscope_setup"
 class OpenHIVerticalMultimodalSetupTests(unittest.TestCase):
     def setUp(self):
         self.manifest_path = DESIGN / "artifacts/manifest.json"
-        if not self.manifest_path.exists():
+        final_step = DESIGN / "USE_THIS_openhi_vertical_multimodal_microscope_setup_single_4f.step"
+        if not self.manifest_path.exists() or not final_step.exists():
             self.skipTest("CAD assembly has not been built")
         self.manifest = json.loads(self.manifest_path.read_text())
 
@@ -48,6 +49,30 @@ class OpenHIVerticalMultimodalSetupTests(unittest.TestCase):
         for variant in self.manifest["variants"].values():
             self.assertTrue((ROOT / variant["assembly_step"]).exists())
             self.assertTrue((ROOT / variant["use_this_step"]).exists())
+
+    def test_vertical_cascade_aligns_actual_b_axis(self):
+        vertical = self.manifest["variants"]["dual_4f_vertical"]
+        second = vertical["secondary_4f"]
+        self.assertAlmostEqual(second["a_input_z_mm"] - vertical["datums_mm"]["primary_b_output_z"], 3)
+        self.assertAlmostEqual(second["a_input_x_mm"], -0.367)
+        self.assertAlmostEqual(second["b_output_x_mm"], -0.734)
+        self.assertEqual(second["rotation_y_deg"], 0)
+        self.assertIn("frame camera", vertical["detector_contract"]["first_split_port"])
+        self.assertIn("event camera", vertical["detector_contract"]["second_straight_port"])
+        self.assertIn("C12880MA", vertical["detector_contract"]["second_split_port"])
+
+    def test_complete_cameras_have_safe_margins(self):
+        path = DESIGN / "artifacts/renders/camera_validation.json"
+        if not path.exists():
+            self.skipTest("Full-frame renders not generated")
+        records = json.loads(path.read_text())
+        self.assertEqual(len(records), 5)
+        for record in records:
+            bounds = record["projected_bounds"]
+            self.assertGreaterEqual(bounds["xmin"], 0.079)
+            self.assertLessEqual(bounds["xmax"], 0.921)
+            self.assertGreaterEqual(bounds["ymin"], 0.079)
+            self.assertLessEqual(bounds["ymax"], 0.921)
 
 
 if __name__ == "__main__":

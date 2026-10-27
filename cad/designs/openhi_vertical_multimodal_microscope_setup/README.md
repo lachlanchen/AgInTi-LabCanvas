@@ -1,6 +1,6 @@
 # Vertical Multimodal OpenHI Microscope Setup
 
-This project reconstructs the photographed vertical apparatus as two aligned CAD assemblies. It reuses the accepted source parts rather than redrawing them:
+This project reconstructs the photographed vertical apparatus as three aligned CAD assemblies. It reuses the accepted source parts rather than redrawing them:
 
 - 100 mm cage dock and 30 mm cage datum;
 - axial spacer collars;
@@ -24,16 +24,36 @@ The lower train shares one vertical axis: source, LCD, sample, analyzer, microsc
 
 The single-relay version routes the straight output to a frame-camera proxy and the split output to the C12880MA assembly. The cascaded version keeps the frame branch, places the second relay directly on the first split port, and terminates its outputs at an event-camera proxy and C12880MA. The second relay is a rigid `+90 deg` rotation about `Y`; its A-input plane is `3 mm` beyond the first C-output plane.
 
+The additional **vertical cascade** places the second A input above the first
+B output with the same 3 mm interface gap. The first lateral port carries the
+frame camera, the second lateral port carries C12880MA, and the second straight
+port carries the event-camera proxy. The second input is shifted X=-0.367 mm
+to match the first relay's actual B axis. The second B axis then finishes at
+X=-0.734 mm; the accepted per-relay beam-splitter compensation is preserved.
+This is a mechanically positioned visualization, not a new optical-performance
+or exact sensor conjugate qualification.
+
 ## Files To Use
 
 - `USE_THIS_openhi_vertical_multimodal_microscope_setup_single_4f.step`
 - `USE_THIS_openhi_vertical_multimodal_microscope_setup_dual_4f.step`
+- `USE_THIS_openhi_vertical_multimodal_microscope_setup_dual_4f_vertical.step`
 - `artifacts/figures/Figure_1_vertical_multimodal_openhi_setup.pdf`
 - `artifacts/figures/Figure_1_vertical_multimodal_openhi_setup.svg`
 - `artifacts/renders/single_4f_nature.png`
 - `artifacts/renders/dual_4f_nature.png`
+- `artifacts/renders/dual_4f_vertical_nature.png`
+- `artifacts/figures/Figure_2_vertical_cascade_openhi_setup.pdf`
 
 `artifacts/manifest.json` is the source of truth for source hashes, component identity, placements, optical paths and validation.
+
+Run 1 is preserved at `runs/run-1-apparatus-single-dual-4f-20261027T132540Z/`,
+including its initial figures. Run 2 is
+`runs/run-2-vertical-cascade-full-frame-20261027T140302Z/` and contains the new
+vertical assembly plus corrected full-frame renders. The accepted lower-stack
+close-up remains unchanged. All full views and detector details now use
+`cad/tools/blender_camera_fit.py`, with camera-space bounding-box checks and
+an 8% margin. `artifacts/renders/camera_validation.json` records that evidence.
 
 ## Rebuild
 

@@ -70,6 +70,29 @@ def main() -> None:
         fig.savefig(target, dpi=300 if suffix == "png" else None, bbox_inches="tight", facecolor="white")
     plt.close(fig)
 
+    vertical = [
+        ("a", "Vertically cascaded relays", RENDER_DIR / "dual_4f_vertical_nature.png", [0.025, 0.14, 0.46, 0.82]),
+        ("b", "Complete detector branches", RENDER_DIR / "dual_4f_vertical_detector_detail.png", [0.51, 0.53, 0.47, 0.43]),
+        ("c", "Source and sample stack", RENDER_DIR / "single_4f_lower_stack_detail.png", [0.51, 0.14, 0.47, 0.35]),
+    ]
+    fig = plt.figure(figsize=(7.1, 8.6), facecolor="white")
+    for letter, title, path, rectangle in vertical:
+        ax = fig.add_axes(rectangle)
+        ax.imshow(Image.open(path))
+        ax.set_axis_off()
+        ax.set_title(f"{letter}  {title}", loc="left", fontsize=8, fontweight="bold", pad=7)
+    caption = (
+        "Vertical cascade of two accepted OpenHI relays. The first lateral port records the frame-camera branch; "
+        "the second relay provides the event-camera and C12880MA branches. The 3 mm interface gap and each relay's "
+        "0.367 mm beam-splitter axis compensation are retained. All detectors are shown within the image bounds. "
+        "The lower-stack detail is unchanged. Camera housings and short adapters are visualization proxies."
+    )
+    fig.text(0.035, 0.025, caption, ha="left", va="bottom", fontsize=7.2, color="#252525", wrap=True)
+    for suffix in ("png", "pdf", "svg"):
+        fig.savefig(FIGURE_DIR / f"Figure_2_vertical_cascade_openhi_setup.{suffix}",
+                    dpi=300 if suffix == "png" else None, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+
 
 if __name__ == "__main__":
     main()

@@ -26,7 +26,7 @@ ROOT = Path(__file__).resolve().parents[3]
 DESIGN_DIR = Path(__file__).resolve().parent
 ARTIFACT_DIR = DESIGN_DIR / "artifacts"
 RENDER_MESH_DIR = ARTIFACT_DIR / "render_meshes"
-RUN_DIR = DESIGN_DIR / "runs" / "run-1-apparatus-single-dual-4f-20261027T132540Z"
+RUN_DIR = DESIGN_DIR / "runs" / "run-2-vertical-cascade-full-frame-20261027T140302Z"
 STEM = "openhi_vertical_multimodal_microscope_setup"
 
 PHOTO_REFERENCES = {
@@ -73,6 +73,7 @@ P = {
     "openhi_source_bs_mm": [255.0, 210.0, 600.0],
     "openhi_source_a_input_z_mm": 499.8,
     "openhi_source_b_output_z_mm": 704.4,
+    "openhi_source_b_axis_shift_mm": -0.367,
     "openhi_source_c_output_x_mm": 359.4,
     "primary_a_input_gap_mm": 3.0,
     "cascade_input_gap_mm": 3.0,
@@ -315,8 +316,9 @@ def build_common() -> tuple[list[Component], dict[str, float]]:
 
 def build_variant(name: str) -> tuple[list[Component], dict[str, Any]]:
     components, datums = build_common()
-    frame_parts = camera_proxy_z("frame_camera", 34.0, 34.0, datums["primary_b_output_z"], direction=1)
-    components.extend(frame_parts)
+    if name != "dual_4f_vertical":
+        frame_parts = camera_proxy_z("frame_camera", 34.0, 34.0, datums["primary_b_output_z"], direction=1)
+        components.extend(frame_parts)
 
     optical_paths = [
         {"name": "illumination", "points": [[0, 0, 36], [0, 0, 140]], "color": "warm"},
@@ -369,6 +371,46 @@ def build_variant(name: str) -> tuple[list[Component], dict[str, Any]]:
             "a_input_x_mm": round(second_bs_x + source_a_offset, 6),
             "b_output_x_mm": round(secondary_b_x, 6),
             "c_output_z_mm": round(secondary_c_z, 6),
+        }
+    elif name == "dual_4f_vertical":
+        shift = P["openhi_source_b_axis_shift_mm"]
+        source_a_offset = P["openhi_source_a_input_z_mm"] - P["openhi_source_bs_mm"][2]
+        source_b_offset = P["openhi_source_b_output_z_mm"] - P["openhi_source_bs_mm"][2]
+        second_a_z = datums["primary_b_output_z"] + P["cascade_input_gap_mm"]
+        second_bs_z = second_a_z - source_a_offset
+        second_bs = (shift, 0.0, second_bs_z)
+        second = place_openhi(import_step(SOURCE["four_f"]), second_bs)
+        components.append(Component("secondary_openhi_4f", second, "polymer", repo_path(SOURCE["four_f"])))
+        link = ring(40, 25, P["cascade_input_gap_mm"], datums["primary_b_output_z"]).translate((shift, 0, 0))
+        components.append(Component("vertical_cascade_spacer", link, "polymer_mid", "3 mm interface visualization proxy", exact=False))
+        frame_parts = camera_proxy_x("frame_camera", 34, 34, datums["primary_c_output_x"])
+        for part in frame_parts:
+            part.shape = part.shape.translate((0, 0, datums["primary_bs_z"]))
+        components.extend(frame_parts)
+        second_b_z = second_bs_z + source_b_offset
+        for part in camera_proxy_z("event_camera", 40, 38, second_b_z):
+            part.shape = part.shape.translate((2 * shift, 0, 0))
+            components.append(part)
+        second_c_x = shift + datums["primary_c_output_x"]
+        components.extend(place_c12880(second_c_x, second_bs_z, "c12880"))
+        optical_paths = optical_paths[:2] + [
+            {"name": "first_frame_output", "points": [[0, 0, datums["primary_bs_z"]], [datums["primary_c_output_x"] + 6, 0, datums["primary_bs_z"]]], "color": "cyan"},
+            {"name": "vertical_cascade_link", "points": [[shift, 0, datums["primary_bs_z"]], [shift, 0, second_bs_z]], "color": "green"},
+            {"name": "second_event_output", "points": [[2 * shift, 0, second_bs_z], [2 * shift, 0, second_b_z + 6]], "color": "orange"},
+            {"name": "second_spectral_output", "points": [[shift, 0, second_bs_z], [second_c_x + 6, 0, second_bs_z]], "color": "green"},
+        ]
+        detector_contract = {
+            "first_straight_port": "second accepted 4f assembly input, vertically above first relay",
+            "first_split_port": "frame camera visualization proxy",
+            "second_straight_port": "event camera visualization proxy",
+            "second_split_port": "accepted C12880MA holder and module proxies",
+        }
+        secondary = {
+            "beam_splitter_center_mm": list(second_bs), "rotation_y_deg": 0.0,
+            "a_input_x_mm": shift, "a_input_z_mm": second_a_z,
+            "b_output_x_mm": 2 * shift, "b_output_z_mm": second_b_z,
+            "c_output_x_mm": second_c_x, "c_output_z_mm": second_bs_z,
+            "preserved_per_relay_b_axis_shift_mm": shift,
         }
     else:
         raise ValueError(name)
@@ -452,7 +494,7 @@ def main() -> None:
 
     variant_results: dict[str, Any] = {}
     use_this_paths = []
-    for name in ("single_4f", "dual_4f"):
+    for name in ("single_4f", "dual_4f", "dual_4f_vertical"):
         components, details = build_variant(name)
         step_path, output = export_variant(name, components)
         use_this = DESIGN_DIR / f"USE_THIS_{STEM}_{name}.step"
@@ -460,9 +502,9 @@ def main() -> None:
         use_this_paths.append(use_this)
         primary_target = (0.0, 0.0, float(details["datums_mm"]["primary_bs_z"]))
         render_parts = transform_four_f_render_meshes(name, primary_target, 0.0, "primary_4f")
-        if name == "dual_4f":
+        if name.startswith("dual_4f"):
             second_target = tuple(details["secondary_4f"]["beam_splitter_center_mm"])
-            render_parts.extend(transform_four_f_render_meshes(name, second_target, 90.0, "secondary_4f"))
+            render_parts.extend(transform_four_f_render_meshes(name, second_target, details["secondary_4f"]["rotation_y_deg"], "secondary_4f"))
         output.update(details)
         output["assembly_step"] = repo_path(step_path)
         output["use_this_step"] = repo_path(use_this)
@@ -472,6 +514,9 @@ def main() -> None:
     dual = variant_results["dual_4f"]
     primary_c = float(dual["datums_mm"]["primary_c_output_x"])
     secondary_input = float(dual["secondary_4f"]["a_input_x_mm"])
+    vertical = variant_results["dual_4f_vertical"]
+    vertical_input = vertical["secondary_4f"]["a_input_z_mm"]
+    vertical_gap = vertical_input - vertical["datums_mm"]["primary_b_output_z"]
     alignment_checks = {
         "all_cage_centers_share_xy_origin": True,
         "cage_rods_are_on_30mm_square": P["cage_pitch_mm"] == 30.0,
@@ -480,6 +525,8 @@ def main() -> None:
         "cascade_gap_matches_contract": abs((secondary_input - primary_c) - P["cascade_input_gap_mm"]) < 1e-8,
         "single_has_one_4f_and_two_detector_ports": True,
         "dual_has_two_4f_relays_and_three_detector_ports": True,
+        "vertical_cascade_gap_matches_contract": abs(vertical_gap - P["cascade_input_gap_mm"]) < 1e-8,
+        "vertical_cascade_preserves_b_axis_shift": vertical["secondary_4f"]["a_input_x_mm"] == P["openhi_source_b_axis_shift_mm"],
         "all_step_round_trips_valid": all(v["validation"]["step_round_trip_valid"] for v in variant_results.values()),
     }
     if not all(alignment_checks.values()):
@@ -542,8 +589,8 @@ def main() -> None:
 
     copy_run_snapshot([manifest_path, *[ARTIFACT_DIR / f"{STEM}_{name}_assembly.step" for name in variant_results]])
     (RUN_DIR / "README.md").write_text(
-        "# Run 1: single and cascaded OpenHI apparatus\n\n"
-        "This snapshot records the first validated assembly placement. Source parts remain in their original projects.\n",
+        "# Run 2: vertical cascade and complete detector framing\n\n"
+        "Includes the unchanged single/lateral-cascade layouts and a new vertical cascade. Run 1 remains preserved.\n",
         encoding="utf-8",
     )
     print(json.dumps({"manifest": repo_path(manifest_path), "use_this": [repo_path(p) for p in use_this_paths], "checks": alignment_checks}, indent=2))

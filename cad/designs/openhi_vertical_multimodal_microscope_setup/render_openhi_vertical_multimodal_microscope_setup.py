@@ -12,6 +12,11 @@ from pathlib import Path
 import bpy
 from mathutils import Vector
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
+from blender_camera_fit import fit_camera_to_objects
+
+CAMERA_RECORDS = []
+
 
 PALETTE = {
     "polymer": (0.055, 0.065, 0.078, 1.0),
@@ -207,35 +212,46 @@ def render(path: Path, resolution: tuple[int, int]) -> None:
 
 def render_variant(design_dir: Path, manifest: dict, variant: str, samples: int) -> None:
     mats = setup_scene(samples)
-    import_variant_meshes(design_dir, variant, manifest, mats)
-    add_optical_paths(manifest, variant)
+    objects = import_variant_meshes(design_dir, variant, manifest, mats)
+    paths = add_optical_paths(manifest, variant)
     out = design_dir / "artifacts" / "renders"
     out.mkdir(parents=True, exist_ok=True)
 
+    def checked_view(filename, selected, resolution, direction):
+        scene = bpy.context.scene
+        scene.render.resolution_x, scene.render.resolution_y = resolution
+        scene.render.resolution_percentage = 100
+        fit, bounds = fit_camera_to_objects(selected, direction=direction)
+        CAMERA_RECORDS.append({"variant": variant, "file": filename, "projected_bounds": bounds,
+                               "object_count": len(selected)})
+        render(out / filename, resolution)
+        bpy.data.objects.remove(fit, do_unlink=True)
+
+    full_resolution = (2200, 1700) if variant == "dual_4f" else (1800, 2400)
+    checked_view(f"{variant}_nature.png", objects, full_resolution, (1.2, -1.8, 0.6))
     if variant == "single_4f":
-        camera((510, -700, 540), (15, 0, 335), 760)
-        render(out / "single_4f_nature.png", (1700, 2200))
-        bpy.context.scene.camera.location = (255, -330, 205)
-        bpy.context.scene.camera.rotation_euler = (Vector((0, 0, 82)) - bpy.context.scene.camera.location).to_track_quat("-Z", "Y").to_euler()
-        bpy.context.scene.camera.data.ortho_scale = 230
-        render(out / "single_4f_lower_stack_detail.png", (1800, 1500))
-        bpy.ops.wm.save_as_mainfile(filepath=str(out / "single_4f_scene.blend"))
+        # The accepted close-up deliberately shows the local stack with the
+        # microscope continuing out of frame. Preserve this requested detail.
+        detail = out / "single_4f_lower_stack_detail.png"
+        if not detail.exists():
+            camera((255, -330, 205), (0, 0, 82), 230)
+            render(detail, (1800, 1500))
     else:
-        camera((720, -880, 590), (105, 0, 350), 810)
-        render(out / "dual_4f_nature.png", (2200, 1700))
-        bpy.context.scene.camera.location = (560, -520, 560)
-        bpy.context.scene.camera.rotation_euler = (Vector((190, 0, 530)) - bpy.context.scene.camera.location).to_track_quat("-Z", "Y").to_euler()
-        bpy.context.scene.camera.data.ortho_scale = 390
-        render(out / "dual_4f_detector_detail.png", (1900, 1500))
-        bpy.ops.wm.save_as_mainfile(filepath=str(out / "dual_4f_scene.blend"))
+        upper = [obj for obj in objects if obj.name.startswith(("primary_4f_", "secondary_4f_", "frame_camera", "event_camera", "c12880", "vertical_cascade"))]
+        for obj in objects:
+            obj.hide_render = obj not in upper
+        for obj in paths:
+            obj.hide_render = True
+        checked_view(f"{variant}_detector_detail.png", upper, (1900, 1600), (1.2, -1.8, 0.75))
 
 
 def main() -> None:
     args = parse_args()
     design_dir = args.design_dir.resolve()
     manifest = json.loads((design_dir / "artifacts" / "manifest.json").read_text())
-    for variant in ("single_4f", "dual_4f"):
+    for variant in ("single_4f", "dual_4f", "dual_4f_vertical"):
         render_variant(design_dir, manifest, variant, args.samples)
+    (design_dir / "artifacts/renders/camera_validation.json").write_text(json.dumps(CAMERA_RECORDS, indent=2) + "\n")
 
 
 if __name__ == "__main__":
