@@ -1080,6 +1080,7 @@ Do not perform the task and do not write files. Check whether the candidate resu
 
 Rules:
 - Keep consecutive messages as separate checklist items. Never silently drop an earlier independent request because a newer message exists.
+- Require substantive coverage of each item in the supplied candidate, including the original item before interruptions. Phrases such as "the remaining items", "already answered", or "the next twelve" are not delivery evidence. An unsent prior assistant draft or acknowledgement does not cover an omitted item; do not assume an earlier answer was delivered outside this packet.
 - A newer explicit contradiction may update an older detail, but unrelated requirements remain active.
 - When `current_route_state.external_fact_grounding_required` is true, the candidate must establish the named external example's actual relevant identity, product, mechanism, or role with traceable authoritative evidence before extending the comparison. A generic analogy that assumes what the example means, or an answer that skips the named premise and discusses only the surrounding topic, is missing the core action.
 - Preserve sender attribution. Do not transfer one member's request or preference to another member.

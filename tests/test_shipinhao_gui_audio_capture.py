@@ -23,6 +23,17 @@ def load_module():
 
 
 class ShipinhaoGuiAudioCaptureTests(unittest.TestCase):
+    def test_wide_window_keeps_incoming_cards_inside_message_scan(self) -> None:
+        module = load_module()
+        for width in (1000, 1440, 1920, 2560):
+            with self.subTest(width=width):
+                region = module.message_pane_region(mock.Mock(width=width, height=1080))
+                self.assertGreaterEqual(region["left"], 300)
+                self.assertLessEqual(region["left"], 370)
+                self.assertLess(region["left"], 437)
+                self.assertGreater(region["left"] + region["width"], 697)
+                self.assertEqual(region["left"] + region["width"], width - 8)
+
     def test_native_share_menu_copies_only_exact_link_action(self) -> None:
         module = load_module()
         clipboard_reads = 0

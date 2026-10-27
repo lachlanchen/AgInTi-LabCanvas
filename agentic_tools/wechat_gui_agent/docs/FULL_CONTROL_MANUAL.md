@@ -1,5 +1,9 @@
 # WeChat Full Control Manual
 
+For maximized native windows and consecutive shares, see
+[batch and wide-window recovery](../../../references/wechat-batch-and-wide-window-recovery-2026-10-27.md).
+Preserve exact-recipient checks and distinguish unsent drafts from delivered replies.
+
 For a Windows-to-native-Ubuntu recovery, use
 [Ubuntu transport recovery](../../../references/ubuntu-wechat-transport-recovery-2026-10-20.md).
 Reconcile server IDs before switching intake, preserve uncertain-send receipts,

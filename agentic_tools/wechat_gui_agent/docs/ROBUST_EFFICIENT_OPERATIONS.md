@@ -1,5 +1,9 @@
 # Robust And Efficient Operations
 
+For a batch that finishes but does not send, check header OCR and native receipts
+before rerunning research. See [batch and wide-window recovery](../../../references/wechat-batch-and-wide-window-recovery-2026-10-27.md)
+for Channels scan geometry, verified original-video delivery, and interruption coverage.
+
 For failed daily reports, distinguish unavailable reviewers from content defects
 and resume the source-bound reviewed draft. Native header OCR must exclude
 toolbar columns and message-body lines. See

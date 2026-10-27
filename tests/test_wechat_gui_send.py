@@ -1392,6 +1392,17 @@ class WeChatGuiSendTests(unittest.TestCase):
             "My devices (12)              ...", ["My devices"],
         ))
 
+    def test_primary_header_crop_excludes_caption_buttons_and_message_body(self):
+        module = load_wechat_gui_send()
+        for width in (1000, 1920):
+            window = module.Window("1", 20, 50, width, 1080)
+            region = module.title_crop_regions(window)[0]
+            self.assertEqual(region["top"], window.y + 24)
+            self.assertEqual(region["top"] + region["height"], window.y + 72)
+            self.assertLessEqual(region["left"] + region["width"], window.x + width - 80)
+        self.assertTrue(module.header_title_identity_matches("Shares鏈接(4)", ["Shares鏈接"]))
+        self.assertFalse(module.header_title_identity_matches("- 0\nShares鏈接(4)", ["Shares鏈接"]))
+
     def test_header_identity_does_not_match_body_or_another_column(self):
         module = load_wechat_gui_send()
         for text in (

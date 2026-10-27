@@ -27,6 +27,16 @@ SPEC.loader.exec_module(audit)
 
 
 class WeChatCompletionAuditTests(unittest.TestCase):
+    def test_batch_audit_does_not_assume_original_reply_was_delivered(self) -> None:
+        task = self.task()
+        prompt = audit.completion_audit_prompt(
+            task, {"message": "Here are the remaining items.", "files": []},
+            audit.coverage_items(task),
+        )
+        self.assertIn("including the original item before interruptions", prompt)
+        self.assertIn("An unsent prior assistant draft", prompt)
+        self.assertIn("are not delivery evidence", prompt)
+
     def test_missing_source_is_not_a_resend_or_approval_requirement(self) -> None:
         task = self.task()
         prompt = audit.completion_audit_prompt(

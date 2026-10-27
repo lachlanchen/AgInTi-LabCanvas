@@ -12498,6 +12498,7 @@ Same-chat interruption packet:
 - The monitor appended {len(interruptions)} newer same-chat message(s) to this active task.
 - Manifest: `{manifest_path or '(not written yet)'}`
 - These messages are authoritative updates for the next action. Do not answer from stale story/prompt context.
+- A prior assistant draft in this resumed session is not proof of chat delivery. When an interruption suppressed that draft, return one complete replacement covering the original request and all still-valid updates; do not answer only the newest batch or say "the rest" while silently omitting the original item. Reuse completed research and artifacts rather than repeating external actions. Only an explicit delivered-result record can justify a supplement instead.
 - If the user stopped a submitted Xiaoyunque run or says the story is wrong, update the story/prompt first and do not treat the stale run as success.
 ```json
 {json.dumps(summary, ensure_ascii=False, indent=2)}

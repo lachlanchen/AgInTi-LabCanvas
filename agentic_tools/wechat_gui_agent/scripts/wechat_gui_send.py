@@ -2184,9 +2184,11 @@ def title_crop_regions(window: Window) -> list[dict[str, int | str]]:
             {
                 "label": "main_right_header",
                 "left": window.x + 360,
-                "top": window.y + 32,
-                "width": max(300, window.width - 390),
-                "height": 78,
+                "top": window.y + 24,
+                # Exclude caption buttons above and message bodies below the
+                # chat heading; both can become Tesseract's first text line.
+                "width": min(800, max(300, window.width - 440)),
+                "height": 48,
             }
         )
         regions.append(

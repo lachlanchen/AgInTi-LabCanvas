@@ -741,7 +741,9 @@ def latest_message_button_candidate(
 
 
 def message_pane_region(window: Any) -> dict[str, int]:
-    left = int(window.width * 0.36)
+    # The native chat list stays about 360 px wide when maximized. Scaling
+    # its boundary with the whole window hides incoming cards on wide screens.
+    left = min(370, max(300, int(window.width * 0.36)))
     top = 68
     width = max(320, window.width - left - 8)
     height = max(240, window.height - top - 160)

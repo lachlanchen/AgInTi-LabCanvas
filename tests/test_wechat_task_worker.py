@@ -36,6 +36,16 @@ def load_worker():
 
 
 class WeChatTaskWorkerTests(unittest.TestCase):
+    def test_interruption_prompt_keeps_unsent_original_answer_in_replacement(self):
+        worker = load_worker()
+        task = {"interruptions": [{"source": {"local_id": 2}, "request": "Also read this article"}]}
+        prompt = worker.build_interruption_prompt_context(task)
+        self.assertIn("not proof of chat delivery", prompt)
+        self.assertIn("covering the original request and all still-valid updates", prompt)
+        self.assertIn("rather than repeating external actions", prompt)
+        self.assertIn("Only an explicit delivered-result record", prompt)
+        self.assertEqual(worker.build_interruption_prompt_context({}), "")
+
     def test_read_tasks_preserves_unicode_line_separators_inside_json_strings(self):
         worker = load_worker()
         tasks = [
