@@ -1,5 +1,41 @@
 # Vertical Multimodal OpenHI Microscope Setup
 
+## Publication Rendering
+
+`artifacts/publication_latest.json` identifies the current presentation-only
+run. It retains the three accepted STEP assemblies byte-for-byte and replaces
+viewport shading with CPU Cycles studio renders. Each configuration has its
+own figure: a complete apparatus view, enlarged detector branches and a
+labelled lower-stack detail. PDF/SVG text and leader lines remain editable;
+unlabelled PNGs and Blender scenes are retained separately.
+
+The renderer uniformly converts source millimetres to scene metres, balances
+area lights at that physical scale, and uses graphite polymer, satin metal and
+transmissive optical references. A 0.15 mm render-only bevel creates restrained
+edge highlights on box-like parts. It does not modify the STEP. Lower-stack
+cameras look through the specimen gap rather than down onto its obscuring cap.
+All complete views retain a verified 8% camera margin. The background is
+composited onto white after the display transform, preserving edge antialiasing.
+Material colors and transmission are illustrative, not calibrated optics.
+
+Use the portable Blender build for CPU denoising; the workstation's packaged
+Blender was built without OpenImageDenoise. The portable install is shared and
+does not replace `/usr/bin/blender` or use a GPU.
+
+```bash
+python cad/designs/openhi_vertical_multimodal_microscope_setup/publication_figure.py --prepare
+BLENDER="$(scripts/install_blender_portable.sh)"
+"$BLENDER" --background --threads 6 --python-exit-code 1 --python \
+  cad/designs/openhi_vertical_multimodal_microscope_setup/render_publication.py
+python cad/designs/openhi_vertical_multimodal_microscope_setup/publication_figure.py
+python -m unittest tests.test_openhi_publication_render
+```
+
+For a small lighting preview, add `-- --preview --variant dual_4f --view overview`
+to the Blender command. The final package verifies geometry checksums and
+camera/text bounds before copying the new run into the Nutstore project.
+Previous CAD and rendering runs remain unchanged.
+
 ## Updated Dual-LCD Stack
 
 The latest assembly follows the revised photographed order, bottom to top:

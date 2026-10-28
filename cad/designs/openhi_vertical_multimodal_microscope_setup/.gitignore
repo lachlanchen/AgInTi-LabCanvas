@@ -4,4 +4,5 @@ USE_THIS_*.step
 artifacts/*
 !artifacts/manifest.json
 !artifacts/dual_lcd_stack_latest.json
+!artifacts/publication_latest.json
 reference_media/*.jpeg
