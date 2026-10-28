@@ -1,0 +1,10 @@
+{
+  "run_dir": "cad/designs/openhi_vertical_multimodal_microscope_setup/runs/run-3-dual-lcd-dual-polarizer-all-relay-layouts-20261028T122504Z",
+  "manifest": "cad/designs/openhi_vertical_multimodal_microscope_setup/runs/run-3-dual-lcd-dual-polarizer-all-relay-layouts-20261028T122504Z/manifest.json",
+  "configuration": "fixed_dual_GT090101_dual_QYH1123_stack",
+  "variants": [
+    "single_4f",
+    "dual_4f",
+    "dual_4f_vertical"
+  ]
+}

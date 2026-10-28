@@ -1,5 +1,54 @@
 # Vertical Multimodal OpenHI Microscope Setup
 
+## Updated Dual-LCD Stack
+
+The latest assembly follows the revised photographed order, bottom to top:
+
+**Dock -> lamp/PCB -> GT090101 -> LCD holder -> specimen holder/dish/cap ->
+LCD holder -> GT090101 -> microscope -> relay(s) -> detectors.**
+
+`artifacts/dual_lcd_stack_latest.json` points to the current timestamped run.
+It provides single-relay, horizontal-cascade and vertical-cascade assemblies,
+each with a full-frame overview. Two opposite-side lower-stack close-ups and
+two detector close-ups accompany the overviews. The combined PDF/SVG panel
+keeps titles and captions editable and uses the same verified renders.
+
+Both LCD holders use the accepted 45-degree seat with full-through pin/plug
+clearance. All fixture and relay geometry is reused; the microscope, accepted
+relay(s), adapters and detector branches receive one common +22 mm translation.
+Lens seats, threads, per-relay beam-splitter compensation and the 3 mm cascade
+interface gap are unchanged. The rotary-stage project is not modified.
+The GT090101 bodies come from the frozen accepted assembly rather than a new
+conversion of the raw supplier STEP. Named-part solid/shell/face counts,
+analytic bounds and volumes are checked again after assembly export.
+
+The photograph establishes the sequence, not exact axial distances. This
+layout uses six 5 mm spacer layers. Holder/mount envelopes are at Z=35..43
+(lamp), 48..66 (lower GT090101), 71..79 (lower LCD), 84..118 (sample),
+123..131 (upper LCD), and 136..154 mm (upper GT090101); the microscope begins
+at Z=162 mm. Each value is explicit in the run manifest. Both LCD seats are
+shown populated with glass/pin references; drive state and polarizer angles
+are not inferred. Focus and working distance still require physical adjustment.
+
+```bash
+cad/.conda/cad-python/bin/python \
+  cad/designs/openhi_vertical_multimodal_microscope_setup/build_dual_lcd_stack.py
+blender --background --threads 6 --python-exit-code 1 --python \
+  cad/designs/openhi_vertical_multimodal_microscope_setup/render_dual_lcd_stack.py
+cad/.conda/cad-python/bin/python \
+  cad/designs/openhi_vertical_multimodal_microscope_setup/package_dual_lcd_stack.py
+python -m unittest tests.test_openhi_dual_lcd_stack
+```
+
+Optional `--photo PATH` saves a neutrally named reference photograph in the
+ignored run. The package step checksum-verifies the complete run in
+`/home/lachlan/Nutstore Files/Projects/LabCanvas/openhi_vertical_multimodal_microscope_setup/`
+and refreshes three descriptive `USE_THIS_openhi_dual_lcd_stack_*.step` handoffs.
+These apparatus assemblies are for review, not whole-apparatus printing.
+Earlier runs and their accepted source bodies remain unchanged.
+
+## Original Run 1/2 Layout
+
 This project reconstructs the photographed vertical apparatus as three aligned CAD assemblies. It reuses the accepted source parts rather than redrawing them:
 
 - 100 mm cage dock and 30 mm cage datum;
