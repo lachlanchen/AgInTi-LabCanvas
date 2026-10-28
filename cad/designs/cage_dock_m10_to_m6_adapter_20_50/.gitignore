@@ -1,0 +1,6 @@
+__pycache__/
+runs/
+USE_THIS_*h100*.step
+artifacts/*h100*
+artifacts/height100_*
+!artifacts/height100_manifest.json

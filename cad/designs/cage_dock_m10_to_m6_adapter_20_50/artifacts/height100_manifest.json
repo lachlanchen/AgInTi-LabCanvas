@@ -1,0 +1,132 @@
+{
+  "design": "cage_dock_m10_to_m6_adapter_20_50",
+  "run_name": "run-4-original-fit-plus30mm-height100-print-ready-20261028T071232Z",
+  "stem": "cage_dock_adapter_d9p8_to_d6p0_h100",
+  "selected_baseline": "original 9.8 mm insert / nominal 6.0 mm shaft, not the later 6.3/6.4/6.5 mm variants",
+  "parameters_mm": {
+    "lower_diameter": 9.8,
+    "lower_length": 20.0,
+    "upper_diameter": 6.0,
+    "upper_length": 80.0,
+    "total_height": 100.0,
+    "added_upper_length": 30.0,
+    "bottom_chamfer": 0.35,
+    "top_chamfer": 0.35,
+    "grid_pitch": 24.0
+  },
+  "previous_parameters": {
+    "name": "cage_dock_m10_to_m6_adapter_20_50",
+    "design_intent": "Smooth stepped adapter for the printed dock that has 10 mm rod holes, converting the hole to a 50 mm tall nominal 6 mm cage rod.",
+    "dock_context": "The printed dock ended around 25 mm tall with about 20 mm usable blind-hole depth. The lower insert is therefore 20 mm long.",
+    "bottom_nominal_m10_diameter_mm": 10.0,
+    "bottom_print_fit_diameter_mm": 9.8,
+    "bottom_insert_length_mm": 20.0,
+    "upper_nominal_m6_diameter_mm": 6.0,
+    "upper_rod_length_mm": 50.0,
+    "total_height_mm": 70.0,
+    "lead_in_chamfer_mm": 0.35,
+    "top_chamfer_mm": 0.35,
+    "print_grid_rows": 2,
+    "print_grid_cols": 2,
+    "print_grid_pitch_mm": 24.0,
+    "print_orientation": "Print upright on the wider 9.8 mm lower insert end. The 2x2 grid contains four independent adapters.",
+    "fit_note": "M10 is treated as a smooth 10 mm-class insert, not a modeled screw thread. The lower diameter is 9.8 mm so it can slip into a printed 10 mm dock hole more reliably."
+  },
+  "source": {
+    "path": "cad/designs/cage_dock_m10_to_m6_adapter_20_50/artifacts/cage_dock_m10_to_m6_adapter_20_50.step",
+    "sha256": "927aeeaa1c23dfa8aa44c32b3c65a89a69aab056ee5bd5cb398b0fc426f21e78",
+    "generator": "cad/designs/cage_dock_m10_to_m6_adapter_20_50/build_cage_dock_m10_to_m6_adapter_20_50.py",
+    "generator_sha256": "dcbb0eadad2601b3370a2be98c6957bb1c419fd2d0885e2bfc8f06b7c4746f1c"
+  },
+  "geometry_checks": {
+    "baseline_reconstruction_difference_mm3": 0,
+    "lower_insert_difference_mm3": 0,
+    "translated_top_difference_mm3": 0,
+    "added_volume_mm3": 848.2300164695707,
+    "expected_added_volume_mm3": 848.2300164692441
+  },
+  "print_packages": {
+    "single": {
+      "centers_mm": [
+        [
+          0.0,
+          0.0
+        ]
+      ],
+      "step_valid": true,
+      "solid_count": 1,
+      "bounds_mm": [
+        -4.9,
+        -4.9,
+        -3.3306690738754696e-16,
+        4.9,
+        4.9,
+        100.0
+      ],
+      "watertight": true,
+      "mesh_components": 1,
+      "min_z_each_part_mm": [
+        0.0
+      ],
+      "first_layer_nonempty_each_part": [
+        true
+      ],
+      "three_mf_build_items": 1,
+      "three_mf_units": "millimeter",
+      "stem": "PRINT_THIS_cage_dock_adapter_d9p8_to_d6p0_h100_single"
+    },
+    "2x2": {
+      "centers_mm": [
+        [
+          -12.0,
+          -12.0
+        ],
+        [
+          -12.0,
+          12.0
+        ],
+        [
+          12.0,
+          -12.0
+        ],
+        [
+          12.0,
+          12.0
+        ]
+      ],
+      "step_valid": true,
+      "solid_count": 4,
+      "bounds_mm": [
+        -16.9,
+        -16.9,
+        -3.3306690738754696e-16,
+        16.9,
+        16.9,
+        100.0
+      ],
+      "watertight": true,
+      "mesh_components": 4,
+      "min_z_each_part_mm": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "first_layer_nonempty_each_part": [
+        true,
+        true,
+        true,
+        true
+      ],
+      "three_mf_build_items": 1,
+      "three_mf_units": "millimeter",
+      "stem": "PRINT_THIS_cage_dock_adapter_d9p8_to_d6p0_h100_2x2"
+    }
+  },
+  "assembly_step": "cage_dock_adapter_d9p8_to_d6p0_h100_assembly.step",
+  "limitations": [
+    "The shaft remains nominal 6.0 mm in CAD; no compensation was inferred from the measured approximately 5.8 mm printed rod.",
+    "Smooth rods: no new threads or M3 holes were added.",
+    "Print upright on the wider lower end; the taller shafts may benefit from a slicer brim and conservative print speed."
+  ]
+}

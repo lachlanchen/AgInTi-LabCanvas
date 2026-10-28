@@ -4,7 +4,37 @@ This adapter compensates for the already-printed dock that has `10 mm` rod
 holes. It is a smooth stepped cylinder: a short lower insert for the dock hole
 and a longer upper 6 mm cage rod.
 
-## Current Requested Run
+## 100 mm Original-Fit Extension
+
+`runs/run-4-original-fit-plus30mm-height100-print-ready-20261028T071232Z/`
+extends the original 9.8/6.0 mm adapter, not a later larger-shaft variant.
+The lower insert remains 9.8 mm diameter x 20 mm. The upper shaft remains
+nominal 6.0 mm diameter and grows from 50 to 80 mm, giving 100 mm total height.
+Both original 0.35 mm end chamfers and the original 24 mm grid pitch remain.
+No thread, pilot hole or new print-fit compensation is added.
+
+The original STEP and generator are preserved. Validation compares the
+regenerated baseline against the exact source, the unchanged lower insert,
+the top chamfer translated by 30 mm, and the expected added cylinder volume.
+The approximately 5.8 mm physical measurement is not substituted for the
+original nominal 6.0 mm CAD diameter.
+
+The run includes single-part and upright 2x2 `PRINT_THIS` packages in STEP,
+STL and 3MF, a named four-part assembly STEP, manifests, source copies and
+uncropped single/grid renders. All intended parts start at Z=0. A slicer brim
+and conservative speed may help the taller slender shafts.
+
+```bash
+cad/.conda/cad-python/bin/python \
+  cad/designs/cage_dock_m10_to_m6_adapter_20_50/build_height100_handoff.py
+python -m unittest tests.test_cage_dock_adapter_height100
+```
+
+The builder renders, validates and checksum-syncs the run to
+`/home/lachlan/Nutstore Files/Projects/LabCanvas/cage_dock_m10_to_m6_adapter_20_50/`
+under the identical run name. Previous files and runs remain unchanged.
+
+## Earlier 6.3 mm Revision
 
 Use `runs/run-3-10p0-to-6p3-m3-pilot-20260714T074753Z/` for the new version:
 
