@@ -1,5 +1,48 @@
 # QYH1123 Light-Valve Centered Clearance Cage Holder
 
+## Full-Through Pin And Dupont Clearance
+
+The latest holders remove the blind floor beneath the two perpendicular LCD
+terminals. One connected **12 x 9 mm through-window** clears both pins, the
+space between them, and a generous connector region. The opening spans local
+LCD coordinates `x=-6..6`, `y=-16.5..-7.5 mm` and the full 8 mm body thickness.
+It rotates with the seat in the 45-degree version.
+
+- `runs/run-3-0deg-full-through-pin-dupont-clearance-print-ready-20261028T120038Z/`:
+  accepted unrotated holder with the through-window.
+- `runs/run-4-45deg-full-through-pin-dupont-clearance-print-ready-20261028T120038Z/`:
+  accepted 45-degree holder with the same local through-window.
+
+Only this window is subtracted from the accepted STEP. The 42 x 42 x 8 mm
+body, 18.6 x 20.6 mm LCD pocket, nominal 2.2 mm pocket depth, 13 x 13 mm optical
+aperture and all four cage bores remain unchanged. A 1 mm ledge remains between
+the optical aperture and the connector opening. The original shallow outbound
+channel is retained outside the new through-window; the window does not cut
+through a cage-rod collar in either orientation. Earlier runs remain available.
+
+Use each run's holder-only `PRINT_THIS_*.3mf`, `.stl` or `.step`. Assembly STEP
+files include separate glass, rear-facing pins, rods and an illustrative
+6 x 4 x 10 mm connector envelope. These references are excluded from print
+files. The connector envelope is not measured supplier CAD. The holder remains
+8 mm thick, so longer pins, plugs and wires may project beyond its rear face;
+this is not a closed, flush connector enclosure.
+
+Each run includes front, rear, connector-reference and direct-print PNGs,
+source snapshots, a geometry/print manifest, and a checksum-verified Nutstore
+copy under the matching project/run folder. The manifests verify a single
+valid holder solid, unchanged cage collars, unobstructed pin/plug envelopes,
+STEP round-trip equivalence, watertight print mesh, and a nonempty first layer.
+
+```bash
+cad/.conda/cad-python/bin/python \
+  cad/designs/qyh1123_light_valve_centered_clearance_cage_holder/build_pin_clearance_handoff.py
+python -m unittest tests.test_qyh1123_full_pin_clearance
+```
+
+The builder renders and syncs both runs. Optional `--references PHOTO ...`
+copies local reference photos into ignored run folders using neutral filenames;
+private attachment names are not included in manifests or tracked source.
+
 ## Exact Copy And 45-Degree Seat
 
 The 2026-10-28 handoff preserves this accepted tolerance-adjusted design and

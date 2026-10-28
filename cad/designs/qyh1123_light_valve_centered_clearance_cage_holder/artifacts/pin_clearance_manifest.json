@@ -1,0 +1,26 @@
+{
+  "variants": {
+    "0deg": {
+      "run_dir": "cad/designs/qyh1123_light_valve_centered_clearance_cage_holder/runs/run-3-0deg-full-through-pin-dupont-clearance-print-ready-20261028T120038Z",
+      "manifest": "cad/designs/qyh1123_light_valve_centered_clearance_cage_holder/runs/run-3-0deg-full-through-pin-dupont-clearance-print-ready-20261028T120038Z/manifest.json"
+    },
+    "45deg": {
+      "run_dir": "cad/designs/qyh1123_light_valve_centered_clearance_cage_holder/runs/run-4-45deg-full-through-pin-dupont-clearance-print-ready-20261028T120038Z",
+      "manifest": "cad/designs/qyh1123_light_valve_centered_clearance_cage_holder/runs/run-4-45deg-full-through-pin-dupont-clearance-print-ready-20261028T120038Z/manifest.json"
+    }
+  },
+  "pin_clearance": {
+    "window_width_mm": 12.0,
+    "window_length_mm": 9.0,
+    "window_center_y_mm": -12.0,
+    "window_inner_y_mm": -7.5,
+    "window_outer_y_mm": -16.5,
+    "body_thickness_mm": 8.0,
+    "optical_window_edge_y_mm": -6.5,
+    "remaining_optical_ledge_mm": 1.0,
+    "illustrative_plug_envelope_width_mm": 6.0,
+    "illustrative_plug_envelope_length_mm": 4.0,
+    "illustrative_plug_envelope_depth_mm": 10.0,
+    "illustrative_pin_row_y_mm": -9.8
+  }
+}
