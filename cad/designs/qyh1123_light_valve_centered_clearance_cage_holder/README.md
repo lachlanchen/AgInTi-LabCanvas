@@ -1,5 +1,36 @@
 # QYH1123 Light-Valve Centered Clearance Cage Holder
 
+## Exact Copy And 45-Degree Seat
+
+The 2026-10-28 handoff preserves this accepted tolerance-adjusted design and
+adds a second orientation. Original source STEP/STL/assembly files remain
+unchanged, including every fit allowance.
+
+- `runs/run-1-exact-tolerance-adjusted-original-print-ready-20261028T053648Z/`:
+  byte-identical holder and assembly copies, plus grounded holder-only prints.
+- `runs/run-2-lcd-seat-45deg-print-ready-20261028T053648Z/`: only the LCD seat,
+  optical window, pin relief and LCD/pin reference rotate 45 degrees about Z,
+  counterclockwise viewed from the pocket face. The outer 42 x 42 x 8 mm body
+  and four 6.4 mm bores on the 30 mm cage pattern remain fixed.
+
+Each run contains a separate alignment assembly, holder-only `PRINT_THIS`
+STEP/STL/3MF, top/assembly/print renders, source copies and validation manifest.
+No new ears, fastener holes or fit adjustments are added. The 45-degree pin
+relief meets a corner rod opening at the front; rear bore geometry is retained
+and the modeled pins clear the rods. Keep external wires clear of that rod.
+
+```bash
+cad/.conda/cad-python/bin/python \
+  cad/designs/qyh1123_light_valve_centered_clearance_cage_holder/build_seat45_handoff.py
+blender --background --threads 6 --python-exit-code 1 --python \
+  cad/designs/qyh1123_light_valve_centered_clearance_cage_holder/render_seat45_handoff.py
+python cad/designs/qyh1123_light_valve_centered_clearance_cage_holder/sync_seat45_handoff.py
+python -m unittest tests.test_qyh1123_seat45_handoff
+```
+
+Nutstore copies use the matching run folders under
+`/home/lachlan/Nutstore Files/Projects/LabCanvas/qyh1123_light_valve_centered_clearance_cage_holder/`.
+
 This is a new independent 30 mm cage holder for the Qiyun Display QYH1123 LCD
 light valve. It follows the clean Lumileds cage-holder style and keeps the old
 design unchanged, but fixes the practical alignment issue seen in the print:

@@ -1,0 +1,6 @@
+__pycache__/
+runs/
+USE_THIS_*.step
+artifacts/*_45deg.*
+artifacts/seat45_*
+!artifacts/seat45_manifest.json

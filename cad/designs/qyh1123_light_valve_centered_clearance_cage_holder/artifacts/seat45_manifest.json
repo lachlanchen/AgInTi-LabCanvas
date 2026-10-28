@@ -1,0 +1,42 @@
+{
+  "design": "qyh1123_light_valve_centered_clearance_cage_holder",
+  "variants": {
+    "0deg": {
+      "run_dir": "cad/designs/qyh1123_light_valve_centered_clearance_cage_holder/runs/run-1-exact-tolerance-adjusted-original-print-ready-20261028T053648Z",
+      "manifest": "cad/designs/qyh1123_light_valve_centered_clearance_cage_holder/runs/run-1-exact-tolerance-adjusted-original-print-ready-20261028T053648Z/manifest.json",
+      "assembly_step": "cad/designs/qyh1123_light_valve_centered_clearance_cage_holder/runs/run-1-exact-tolerance-adjusted-original-print-ready-20261028T053648Z/qyh1123_holder_0deg_assembly.step",
+      "print_validation": {
+        "stem": "PRINT_THIS_qyh1123_holder_0deg",
+        "solid_count": 1,
+        "step_valid": true,
+        "watertight": true,
+        "mesh_components": 1,
+        "min_z_mm": 0.0,
+        "first_layer_nonempty": true,
+        "three_mf_build_items": 1,
+        "three_mf_units": "millimeter",
+        "ears_added": false,
+        "orientation": "unchanged XY, flat back at Z=0"
+      }
+    },
+    "45deg": {
+      "run_dir": "cad/designs/qyh1123_light_valve_centered_clearance_cage_holder/runs/run-2-lcd-seat-45deg-print-ready-20261028T053648Z",
+      "manifest": "cad/designs/qyh1123_light_valve_centered_clearance_cage_holder/runs/run-2-lcd-seat-45deg-print-ready-20261028T053648Z/manifest.json",
+      "assembly_step": "cad/designs/qyh1123_light_valve_centered_clearance_cage_holder/runs/run-2-lcd-seat-45deg-print-ready-20261028T053648Z/qyh1123_holder_45deg_assembly.step",
+      "print_validation": {
+        "stem": "PRINT_THIS_qyh1123_holder_45deg",
+        "solid_count": 1,
+        "step_valid": true,
+        "watertight": true,
+        "mesh_components": 1,
+        "min_z_mm": 0.0,
+        "first_layer_nonempty": true,
+        "three_mf_build_items": 1,
+        "three_mf_units": "millimeter",
+        "ears_added": false,
+        "orientation": "unchanged XY, flat back at Z=0"
+      }
+    }
+  },
+  "accepted_sources_unchanged": true
+}
