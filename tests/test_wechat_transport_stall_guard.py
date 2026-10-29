@@ -103,6 +103,8 @@ def schedule_state_reader(
                 "career_next_attempt_at": career_next_attempt_at,
                 "organizer_next_attempt_at": organizer_next_attempt_at,
             }
+        if path == guard.LABAGENT_SCHEDULE_HEARTBEAT:
+            return {"checked_at": "2026-07-22T11:59:30+00:00", "ok": True}
         return json.loads(path.read_text(encoding="utf-8"))
 
     return read
@@ -119,6 +121,7 @@ class WeChatTransportStallGuardTests(unittest.TestCase):
     def test_disabled_echomind_is_not_stalled_or_repaired(self) -> None:
         guard.ECHOMIND_SCHEDULE_DISABLED.touch()
         with (
+            mock.patch.object(Path, "read_text", side_effect=AssertionError("unexpected runtime file read")),
             mock.patch.object(guard, "tmux_session_live", return_value=False),
             mock.patch.object(guard, "read_json", side_effect=schedule_state_reader(
                 echo_last_loop_at="2026-07-22T00:00:00+00:00",
