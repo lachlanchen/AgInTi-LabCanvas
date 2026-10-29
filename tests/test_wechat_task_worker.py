@@ -3784,7 +3784,8 @@ stderr: noisy internal trace
         with tempfile.TemporaryDirectory() as tmp:
             with mock.patch.dict(
                 worker.os.environ,
-                {"CUDA_VISIBLE_DEVICES": "0", "WECHAT_SHIPINHAO_CUDA_DEVICE": "1"},
+                {"CUDA_VISIBLE_DEVICES": "0", "WECHAT_SHIPINHAO_CUDA_DEVICE": "1",
+                 "WECHAT_SHIPINHAO_WHISPER_DEVICE": "cuda:1"},
                 clear=False,
             ), mock.patch.object(worker.subprocess, "run", return_value=completed) as run:
                 worker.run_shipinhao_media_transcriber(
@@ -3795,6 +3796,22 @@ stderr: noisy internal trace
                 )
 
         self.assertEqual(run.call_args.kwargs["env"]["CUDA_VISIBLE_DEVICES"], "1")
+        self.assertEqual(run.call_args.kwargs["env"]["WECHAT_SHIPINHAO_WHISPER_DEVICE"], "cuda:0")
+
+    def test_shipinhao_gpu_mask_preserves_cpu_and_unmasked_device(self) -> None:
+        worker = load_worker()
+        completed = mock.Mock(returncode=1, stdout="", stderr="failed")
+        for physical, device, expected in (("1", "cpu", "cpu"), ("", "cuda:1", "cuda:1")):
+            with self.subTest(physical=physical, device=device), tempfile.TemporaryDirectory() as tmp:
+                with mock.patch.dict(worker.os.environ, {
+                    "WECHAT_SHIPINHAO_CUDA_DEVICE": physical,
+                    "WECHAT_SHIPINHAO_WHISPER_DEVICE": device,
+                }), mock.patch.object(worker.subprocess, "run", return_value=completed) as run:
+                    worker.run_shipinhao_media_transcriber(
+                        ["python", "transcribe.py"], output_dir=Path(tmp),
+                        timeout=30, profile={"object_id": "exact-object"},
+                    )
+                self.assertEqual(run.call_args.kwargs["env"]["WECHAT_SHIPINHAO_WHISPER_DEVICE"], expected)
 
     def test_shipinhao_delivery_adds_recipient_safe_timestamped_transcript(self) -> None:
         worker = load_worker()
@@ -3849,6 +3866,89 @@ stderr: noisy internal trace
         self.assertIn("阿拉斯加是美国面积最大的州", transcript)
         self.assertNotIn("large-v2", transcript)
         self.assertNotIn("exact_sph_share_link", transcript)
+
+    def test_shipinhao_retry_manifest_reconciles_without_repeating_sent_original(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = root / "shipinhao_media_transcript"
+            output.mkdir()
+            media = output / "source.mp4"
+            media.write_bytes(b"exact-original")
+            sent = root / "already-delivered.mp4"
+            sent.write_bytes(media.read_bytes())
+            context = output / "context.md"
+            context.write_text("## Timestamped Transcript\n\n[00:00-00:02] Verified words.\n")
+            task = {
+                "artifact_dir": str(root),
+                "request": "Current coalesced request:\nhttps://weixin.qq.com/sph/Ae2UMH6gqr",
+                "route_decision": {"route_kind": "file_download_or_save", "delivery_mode": "chat_attachment"},
+                "sent_file_paths": [str(sent)],
+                "preflight": {"shipinhao_media_transcript": {"status": "failed", "failure_stage": "transcription"}},
+            }
+            manifest = {
+                "status": "transcribed", "input_kind": "exact_sph_share_link",
+                "media_path": str(media), "agent_context_path": str(context),
+                "content_identity_verified": True,
+                "profile": {"object_id": "sph-Ae2UMH6gqr", "title": "Recovered clip"},
+            }
+            (output / "manifest.json").write_text(json.dumps(manifest))
+            self.assertTrue(worker.reconcile_shipinhao_preflight_manifest(task))
+            recovered = task["preflight"]["shipinhao_media_transcript"]
+            self.assertEqual(recovered["delivery_media_path"], str(sent))
+            self.assertTrue(Path(recovered["delivery_transcript_path"]).is_file())
+            self.assertEqual(len(worker.shipinhao_auto_delivery_files(task)), 2)
+            self.assertFalse(worker.reconcile_shipinhao_preflight_manifest(task))
+
+    def test_shipinhao_retry_manifest_rejects_wrong_identity_failed_or_missing_media(self) -> None:
+        worker = load_worker()
+        for change in ({"profile": {"object_id": "another-card"}},
+                       {"status": "failed"}, {"content_identity_verified": False},
+                       {"media_path": "missing.mp4"}):
+            with self.subTest(change=change), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                output = root / "shipinhao_media_transcript"
+                output.mkdir()
+                media = output / "source.mp4"
+                media.write_bytes(b"original")
+                task = {
+                    "artifact_dir": str(root),
+                    "request": "Current coalesced request:\nhttps://weixin.qq.com/sph/Ae2UMH6gqr",
+                    "route_decision": {"route_kind": "research_or_summary"},
+                    "preflight": {"shipinhao_media_transcript": {"status": "failed"}},
+                }
+                manifest = {
+                    "status": "transcribed", "input_kind": "exact_sph_share_link",
+                    "media_path": str(media), "content_identity_verified": True,
+                    "profile": {"object_id": "sph-Ae2UMH6gqr"}, **change,
+                }
+                (output / "manifest.json").write_text(json.dumps(manifest))
+                self.assertFalse(worker.reconcile_shipinhao_preflight_manifest(task))
+                self.assertEqual(task["preflight"]["shipinhao_media_transcript"]["status"], "failed")
+
+    def test_shipinhao_card_url_retry_requires_exact_normalized_url_digest(self) -> None:
+        worker = load_worker()
+        url = "http://finder.video.qq.com/exact-card.mp4?token=example"
+        expected = {"detected": True, "object_id": "123", "media_urls": [url]}
+        good_digest = worker.hashlib.sha256(worker.validate_shipinhao_media_url(url).encode()).hexdigest()
+        for digest in (good_digest, "unrelated-url-digest"):
+            with self.subTest(digest=digest), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                output = root / "shipinhao_media_transcript"
+                output.mkdir()
+                media = output / "source.mp4"
+                media.write_bytes(b"original")
+                task = {"artifact_dir": str(root), "route_decision": {"route_kind": "research_or_summary"}}
+                manifest = {
+                    "status": "transcribed", "input_kind": "card_media_url",
+                    "media_path": str(media), "content_identity_verified": False,
+                    "source_url_sha256": digest, "profile": {"object_id": "123"},
+                }
+                (output / "manifest.json").write_text(json.dumps(manifest))
+                with mock.patch.object(worker, "shipinhao_profile_for_task", return_value=expected):
+                    self.assertEqual(worker.reconcile_shipinhao_preflight_manifest(task), digest == good_digest)
+                if digest == good_digest:
+                    self.assertTrue(task["preflight"]["shipinhao_media_transcript"]["content_identity_verified"])
 
     def test_large_native_shipinhao_capture_gets_bounded_delivery_copy(self) -> None:
         worker = load_worker()

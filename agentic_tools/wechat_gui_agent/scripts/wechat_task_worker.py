@@ -66,6 +66,7 @@ from shipinhao_media_transcribe import (
     extract_shipinhao_media_profile,
     load_verified_capture_manifest,
     normalize_identity as normalize_shipinhao_identity,
+    validate_media_url as validate_shipinhao_media_url,
 )
 from wechat_source_recovery import (
     extract_article_card_profile,
@@ -982,6 +983,8 @@ def repair_stored_result_contract(
         clear_superseded_worker_failure(task, stage="stored_result_contract_repair")
         task.pop("send_suppressed_reason", None)
         task.pop("send_suppressed_at", None)
+        if task.get("shipinhao_preflight_reconciled_at"):
+            retain_source_knowledge(task, result=repaired)
         tasks[task_index] = task
         write_tasks(queue, tasks)
 
@@ -13555,6 +13558,59 @@ def shipinhao_auto_delivery_files(task: dict[str, Any] | None) -> list[str]:
     )
 
 
+def reconcile_shipinhao_preflight_manifest(task: dict[str, Any]) -> bool:
+    """Recover a successful exact-task retry, never another task's nearby media."""
+    if not task.get("artifact_dir") or not shipinhao_download_delivery_requested(task):
+        return False
+    existing = verified_shipinhao_delivery_record(task)
+    if existing and (existing.get("content_identity_verified") or (existing.get("profile") or {}).get("content_identity_verified")):
+        return False
+    output_dir = Path(task["artifact_dir"]).expanduser() / "shipinhao_media_transcript"
+    recovered = load_shipinhao_media_transcript_manifest(output_dir / "manifest.json")
+    expected = shipinhao_profile_for_task(task)
+    expected_id = str(expected.get("object_id") or "")
+    profile = recovered.get("profile") or {}
+    exact_card_url = False
+    if recovered.get("input_kind") == "card_media_url":
+        for url in expected.get("media_urls") or []:
+            try:
+                safe_url = validate_shipinhao_media_url(str(url))
+            except ValueError:
+                continue
+            if hashlib.sha256(safe_url.encode("utf-8")).hexdigest() == recovered.get("source_url_sha256"):
+                exact_card_url = True
+                break
+    if (
+        not expected_id
+        or not isinstance(profile, dict)
+        or str(profile.get("object_id") or "") != expected_id
+        or recovered.get("status") not in {"transcribed", "cached", "no_audio"}
+        or not (exact_card_url or recovered.get("content_identity_verified") or profile.get("content_identity_verified"))
+    ):
+        return False
+    if exact_card_url:
+        recovered["content_identity_verified"] = True
+        recovered["identity_verification"] = "exact_task_card_url_sha256"
+    recovered = promote_shipinhao_download_for_delivery(task, output_dir, recovered)
+    preflight = dict(task.get("preflight") or {})
+    candidate = {**task, "preflight": {**preflight, "shipinhao_media_transcript": recovered}}
+    if not verified_shipinhao_delivery_record(candidate):
+        return False
+    # A recovered transcript must not resend an already delivered original
+    # under the helper's canonical filename. Bind only byte-identical copies.
+    media = Path(recovered["delivery_media_path"])
+    for value in task.get("sent_file_paths") or []:
+        sent = Path(str(value)).expanduser()
+        if (sent.suffix.lower() in VIDEO_SUFFIXES and sent.is_file()
+                and sent.stat().st_size == media.stat().st_size
+                and sha256_file(sent) == sha256_file(media)):
+            recovered["delivery_media_path"] = str(sent.resolve())
+            break
+    task["preflight"] = {**preflight, "shipinhao_media_transcript": recovered}
+    task["shipinhao_preflight_reconciled_at"] = datetime.now().isoformat(timespec="seconds")
+    return True
+
+
 def verified_shipinhao_delivery_record(task: dict[str, Any] | None) -> dict[str, Any] | None:
     """Return one exact, readable Finder source that is ready for chat delivery."""
 
@@ -14309,6 +14365,11 @@ def run_shipinhao_media_transcriber(
     configured_gpu = transcriber_env.get("WECHAT_SHIPINHAO_CUDA_DEVICE", "1").strip()
     if configured_gpu:
         transcriber_env["CUDA_VISIBLE_DEVICES"] = configured_gpu
+        # A single physical GPU is renumbered to cuda:0 inside this child.
+        # Keep explicit CPU operation, but never reuse a host CUDA ordinal.
+        requested_device = transcriber_env.get("WECHAT_SHIPINHAO_WHISPER_DEVICE", "auto").strip().lower()
+        if "," not in configured_gpu and requested_device.startswith("cuda"):
+            transcriber_env["WECHAT_SHIPINHAO_WHISPER_DEVICE"] = "cuda:0"
     try:
         proc = subprocess.run(
             command,
@@ -23582,6 +23643,8 @@ def prepare_result_files(
                 for value in rejected
             ]
         return guarded
+    if task is not None:
+        reconcile_shipinhao_preflight_manifest(task)
     result = materialize_upstream_feedback(result, task=task)
     raw_files = result.get("files") or []
     if not isinstance(raw_files, list):
