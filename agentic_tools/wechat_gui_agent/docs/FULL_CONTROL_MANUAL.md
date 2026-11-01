@@ -823,3 +823,10 @@ Do not add methods that recover credentials, intercept encrypted traffic, bypass
 WeChat login, forge protocol requests, evade CAPTCHA, mass-message people, or
 scrape unrelated/private chats. These are outside the LabCanvas control model
 and should be refused or redirected to a manual consented path.
+
+## Channels Recovery Readiness
+
+For visible-card misses and slow native-player startup, follow
+[cover and player recovery](../../../references/wechat-channels-cover-and-player-recovery-2026-11-01.md).
+Keep exact-card covers available before the GUI scan and inspect retrieval
+health independently of whether an explanatory reply was delivered.

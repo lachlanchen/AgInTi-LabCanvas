@@ -23,6 +23,11 @@ def load_module():
 
 
 class ShipinhaoGuiAudioCaptureTests(unittest.TestCase):
+    def test_player_cold_start_has_bounded_loading_grace(self) -> None:
+        module = load_module()
+        args = module.build_parser().parse_args(["--object-id", "123", "--title", "Test"])
+        self.assertEqual(args.player_open_timeout, 40.0)
+
     def test_wide_window_keeps_incoming_cards_inside_message_scan(self) -> None:
         module = load_module()
         for width in (1000, 1440, 1920, 2560):

@@ -161,7 +161,8 @@ class CodexAccountPoolTests(unittest.TestCase):
 
     def test_reserve_is_evaluated_after_regular_attempts_and_preserves_order(self) -> None:
         reserve = {"account": "company", "model": "gpt-5.6-luna", "quota_pool": "reserve"}
-        with mock.patch.object(codex_accounts, "codex_reserve_candidates", return_value=[reserve]) as lookup:
+        with mock.patch.object(codex_accounts, "codex_reserve_candidates", return_value=[reserve]) as lookup, \
+                mock.patch.object(codex_accounts, "load_account_pool_cache", return_value={"accounts": {}}):
             attempts = codex_accounts.codex_account_attempts(["lab", "company"], "gpt-6-astra")
             self.assertEqual(next(attempts)["account"], "lab")
             self.assertEqual(next(attempts)["model"], "gpt-6-astra")

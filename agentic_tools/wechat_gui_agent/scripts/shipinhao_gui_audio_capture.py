@@ -69,7 +69,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--targets-file", type=Path, default=DEFAULT_TARGETS)
     parser.add_argument("--max-scrolls", type=int, default=12)
     parser.add_argument("--scroll-clicks", type=int, default=5)
-    parser.add_argument("--player-open-timeout", type=float, default=8.0)
+    parser.add_argument("--player-open-timeout", type=float, default=40.0)
     parser.add_argument("--audio-stream-timeout", type=float, default=12.0)
     parser.add_argument("--expected-duration-seconds", type=float, default=0.0)
     parser.add_argument(

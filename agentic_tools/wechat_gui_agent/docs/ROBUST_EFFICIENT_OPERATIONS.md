@@ -1,5 +1,10 @@
 # Robust And Efficient Operations
 
+If a visible Channels card is reported missing, check that its exact cover was
+cached before scanning and allow the native player to finish loading. See
+[cover and player recovery](../../../references/wechat-channels-cover-and-player-recovery-2026-11-01.md).
+A delivered failure explanation does not make original-video retrieval healthy.
+
 For a batch that finishes but does not send, check header OCR and native receipts
 before rerunning research. See [batch and wide-window recovery](../../../references/wechat-batch-and-wide-window-recovery-2026-10-27.md)
 for Channels scan geometry, verified original-video delivery, and interruption coverage.

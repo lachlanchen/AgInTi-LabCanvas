@@ -2974,6 +2974,22 @@ def queue_task_brief(task: dict[str, Any], now: datetime) -> dict[str, Any]:
     stale_reason = queue_stale_reason(task, now)
     if stale_reason:
         brief["stale_reason"] = stale_reason
+    preflight = task.get("preflight")
+    finder = preflight.get("shipinhao_media_transcript") if isinstance(preflight, dict) else None
+    if status == "done" and isinstance(finder, dict) and finder.get("status") in {
+        "failed", "no_media_url", "missing_tool",
+    }:
+        # A delivered explanation is not a successful original-video retrieval.
+        # Surface it to health without replaying the task or its sent response.
+        native = finder.get("native_capture_fallback")
+        native = native if isinstance(native, dict) else {}
+        brief["category"] = "failed"
+        brief["source_failure"] = {
+            "kind": "shipinhao",
+            "status": finder["status"],
+            "stage": native.get("failure_stage") or finder.get("failure_stage", ""),
+            "code": native.get("error_code", ""),
+        }
     return brief
 
 
@@ -3014,6 +3030,7 @@ def queue_attention(tasks: list[dict[str, Any]], *, limit: int = 8, now: datetim
         by_chat[chat]["total"] += 1
 
         brief = queue_task_brief(task, now)
+        category = brief["category"]
         age_seconds = brief.get("age_seconds")
         historical = bool(
             category in {"delivery_blocked", "human_blocked", "failed", "unknown"}

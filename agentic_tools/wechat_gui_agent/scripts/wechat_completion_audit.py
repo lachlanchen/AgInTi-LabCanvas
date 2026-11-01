@@ -21,7 +21,7 @@ DEFAULT_TIMEOUT_SECONDS = 35
 DEFAULT_BATCH_SIZE = 20
 NEGATED_PDF_RE = re.compile(
     r"(?:\b(?:no|without|do\s+not|don't|dont|need(?:s)?\s+no)\b|不要|不用|无需|不需要)"
-    r".{0,16}(?:pdf|\.pdf)",
+    r"[^.!?;\n。！？；]*(?:pdf|\.pdf)",
     re.I | re.S,
 )
 PDF_REQUEST_RE = re.compile(r"(?:\bpdf\b|\.pdf\b|PDF)", re.I)
@@ -311,8 +311,16 @@ def deduplicate_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def explicit_pdf_requested(items: list[dict[str, Any]]) -> bool:
     for item in items:
         text = str(item.get("text") or "")
-        if PDF_REQUEST_RE.search(text) and not NEGATED_PDF_RE.search(text):
-            return True
+        # Negation can govern a list of unwanted artifacts, not just the
+        # sixteen characters before PDF. Keep it within the same clause.
+        clauses = re.split(
+            r"[!?;\n。！？；]|\.(?=\s|$)|\b(?:but|however)\b|但是|不过",
+            text,
+            flags=re.I,
+        )
+        for clause in clauses:
+            if PDF_REQUEST_RE.search(clause) and not NEGATED_PDF_RE.search(clause):
+                return True
     return False
 
 

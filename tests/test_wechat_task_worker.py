@@ -4756,10 +4756,13 @@ stderr: noisy internal trace
             stderr="",
         )
 
-        with mock.patch.object(worker.subprocess, "run", return_value=completed) as run:
+        with mock.patch.object(worker.subprocess, "run", return_value=completed) as run, \
+                mock.patch.object(worker, "shipinhao_native_link_python", return_value="/vision/python"):
             result = worker.run_automatic_shipinhao_gui_capture(task, profile)
 
         command = run.call_args.args[0]
+        self.assertEqual(command[0], "/vision/python")
+        self.assertEqual(command[command.index("--player-open-timeout") + 1], "40")
         self.assertIn("--expected-duration-seconds", command)
         self.assertEqual(command[command.index("--expected-duration-seconds") + 1], "42.500")
         self.assertIn("--recover-share-link-first", command)

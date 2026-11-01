@@ -673,6 +673,21 @@ class WeChatCompletionAuditTests(unittest.TestCase):
             [],
         )
 
+    def test_negated_artifact_list_does_not_require_pdf(self) -> None:
+        for text in (
+            "Return the video; do not send raw debug paths, Markdown or PDFs.",
+            "不要发送调试日志、临时路径、Markdown 或 PDF。返回视频和转写。",
+        ):
+            with self.subTest(text=text):
+                self.assertFalse(audit.explicit_pdf_requested([{"text": text}]))
+        for text in (
+            "No PDF for the first item. Send a PDF for the second.",
+            "Do not send Markdown, but send a PDF.",
+            "不需要 PDF，但是这份报告请发 PDF。",
+        ):
+            with self.subTest(text=text):
+                self.assertTrue(audit.explicit_pdf_requested([{"text": text}]))
+
     def test_worker_envelope_does_not_turn_pdf_policy_into_user_request(self) -> None:
         task = {
             "id": "article-777",

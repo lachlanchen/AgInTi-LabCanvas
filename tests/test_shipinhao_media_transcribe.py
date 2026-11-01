@@ -41,6 +41,47 @@ def card_xml(url: str = "http://wxapp.tc.qq.com/video?id=exact-token") -> str:
 
 
 class ShipinhaoMediaTranscribeTests(unittest.TestCase):
+    def test_native_recovery_has_cover_even_when_public_search_is_disabled(self) -> None:
+        module = load_module()
+        for source in (card_xml(), card_xml("")):
+            with self.subTest(has_media_url="exact-token" in source), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                def download(url, target, **kwargs):
+                    if target.name != "card-cover.jpg":
+                        raise RuntimeError("expired media")
+                    target.write_bytes(b"exact-card-cover")
+                    return {"sha256": "cover-hash"}
+                with mock.patch.object(module, "download_media", side_effect=download) as fetch, \
+                     mock.patch.object(module, "recover_public_mirror") as search, \
+                     mock.patch.object(module, "resolve_whisper_model", return_value="medium"):
+                    result = module.run_pipeline(
+                        source, root / "out", cache_root=root / "cache",
+                        public_mirror_recovery=False,
+                    )
+                    cover = Path(result["cover_path"])
+                    self.assertEqual(cover.parent.name, "14712921966547245212")
+                    self.assertEqual(cover.read_bytes(), b"exact-card-cover")
+                    self.assertEqual(fetch.call_args_list[0].args[1], cover)
+                    search.assert_not_called()
+                    fetch.reset_mock()
+                    module.cache_card_cover({}, cover.parent, max_bytes=1000, download_timeout=5)
+                    fetch.assert_not_called()
+                self.assertIn(result["status"], {"failed", "no_media_url"})
+
+    def test_cover_failure_is_nonfatal_and_removes_partial_file(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            def download(url, target, **kwargs):
+                target.write_bytes(b"partial")
+                raise RuntimeError("unavailable")
+            with mock.patch.object(module, "download_media", side_effect=download):
+                self.assertEqual(module.cache_card_cover(
+                    {"cover_urls": ["https://example.qq.com/cover"]}, root,
+                    max_bytes=100, download_timeout=2,
+                ), {})
+                self.assertFalse((root / "card-cover.jpg").exists())
+
     def test_profile_recognizes_exact_sph_share_link_without_publication_semantics(self) -> None:
         module = load_module()
 

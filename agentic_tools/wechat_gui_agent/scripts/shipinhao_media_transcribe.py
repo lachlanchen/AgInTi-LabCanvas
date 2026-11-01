@@ -1042,6 +1042,30 @@ def download_public_mirror_candidate(
     return media
 
 
+def cache_card_cover(
+    profile: dict[str, Any],
+    cache_dir: Path,
+    *,
+    max_bytes: int,
+    download_timeout: float,
+) -> dict[str, Any]:
+    """Keep exact-card visual evidence available before native GUI recovery."""
+    cover_path = cache_dir / "card-cover.jpg"
+    if cover_path.is_file() and cover_path.stat().st_size > 0:
+        return {"path": str(cover_path), "sha256": sha256_file(cover_path)}
+    for raw_url in (profile.get("cover_urls") or [])[:3]:
+        try:
+            downloaded = download_media(
+                str(raw_url), cover_path,
+                max_bytes=min(max_bytes, 20 * 1024 * 1024),
+                timeout=min(download_timeout, 20),
+            )
+            return {**downloaded, "path": str(cover_path)}
+        except Exception:
+            cover_path.unlink(missing_ok=True)
+    return {}
+
+
 def recover_public_mirror(
     profile: dict[str, Any],
     cache_dir: Path,
@@ -1059,19 +1083,9 @@ def recover_public_mirror(
     if not yt_dlp_command():
         return {"status": "unavailable", "reason": "yt-dlp is not installed"}
     cover_path = cache_dir / "card-cover.jpg"
-    cover_download: dict[str, Any] = {}
-    if not cover_path.is_file() or cover_path.stat().st_size <= 0:
-        for raw_url in profile.get("cover_urls") or []:
-            try:
-                cover_download = download_media(
-                    str(raw_url),
-                    cover_path,
-                    max_bytes=min(max_bytes, 20 * 1024 * 1024),
-                    timeout=min(download_timeout, 60),
-                )
-                break
-            except Exception:
-                cover_path.unlink(missing_ok=True)
+    cover_download = cache_card_cover(
+        profile, cache_dir, max_bytes=max_bytes, download_timeout=download_timeout,
+    )
     cover_ocr = ocr_cover_image(cover_path, timeout=min(command_timeout, 90)) if cover_path.is_file() else ""
     translated_evidence = translated_search_evidence(
         profile,
@@ -1506,10 +1520,6 @@ def run_pipeline(
         and profile.get("title")
         and (profile.get("cover_urls") or profile.get("duration_seconds"))
     )
-    if not safe_urls and not captured_audio and not can_recover_public_mirror:
-        result["error"] = "the exact Finder card contains no allowlisted media URL"
-        return write_result(result, output_dir)
-
     source_url = safe_urls[0] if safe_urls else ""
     identity = str(profile.get("identity_key") or profile.get("object_id") or sha256_text(source_url or source_text)[:24])
     cache_dir = cache_root / safe_component(identity)
@@ -1521,6 +1531,16 @@ def run_pipeline(
         result["visual_identity_verified"] = True
     try:
         with exclusive_lock(cache_dir / ".lock"):
+            # The first pass deliberately skips public search. Its failure is
+            # followed by native card matching, which already needs this cover.
+            cover = cache_card_cover(
+                profile, cache_dir, max_bytes=max_bytes, download_timeout=download_timeout,
+            )
+            if cover:
+                result["cover_path"] = cover["path"]
+            if not safe_urls and not captured_audio and not can_recover_public_mirror:
+                result["error"] = "the exact Finder card contains no allowlisted media URL"
+                return write_result(result, output_dir)
             result = process_locked(
                 result,
                 profile,

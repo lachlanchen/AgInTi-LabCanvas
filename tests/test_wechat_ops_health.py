@@ -18,6 +18,28 @@ from agenticapp import wechat_ops
 
 
 class WeChatOpsHealthTests(unittest.TestCase):
+    def test_done_reply_does_not_hide_failed_channels_retrieval(self):
+        now = datetime(2026, 11, 1, 20, 0)
+        task = {"id": "card-1", "chat": "Shares", "status": "done",
+                "created_at": now.isoformat(),
+                "result": {"message": "Only the card caption was available", "files": []},
+                "preflight": {"shipinhao_media_transcript": {
+                    "status": "failed", "failure_stage": "download",
+                    "native_capture_fallback": {"error_code": "finder_card_not_found", "failure_stage": "card_scan"},
+                }}}
+        attention = wechat_ops.queue_attention([task], now=now)
+        self.assertTrue(attention["needs_attention"])
+        self.assertEqual(attention["failed"][0]["source_failure"]["stage"], "card_scan")
+        self.assertEqual(task["status"], "done")
+        task["preflight"]["shipinhao_media_transcript"]["status"] = "transcribed"
+        self.assertFalse(wechat_ops.queue_attention([task], now=now)["needs_attention"])
+        task["preflight"]["shipinhao_media_transcript"]["status"] = "failed"
+        task["created_at"] = (now - timedelta(days=2)).isoformat()
+        with mock.patch.object(wechat_ops, "queue_attention_max_age_seconds", return_value=86400):
+            attention = wechat_ops.queue_attention([task], now=now)
+        self.assertFalse(attention["needs_attention"])
+        self.assertEqual(attention["counts"]["historical"], 1)
+
     def test_latest_message_health_uses_selected_windows_store_not_old_linux_cache(self):
         import sys
         sys.path.insert(0, str(wechat_ops.SCRIPTS))

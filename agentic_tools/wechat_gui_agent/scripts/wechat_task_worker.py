@@ -14141,7 +14141,7 @@ def run_automatic_shipinhao_gui_capture(task: dict[str, Any], profile: dict[str,
     duration = max(0.0, float_or_none(profile.get("duration_seconds")) or 0.0)
     capture_limit = min(1800.0, max(90.0, duration + 60.0)) if duration else 300.0
     command = [
-        os.environ.get("WECHAT_SHIPINHAO_CAPTURE_PYTHON", sys.executable),
+        shipinhao_native_link_python(),
         str(SHIPINHAO_GUI_AUDIO_CAPTURE_SCRIPT),
         "--object-id",
         str(profile.get("object_id") or ""),
@@ -14159,6 +14159,8 @@ def run_automatic_shipinhao_gui_capture(task: dict[str, Any], profile: dict[str,
         os.environ.get("WECHAT_SHIPINHAO_GUI_LOCK_TIMEOUT_SECONDS", "240"),
         "--max-scrolls",
         os.environ.get("WECHAT_SHIPINHAO_GUI_MAX_SCROLLS", "12"),
+        "--player-open-timeout",
+        os.environ.get("WECHAT_SHIPINHAO_PLAYER_OPEN_TIMEOUT_SECONDS", "40"),
         "--max-seconds",
         f"{capture_limit:.1f}",
         "--expected-duration-seconds",
