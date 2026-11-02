@@ -178,6 +178,14 @@ def store_task_knowledge(
     init_db(db, timeout_seconds=timeout_seconds)
     inserted = 0
     with closing(sqlite3.connect(db, timeout=timeout_seconds)) as conn, conn:
+        coverage = task.get("message_coverage") or {}
+        if coverage.get("status") == "covered" and not coverage.get("unresolved_item_ids"):
+            for kind, _title, _status, _body, digest, _provenance in records:
+                if kind == "agent_summary":
+                    conn.execute("""UPDATE source_knowledge SET evidence_status='superseded_synthesis'
+                        WHERE transport=? AND chat=? AND task_id=? AND kind='agent_summary'
+                        AND content_sha256 != ? AND evidence_status='agent_synthesis'""",
+                        (transport, chat, task_id, digest))
         for kind, title, status, body, digest, provenance in records:
             cur = conn.execute("""INSERT OR IGNORE INTO source_knowledge
                 (transport,chat,task_id,source_json,kind,title,evidence_status,body,
@@ -222,7 +230,7 @@ def knowledge_context(
                 k.provenance_json,s.body FROM source_knowledge_search s
                 JOIN source_knowledge k ON k.id=s.knowledge_id
                 WHERE source_knowledge_search MATCH ? AND k.transport=? AND k.chat=?
-                AND k.evidence_status != 'transcript_rejected'
+                AND k.evidence_status NOT IN ('transcript_rejected', 'superseded_synthesis')
                 ORDER BY bm25(source_knowledge_search) LIMIT ?""",
                 (match, transport, chat, max(1, min(20, char_budget // 400)))).fetchall()
     items = []

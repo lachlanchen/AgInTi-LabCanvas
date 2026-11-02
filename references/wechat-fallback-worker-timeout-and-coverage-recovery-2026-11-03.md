@@ -43,6 +43,28 @@ AgInTi result validation checks `message` and `confirmation` inside worker JSON
 for existing runtime-report markers and execution-guard refusals. A valid JSON
 envelope alone does not make internal diagnostics suitable for chat delivery.
 
+The live recovery also exposed repeated source reads and step-budget exhaustion.
+For source-only article summaries, `wechat_retained_articles` matches every
+current message URL to an exact-task retained HTML file and reparses it using
+the established article reader. When all sources are present within the context
+budget, `run_retained_article_reply` sends their bodies directly to the same
+backend's response-only role. The agent synthesizes; the host retains completion
+auditing and guarded delivery. Explicit research, file requirements and public
+publication remain on their existing worker path.
+
+This stage does not trust a prior draft as source evidence. It distinguishes
+full bodies from card metadata, rejects paths outside the task directory and
+ignores unrelated URL identities. Missing or oversized evidence returns to the
+normal worker rather than truncating the batch. A response covering zero current
+items with no artifacts becomes an unresolved failure instead of a delivered
+"completed part" followed by another automatic retry ladder.
+
+The recovered source packet uses the established article preflight contract so
+the normal knowledge importer retains the full text and final synthesis. A
+fully covered replacement marks earlier same-task summaries as superseded in
+memory while retaining those rows for audit. Superseded interim replies are
+excluded from subsequent source-knowledge retrieval.
+
 ## Recovery
 
 1. Check the client, source freshness and exact task before restarting anything.
@@ -67,3 +89,22 @@ Git. Leave paused WeCom and disabled EchoMind schedules unchanged.
 - Explicit reprocessing clears stale repair state while retaining source context.
 - Internal guard reports are rejected inside both JSON response fields;
   ordinary source summaries remain valid.
+- Retained source synthesis covers every current URL, excludes unrelated files,
+  distinguishes card metadata, and never drops late items to fit a budget.
+- The source synthesis uses the response-only backend while host delivery and
+  coverage checks remain active; zero-coverage text cannot pass as completion.
+
+## Live Result
+
+The production worker recovered a batch of thirteen current Shares sources:
+ten retained article bodies and three metadata-only cards. Its answer passed
+all fourteen ledger checks, including the operator's recovery instruction.
+Both text parts were confirmed in the native chat history. A clipboard failure
+on the second part was recovered by the existing deferred outbox without
+repeating the first part. The exact task finished `done`, with no unresolved
+items or delivery errors. Source retention imported ten article texts and the
+final synthesis into the private same-chat knowledge database.
+
+The backend used AgInTi/DeepSeek for this live recovery. Codex account selection
+and the existing restriction on paid credits were preserved. No client restart,
+phone control, public publication or source resend was needed.

@@ -54,6 +54,16 @@ class SourceKnowledgeTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             knowledge.knowledge_context({**self.task, "chat": "other"}, "optical", db=self.db)
 
+    def test_complete_replacement_retains_old_summary_but_excludes_it_from_memory(self):
+        self.store(result={"message": "Outdatedanswer optical summary"})
+        self.task["message_coverage"] = {"status": "covered", "unresolved_item_ids": []}
+        self.store(result={"message": "Correctedanswer optical summary"})
+        self.assertEqual(knowledge.knowledge_context(self.task, "outdatedanswer", db=self.db), {})
+        self.assertTrue(knowledge.knowledge_context(self.task, "correctedanswer", db=self.db))
+        with sqlite3.connect(self.db) as conn:
+            rows = conn.execute("SELECT evidence_status FROM source_knowledge WHERE kind='agent_summary' ORDER BY id").fetchall()
+        self.assertEqual(rows, [("superseded_synthesis",), ("agent_synthesis",)])
+
     def test_rejected_recognition_is_retained_but_not_reused_as_knowledge(self):
         self.store(result={"message": "Optical summary"})
         self.task["preflight"]["shipinhao_media_transcript"]["transcript_usable"] = False

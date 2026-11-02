@@ -1068,6 +1068,55 @@ This hypothesis still needs validation.
         self.assertTrue(all(row["coverage_status"] == "blocked_backend_failure" for row in stored))
         self.assertTrue(all(not row.get("coverage_requeue_count") for row in stored))
 
+    def test_retained_source_reply_uses_response_backend_and_keeps_delivery_on_host(self) -> None:
+        worker = load_worker()
+        task = {"id": "sources", "chat": "Shares", "session_scope": "Shares"}
+        policy = {"model": "gpt-6-astra", "timeout_seconds": 300}
+        evidence = [{"item_ids": ["source-1"], "title": "Article", "source_text": "A shared article", "body": "Original source", "quality": "full_article"}]
+        items = [{"item_id": "source-1", "kind": "source"}, {
+            "item_id": "reprocess:sources", "kind": "reprocess", "text": "Keep the answer concise",
+        }]
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            mock.patch.object(worker, "task_is_research_summary", return_value=True),
+            mock.patch.object(worker, "worker_artifact_dir", return_value=Path(tmp)),
+            mock.patch.object(worker, "task_contract_requires_file_delivery", return_value=False),
+            mock.patch.object(worker, "request_has_explicit_research_intent", return_value=False),
+            mock.patch.object(worker, "completion_coverage_items", return_value=items),
+            mock.patch("wechat_retained_articles.retained_article_evidence", return_value=evidence) as reader,
+            mock.patch.object(worker, "run_codex_session", return_value={
+                "ok": True, "backend": "aginti",
+                "message": json.dumps({"message": "正文的重点是客户需求。", "files": [], "confirmation": ""}),
+            }) as backend,
+        ):
+            result = json.loads(worker.run_retained_article_reply(task, policy))
+        self.assertEqual(backend.call_args.kwargs["role"], "chat-source-summary")
+        self.assertEqual(backend.call_args.kwargs["sandbox"], "read-only")
+        self.assertIn("Original source", backend.call_args.args[0])
+        self.assertIn("Keep the answer concise", backend.call_args.args[0])
+        self.assertEqual(reader.call_args.args[1], [items[0]])
+        self.assertEqual(result["files"], [])
+        self.assertEqual(task["retained_article_reply"]["item_ids"], ["source-1", "reprocess:sources"])
+        self.assertEqual(task["preflight"]["wechat_source_recovery"]["articles"][0]["source_quality"], "full_article")
+
+    def test_zero_coverage_cannot_be_delivered_as_a_completed_partial_answer(self) -> None:
+        worker = load_worker()
+        task = {"id": "unanswered"}
+        audit = {
+            "status": "checked", "expected_item_ids": ["task:unanswered"],
+            "covered_item_ids": [], "coverage_complete": False,
+            "missing": [{"item_id": "task:unanswered", "kind": "reply", "requirement": "Summarize the source"}],
+            "repair_recommended": False,
+        }
+        with mock.patch.object(worker, "run_completion_audit", return_value=audit):
+            result = worker.audit_and_repair_worker_completion(task, {
+                "message": "The link was retrieved. No further action required.", "files": [],
+            })
+        self.assertTrue(result.get("private_failure"))
+        self.assertNotIn("No further action required", result.get("message", ""))
+        self.assertTrue(task["worker_result_exhausted"])
+        self.assertEqual(task["worker_error"]["type"], "completion_uncovered")
+
     def test_supplement_completion_audit_includes_prior_delivered_answer(self) -> None:
         worker = load_worker()
         task = {
