@@ -1041,6 +1041,33 @@ This hypothesis still needs validation.
             self.assertNotIn("superseded_by", child)
             self.assertEqual(worker.reconcile_numbered_message_coverage(queue), 0)
 
+    def test_coverage_does_not_restart_exhausted_backend_for_parent_or_merged_child(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            parent = {
+                "id": "parent", "status": "worker_failed",
+                "worker_result_exhausted": True,
+                "message_coverage": {
+                    "status": "supplement_required",
+                    "covered_item_ids": [],
+                    "unresolved_item_ids": ["task:parent", "task:child"],
+                    "missing": [],
+                },
+            }
+            child = {
+                "id": "child", "status": "canceled_superseded",
+                "superseded_by": "parent",
+                "superseded_reason": "merged_as_same_chat_interruption",
+            }
+            worker.write_tasks(queue, [parent, child])
+            for _ in range(2):
+                self.assertEqual(worker.reconcile_numbered_message_coverage(queue), 0)
+            stored = worker.read_tasks(queue)
+        self.assertEqual([row["status"] for row in stored], ["worker_failed", "canceled_superseded"])
+        self.assertTrue(all(row["coverage_status"] == "blocked_backend_failure" for row in stored))
+        self.assertTrue(all(not row.get("coverage_requeue_count") for row in stored))
+
     def test_supplement_completion_audit_includes_prior_delivered_answer(self) -> None:
         worker = load_worker()
         task = {
@@ -8391,6 +8418,9 @@ stderr: noisy internal trace
                         "coverage_status": "covered",
                         "coverage_checked_at": "2026-06-25T10:39:57",
                         "coverage_parent_task_id": "task-1",
+                        "coverage_followup": {"missing": ["obsolete single-item repair"]},
+                        "coverage_requeue_count": 1,
+                        "terminal_failure_feedback": {"status": "sent"},
                         "completed_at": "2026-06-25T10:39:57",
                     }
                 ],
@@ -8441,6 +8471,9 @@ stderr: noisy internal trace
         self.assertNotIn("coverage_status", stored)
         self.assertNotIn("coverage_checked_at", stored)
         self.assertNotIn("coverage_parent_task_id", stored)
+        self.assertNotIn("coverage_followup", stored)
+        self.assertNotIn("coverage_requeue_count", stored)
+        self.assertNotIn("terminal_failure_feedback", stored)
         self.assertIn("expires_at", stored)
         self.assertEqual(stored["reprocess_reason"], "source resolver fixed")
         self.assertEqual(stored["reprocess_history"][0]["previous_status"], "send_retrying")

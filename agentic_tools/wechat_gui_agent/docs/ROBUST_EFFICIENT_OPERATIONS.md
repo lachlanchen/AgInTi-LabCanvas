@@ -1,5 +1,10 @@
 # Robust And Efficient Operations
 
+For repeated fallback timeouts, compare the selected worker budget with the
+effective backend timeout. A generic chat limit must not cap worker attempts,
+and coverage repair must not restart an exhausted backend. See
+[fallback worker recovery](../../../references/wechat-fallback-worker-timeout-and-coverage-recovery-2026-11-03.md).
+
 If a visible Channels card is reported missing, check that its exact cover was
 cached before scanning and allow the native player to finish loading. See
 [cover and player recovery](../../../references/wechat-channels-cover-and-player-recovery-2026-11-01.md).

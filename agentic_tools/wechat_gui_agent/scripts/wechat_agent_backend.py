@@ -70,9 +70,11 @@ AGINTI_INTERNAL_OUTPUT_LINE_RE = re.compile(
     r"(?im)^\s*(?:tool|output|artifact|step budget|surgical context)\s*:\s*.+$"
 )
 GENERIC_EXECUTION_EVIDENCE_REFUSAL_RE = re.compile(
-    r"I could not verify that the requested action was executed.*?"
+    r"(?:I could not verify that the requested action was executed.*?"
     r"Missing evidence categories:.*?"
-    r"Retry with an enabled execution tool",
+    r"Retry with an enabled execution tool"
+    r"|No actionable state or artifact found\..*?"
+    r"(?:task )?not resumable without additional input)",
     re.IGNORECASE | re.DOTALL,
 )
 AGINTI_MANAGED_VALUE_ARGS = {
@@ -1896,8 +1898,19 @@ def aginti_result_contract_error(message: str, *, expected_prompt: str) -> str:
     if AGINTI_INTERNAL_OUTPUT_LINE_RE.search(text):
         return "internal_tool_output_rejected"
     if "Return one strict JSON object and no prose" in str(expected_prompt or ""):
-        if extract_aginti_json_object(text) is None:
+        payload = extract_aginti_json_object(text)
+        if payload is None:
             return "strict_json_contract_rejected"
+        # Runtime guard text can be wrapped in otherwise valid worker JSON.
+        # Validate the recipient-facing fields, not just the outer envelope.
+        for key in ("message", "confirmation"):
+            content = str(payload.get(key) or "")
+            if (
+                AGINTI_INTERNAL_REPORT_RE.search(content)
+                or AGINTI_INTERNAL_OUTPUT_LINE_RE.search(content)
+                or is_generic_execution_evidence_refusal(content)
+            ):
+                return "internal_runtime_report_rejected"
     return ""
 
 
@@ -2210,11 +2223,15 @@ def claude_model(codex_model: str, *, role: str, backend_config: dict[str, Any])
 
 
 def configured_timeout(backend_config: dict[str, Any], role: str, fallback: int) -> int:
-    raw = backend_config.get(f"{role}_timeout_seconds") or backend_config.get("timeout_seconds")
+    role_timeout = backend_config.get(f"{role}_timeout_seconds")
+    # Worker policy already budgets substantive work and escalation. A short
+    # chat default must not silently cap every fallback worker at the same limit.
+    raw = role_timeout if role_timeout is not None else backend_config.get("timeout_seconds")
     if raw is None:
         return int(fallback)
     try:
-        return max(1, int(raw))
+        configured = max(1, int(raw))
+        return max(configured, int(fallback)) if role == "worker" and role_timeout is None else configured
     except (TypeError, ValueError):
         return int(fallback)
 

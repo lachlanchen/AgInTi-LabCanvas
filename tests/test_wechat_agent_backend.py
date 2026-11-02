@@ -28,6 +28,34 @@ def load_backend():
 
 
 class WeChatAgentBackendTests(unittest.TestCase):
+    def test_worker_fallback_keeps_policy_deadline_unless_role_explicitly_overrides(self) -> None:
+        backend = load_backend()
+        config = {"timeout_seconds": 120}
+        for budget in (300, 600, 1200):
+            self.assertEqual(backend.configured_timeout(config, "worker", budget), budget)
+        self.assertEqual(backend.configured_timeout(config, "route", 30), 120)
+        self.assertEqual(backend.configured_timeout(
+            {**config, "worker_timeout_seconds": 90}, "worker", 600,
+        ), 90)
+
+    def test_worker_json_cannot_wrap_internal_guard_feedback_as_a_reply(self) -> None:
+        backend = load_backend()
+        prompt = "Return one strict JSON object and no prose"
+        for field in ("message", "confirmation"):
+            payload = {"message": "", "confirmation": "", "files": []}
+            payload[field] = (
+                "CHATT: private runtime - No actionable state or artifact found. "
+                "Requested task not resumable without additional input."
+            )
+            with self.subTest(field=field):
+                self.assertEqual(backend.aginti_result_contract_error(
+                    json.dumps(payload), expected_prompt=prompt,
+                ), "internal_runtime_report_rejected")
+        self.assertEqual(backend.aginti_result_contract_error(
+            json.dumps({"message": "文章讨论如何找到第一个客户。", "files": [], "confirmation": ""}),
+            expected_prompt=prompt,
+        ), "")
+
     def test_backend_failure_classification_preserves_actionable_aginti_reasons(self) -> None:
         backend = load_backend()
 

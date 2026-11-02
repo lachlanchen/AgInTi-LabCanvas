@@ -1108,6 +1108,9 @@ def reprocess_task(
         "coverage_status",
         "coverage_checked_at",
         "coverage_parent_task_id",
+        "coverage_followup",
+        "coverage_requeue_count",
+        "terminal_failure_feedback",
         "expires_at",
         "send_expires_at",
     ]
@@ -6343,6 +6346,15 @@ def reconcile_numbered_message_coverage(path: Path) -> int:
                     changed = True
                 continue
             if not coverage_parent_terminal(parent):
+                continue
+            if parent.get("worker_result_exhausted") or str(parent.get("status")) == "worker_failed":
+                # Coverage omission is repairable after a useful answer. An
+                # exhausted backend needs recovery, not another complete retry
+                # ladder disguised as a missing-message supplement.
+                if task.get("coverage_status") != "blocked_backend_failure":
+                    task["coverage_status"] = "blocked_backend_failure"
+                    task["coverage_checked_at"] = now_text
+                    changed = True
                 continue
             retry_count = int(task.get("coverage_requeue_count") or 0)
             if retry_count >= 1:

@@ -830,3 +830,10 @@ For visible-card misses and slow native-player startup, follow
 [cover and player recovery](../../../references/wechat-channels-cover-and-player-recovery-2026-11-01.md).
 Keep exact-card covers available before the GUI scan and inspect retrieval
 health independently of whether an explanatory reply was delivered.
+
+## Fallback Worker Recovery
+
+For a caught-up monitor whose worker repeatedly times out, follow
+[worker deadlines and coverage recovery](../../../references/wechat-fallback-worker-timeout-and-coverage-recovery-2026-11-03.md).
+Preserve the worker policy budget across backend fallback and inspect unresolved
+coverage before treating a saved or delivered status message as completion.
