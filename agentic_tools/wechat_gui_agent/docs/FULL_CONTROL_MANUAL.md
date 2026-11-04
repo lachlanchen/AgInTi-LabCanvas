@@ -535,9 +535,13 @@ labcanvas wechat media-sync --chat "<CHAT_NAME>" --auto-source --since-minutes 6
 
 The sync logic scans WeChat file, video, attach, cache, and temp image folders,
 then records candidates in the private mirror. Old XOR `.dat` images can decode
-directly; newer V1/V2 image containers need a private image key. If exact source
-media is unavailable, the worker asks the user to resend or open the source in
-WeChat. It must not borrow files from another group or an older task.
+directly; newer V1/V2 image containers need a private image key. Linux image
+intake first resolves the exact message through `message_resource.db`, because
+the XML digest may not be its cache filename. It decodes the verified full
+resource without resizing; thumbnails and neighbouring files are not substitutes.
+See `references/wechat-linux-original-image-resource-recovery-2026-11-04.md`.
+If retrieval fails, retain its actual failure stage instead of claiming that the
+source is low resolution or immediately asking for another upload.
 
 For explicit image/file/video routes, `wechat_task_worker.py` performs a
 media-resolution preflight before calling the worker agent. It refreshes

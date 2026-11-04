@@ -423,6 +423,8 @@ def detect_media_extension(path: Path) -> str:
 
 
 def detect_media_extension_from_bytes(head: bytes) -> str:
+    if head.startswith(b"wxgf"):
+        return ".wxgf"
     if head.startswith(b"\xff\xd8\xff"):
         return ".jpg"
     if head.startswith(b"\x89PNG\r\n\x1a\n"):
