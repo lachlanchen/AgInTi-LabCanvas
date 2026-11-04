@@ -33,19 +33,23 @@ class RotaryStageSourceTests(unittest.TestCase):
             for n in TREE.body
             if isinstance(n, ast.FunctionDef) and n.name == "center_distance"
         )
-        context = {"P": PARAMETERS, "math": math}
-        exec(
-            compile(
-                ast.Module(body=[function], type_ignores=[]),
-                "<center_distance>",
-                "exec",
-            ),
-            context,
-        )
-        center, length, big, small = context["center_distance"]()
-        self.assertAlmostEqual(center, 83.8848853054856, places=8)
-        self.assertAlmostEqual(length, 320, places=9)
-        self.assertAlmostEqual(big / small, 6)
+        for belt_length, expected in (
+            (300, 72.93706602238623),
+            (320, 83.8848853054856),
+        ):
+            context = {"P": dict(PARAMETERS, belt_length_mm=belt_length), "math": math}
+            exec(
+                compile(
+                    ast.Module(body=[function], type_ignores=[]),
+                    "<center_distance>",
+                    "exec",
+                ),
+                context,
+            )
+            center, length, big, small = context["center_distance"]()
+            self.assertAlmostEqual(center, expected, places=8)
+            self.assertAlmostEqual(length, belt_length, places=9)
+            self.assertAlmostEqual(big / small, 6)
 
     def test_clearance_is_not_a_global_scale(self):
         self.assertEqual(PARAMETERS["motor_body_clearance_each_side_mm"], 0.2)
@@ -57,6 +61,24 @@ class RotaryStageSourceTests(unittest.TestCase):
         )
         self.assertEqual(PARAMETERS["clear_bore_mm"], 30)
         self.assertEqual(PARAMETERS["polarizer_insert_clear_aperture_mm"], 24)
+
+    def test_selected_retail_parts_match_model(self):
+        selection = json.loads((DESIGN / "taobao_selection.json").read_text())
+        items = {row["role"]: row for row in selection["items"]}
+        belt = items["belt"]
+        self.assertEqual(belt["pitch_length_mm"], PARAMETERS["belt_length_mm"])
+        self.assertEqual(belt["width_mm"], PARAMETERS["belt_width_mm"])
+        self.assertEqual(belt["pitch_mm"], PARAMETERS["belt_pitch_mm"])
+        self.assertEqual(belt["teeth"] * belt["pitch_mm"], belt["pitch_length_mm"])
+        self.assertTrue(belt["closed_loop"])
+        pulley = items["motor_pulley"]
+        self.assertEqual(pulley["teeth"], PARAMETERS["motor_teeth"])
+        self.assertEqual(pulley["bore_mm"], PARAMETERS["motor_shaft_diameter_mm"])
+        self.assertEqual(
+            pulley["overall_height_mm"], PARAMETERS["purchased_pulley_total_height_mm"]
+        )
+        self.assertEqual(PARAMETERS["motor_mount_rotation_deg"], 10)
+        self.assertEqual(PARAMETERS["motor_allen_tool_clear_diameter_mm"], 4)
 
     def test_height_and_table_grid_are_explicit(self):
         self.assertEqual(PARAMETERS["tray_underside_z_mm"], 85)
@@ -88,6 +110,7 @@ class RotaryStageGeneratedTests(unittest.TestCase):
             "full_rotation_envelope_intersections_mm3",
             "belt_to_motor_screw_intersections_mm3",
             "motor_tension_extremes_vs_carrier_mm3",
+            "motor_allen_tool_vs_belt_mm3",
         ):
             self.assertTrue(checks[name])
             self.assertLessEqual(max(checks[name].values()), 1e-5)
@@ -136,6 +159,16 @@ class RotaryStageGeneratedTests(unittest.TestCase):
             hashlib.sha256(path.read_bytes()).hexdigest(), source["sha256"]
         )
 
+    def test_stock_revision_preserves_unaffected_parts(self):
+        path = self.run_dir / "continuity_checks.json"
+        if not path.exists():
+            self.skipTest("Continuity comparison has not completed")
+        rows = json.loads(path.read_text())["unchanged_parts"]
+        self.assertEqual(len(rows), 6)
+        for row in rows.values():
+            self.assertTrue(row["bbox_equal"])
+            self.assertLessEqual(row["symmetric_difference_mm3"], 1e-5)
+
     def test_render_camera_margins(self):
         path = self.run_dir / "render_checks.json"
         if not path.exists():
@@ -175,7 +208,7 @@ class RotaryStageGeneratedTests(unittest.TestCase):
         guide = (self.run_dir / "ASSEMBLY_GUIDE.zh-CN.md").read_text()
         for term in (
             "6808",
-            "320-2GT-6",
+            "300-2GT-6",
             "M3×12",
             "timing pulley",
             "clearance",

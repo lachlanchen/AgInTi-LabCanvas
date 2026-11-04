@@ -36,8 +36,10 @@ are recorded in each run manifest.
 ## Mechanism and space
 
 The motor drives a printed 120-tooth ring through a purchased 20-tooth GT2 pulley
-and a closed 320-2GT-6 belt. The calculated center distance is 83.884885 mm, with
-plus/minus 3 mm motor adjustment. The reduction is 6:1. A 1.8-degree motor gives
+and a closed 300-2GT-6 belt. The calculated center distance is 72.937066 mm, with
+plus/minus 3 mm motor adjustment. The motor and its mounting pattern are rotated
+10 degrees about the shaft so a 4 mm tool envelope clears the belt at all four
+motor screws. The reduction is 6:1. A 1.8-degree motor gives
 0.3 degrees per full step, or 0.01875 degrees per 16x microstep **command**;
 these are not accuracy claims. Home sensing and output feedback are not included.
 
@@ -96,8 +98,8 @@ have not been verified. Buy one bearing and belt before printing the final fits.
 | --- | ---: | --- |
 | Existing OpenHI motor | 1 | 42 stepper, 5 mm shaft; use the existing motor |
 | Metal bearing | 1 | `6808 ZZ 40 52 7 薄壁轴承`; 6808-2RS has the same boundary dimensions but more seal drag |
-| Motor pulley | 1 | `2GT 20齿 内孔5mm 带宽6mm 同步轮`; channel 7.5, flanges 1 each, hub 5.5, total 15 mm in this reference |
-| Closed timing belt | 1 | `320-2GT-6 闭口同步带`; 2 mm pitch, 320 mm pitch length, 6 mm width |
+| Motor pulley | 1 | `2GT 20齿 内孔5 高16`; supplier confirms 20T, bore 5, total height 16 and flange/hub OD16; channel 7.5, flanges 1 each and hub 6.5 are reference geometry, not individually supplier-dimensioned |
+| Closed timing belt | 1 | `2GT-6MM-300MM` / `300-2GT-6 闭口同步带`; pitch 2, length 300, width 6 mm, 150 belt teeth |
 | Motor screws | 4 | M3 x 6 socket-head, with **1 mm total washer thickness** each |
 | Motor washers | 4 sets | M3 OD7 max, total thickness 1 mm; two 0.5 mm washers are acceptable |
 | Rotor cap screws | 3 | M3 x 12 countersunk, head diameter <=6.4 mm |
@@ -114,8 +116,17 @@ have not been verified. Buy one bearing and belt before printing the final fits.
 
 Invert the purchased motor pulley: the short hub is **above** the teeth, not
 against the motor. This gives full shaft engagement and accessible grub screws.
-Confirm the supplier's actual pulley dimensions before ordering. A taller hub,
-different belt width, or different motor shaft length needs a local revision.
+Selected public links/options are in `taobao_selection.json`: pulley
+`20齿内孔5高16（高品质）`, belt `2GT-6MM-300MM（防滑环形带）`. Both were added once
+with quantity one and verified in the cart; no checkout or payment was performed.
+The existing bearing was not duplicated. Its generic origin/grade parameters
+conflict with SKU marketing text, so origin, authenticity and P4 grade are not
+verified.
+
+The small pulley's axial channel split remains reference geometry. Align the
+real tooth channel to the belt by sliding it on the shaft before tightening the
+grub screw. A taller hub, different belt width or different shaft may need a
+local revision.
 Never buy an MXL or T2.5 belt for the modeled GT2 teeth.
 
 ## Print files and tolerances
@@ -144,7 +155,7 @@ The 1 mm sacrificial corner tabs are print-only and must be removed for assembly
 
 | Fit | Model choice | Meaning |
 | --- | --- | --- |
-| Motor body relief | 42.4 mm, plus X tension travel | 0.2 mm each side |
+| Motor body relief | Rotated body bounding envelope plus X tension travel | 0.2 mm per side at bounding limits; not a constant face-normal gap |
 | Motor boss slot width | 22.4 mm | 0.2 mm radial |
 | Bearing rotor seat | 52.1 mm | 0.1 mm diametral allowance |
 | Fixed bearing journal | 39.9 mm | 0.1 mm diametral reduction |
@@ -181,7 +192,7 @@ penetration below the output face is **6 mm**; longer screws can hit fixed parts
    retained independently, not tightened together into a locked bearing.
 5. Confirm the cap's own screw heads are flush. Hand-turn the ring through a
    full revolution before tensioning the belt.
-6. Fit the motor from below. Use M3 x 6 screws with 1 mm total washer thickness
+6. Fit the motor from below at the modeled 10-degree orientation. Use M3 x 6 screws with 1 mm total washer thickness
    in the recessed slots. Modeled metal engagement is 3 mm. Verify it physically.
 7. Fit the inverted 20T pulley inside the loose belt, align both tooth channels, move the
    motor just enough to remove slack, then tighten its four screws. Hand-turn
@@ -216,6 +227,15 @@ round-trips STEP, and checks each print's connected watertight mesh, true Z=0,
 nonempty first layer and one millimeter-unit 3MF build item. Renders check camera
 margins. The package script copies the current run to Nutstore and verifies file
 hashes. CAD checks do not replace physical fit, vibration or accuracy testing.
+
+The stock-parts revision preserves all previous runs. Compared with the 320 mm
+belt run, only the printed carrier and optional height shim change. Rotor,
+caps, stand and optic insert are retained. Use the latest complete run for the
+300 mm belt, not a mix of the old motor plate and new belt.
+
+Retail selection, width terminology, continuity checks and the reusable visible
+cart workflow are recorded in
+[`references/diy-hollow-rotary-stage-taobao-stock-2026-11-04.md`](../../../references/diy-hollow-rotary-stage-taobao-stock-2026-11-04.md).
 
 ## Sources and licensing
 

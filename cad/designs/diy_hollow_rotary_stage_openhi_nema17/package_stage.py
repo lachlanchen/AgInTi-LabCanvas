@@ -64,6 +64,7 @@ def contacts(run, data):
 
 
 def pdf_guide(run, data):
+    parameters = data["parameters"]
     styles = getSampleStyleSheet()
     styles["BodyText"].fontSize = 9
     styles["BodyText"].leading = 13
@@ -109,7 +110,11 @@ def pdf_guide(run, data):
                 "Motor source",
                 "OpenHI named body: 42 x 42 x 40 mm; 31 mm hole square; 5 x 22 mm shaft",
             ],
-            ["Drive", "20T to 120T GT2; 320 mm closed belt, 6 mm wide; 6:1 reduction"],
+            [
+                "Drive",
+                f"20T to 120T GT2; {parameters['belt_length_mm']:g} mm closed belt, "
+                f"{parameters['belt_width_mm']:g} mm wide; 6:1 reduction",
+            ],
             [
                 "Optical opening",
                 "30 mm bare stage; 24 mm with the removable 25.4 mm polarizer insert",
@@ -137,7 +142,10 @@ def pdf_guide(run, data):
         "Print the 52.0 / 52.1 / 52.2 mm bore coupons, 39.8 / 39.9 / 40.0 mm journal coupons and the GT2 tooth-fit coupon. Select a sliding fit that does not squeeze the bearing. Nominal build uses a 52.1 mm seat and 39.9 mm journal."
     )
     p(
-        "The motor pulley is inverted, with its hub above the teeth. Motor screws: M3 x 6 plus 1 mm total washer thickness, giving 3 mm modeled motor engagement. Recessed heads sit 0.75 mm below the belt. Check real screw depth and the actual purchased pulley."
+        "The motor pulley is inverted, with its hub above the teeth. Rotate the motor 10 degrees to match the carrier holes and keep a 4 mm tool path clear of the belt. Motor screws: M3 x 6 plus 1 mm total washer thickness, giving 3 mm modeled motor engagement. Recessed heads sit 0.75 mm below the belt. Check real screw depth."
+    )
+    p(
+        "Selected pulley: 20T, 5 mm bore, 16 mm overall height. Its individual channel, flange and hub lengths are not supplier-dimensioned; the CAD axial split is a reference. Slide the real pulley on the shaft to align the belt before locking its set screw."
     )
     story.append(PageBreak())
     p("Height, clearance and mounting", "Title")
@@ -174,7 +182,8 @@ def pdf_guide(run, data):
             ["Bearing", "1 x 6808-ZZ, 40 x 52 x 7 mm"],
             [
                 "Pulley and belt",
-                "1 x 20T 2GT, bore 5, width 6; 1 x 320-2GT-6 closed belt",
+                f"1 x 20T 2GT, bore 5, height 16, for a 6 mm belt; "
+                f"1 x {parameters['belt_length_mm']:g}-2GT-6 closed belt",
             ],
             [
                 "Main screw sets",
@@ -197,6 +206,9 @@ def pdf_guide(run, data):
     )
     p(
         "Print separately: carrier, footed stand, rotor cup, rotor cap and inner-race retainer. The polarizer insert, clip and 5 mm height shim are optional. Every part folder contains grounded STEP/STL/3MF files and its exact print-orientation preview."
+    )
+    p(
+        "The printed 120T driven pulley is annular, not solid. Do not buy a solid 120T pulley. Selected retail options are recorded in source/taobao_selection.json. The bearing listing has conflicting origin/grade fields; its import and P4 claims have not been verified."
     )
     p(
         "Starting print settings: PETG, 0.2 mm layers, 5-6 walls, 40-50% infill. Small rings and teeth should be effectively solid. Local support is needed under the raised motor roof; inspect the small flange and nut-pocket bridges. Remove 1 mm sacrificial tabs and support debris."
@@ -320,10 +332,26 @@ def main():
         contacts(run, data)
     source = run / "source"
     source.mkdir(exist_ok=True)
-    for name in ("build_stage.py", "render_stage.py", "package_stage.py"):
+    for name in (
+        "build_stage.py",
+        "render_stage.py",
+        "package_stage.py",
+        "taobao_selection.json",
+    ):
         shutil.copy2(DESIGN / name, source / name)
+    supplier_diagram = ROOT / "output/cad_sourcing/references/qipang-size-b.png"
+    if supplier_diagram.is_file():
+        references = run / "references"
+        references.mkdir(exist_ok=True)
+        shutil.copy2(
+            supplier_diagram, references / "selected_20t_pulley_dimensions.png"
+        )
     for name in ("README.md", "LICENSE"):
         shutil.copy2(DESIGN / name, run / name)
+    shutil.copy2(
+        ROOT / "references/diy-hollow-rotary-stage-taobao-stock-2026-11-04.md",
+        source / "taobao_sourcing_notes.md",
+    )
     if not args.chinese_only:
         pdf_guide(run, data)
     chinese_guide(run)

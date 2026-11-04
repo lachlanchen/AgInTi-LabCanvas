@@ -1,8 +1,8 @@
 {
-  "run_dir": "cad/designs/diy_hollow_rotary_stage_openhi_nema17/runs/run-5-common-carrier-30mm-bore-85mm-datum-prototype-20261104T105605Z",
-  "nutstore_run": "/home/lachlan/Nutstore Files/Projects/LabCanvas/diy_hollow_rotary_stage_openhi_nema17/run-5-common-carrier-30mm-bore-85mm-datum-prototype-20261104T105605Z",
-  "assembly_step": "/home/lachlan/Nutstore Files/Projects/LabCanvas/diy_hollow_rotary_stage_openhi_nema17/run-5-common-carrier-30mm-bore-85mm-datum-prototype-20261104T105605Z/diy_hollow_rotary_stage_85mm_assembly.step",
-  "verified_files": 131,
+  "run_dir": "cad/designs/diy_hollow_rotary_stage_openhi_nema17/runs/run-6-stock-300mm-belt-16mm-pulley-prototype-20261104T130416Z",
+  "nutstore_run": "/home/lachlan/Nutstore Files/Projects/LabCanvas/diy_hollow_rotary_stage_openhi_nema17/run-6-stock-300mm-belt-16mm-pulley-prototype-20261104T130416Z",
+  "assembly_step": "/home/lachlan/Nutstore Files/Projects/LabCanvas/diy_hollow_rotary_stage_openhi_nema17/run-6-stock-300mm-belt-16mm-pulley-prototype-20261104T130416Z/diy_hollow_rotary_stage_85mm_assembly.step",
+  "verified_files": 136,
   "all_checksums_match": true,
   "prototype": true,
   "chinese_tutorial_pdf": "/home/lachlan/Nutstore Files/Projects/LabCanvas/diy_hollow_rotary_stage_openhi_nema17/rotary_stage_tutorial_zh.pdf"

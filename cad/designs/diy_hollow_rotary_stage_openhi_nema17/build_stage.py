@@ -39,6 +39,8 @@ P = {
     "motor_front_z_mm": 80.0,
     "motor_body_mm": [42.0, 42.0, 40.0],
     "motor_hole_pitch_mm": 31.0,
+    "motor_mount_rotation_deg": 10.0,
+    "motor_allen_tool_clear_diameter_mm": 4.0,
     "motor_boss_diameter_mm": 22.0,
     "motor_boss_height_mm": 2.0,
     "motor_shaft_diameter_mm": 5.0,
@@ -62,11 +64,14 @@ P = {
     "bearing_top_z_mm": 88.0,
     "belt_pitch_mm": 2.0,
     "belt_width_mm": 6.0,
-    "belt_length_mm": 320.0,
+    "belt_length_mm": 300.0,
     "motor_teeth": 20,
     "rotor_teeth": 120,
     "belt_midplane_z_mm": 89.75,
     "rotor_tooth_channel_width_mm": 7.5,
+    "purchased_pulley_total_height_mm": 16.0,
+    "purchased_pulley_channel_reference_mm": 7.5,
+    "purchased_pulley_flange_reference_mm": 1.0,
     "GT2_pitch_to_crest_radial_mm": 0.254,
     "GT2_tooth_height_mm": 0.75,
     "GT2_groove_radius_mm": 0.555,
@@ -218,6 +223,24 @@ def motor_reference():
     return shape, label
 
 
+def motor_span():
+    angle = math.radians(P["motor_mount_rotation_deg"])
+    return P["motor_body_mm"][0] * (abs(math.cos(angle)) + abs(math.sin(angle)))
+
+
+def motor_mount_points(c):
+    angle = math.radians(P["motor_mount_rotation_deg"])
+    half = P["motor_hole_pitch_mm"] / 2
+    return [
+        (
+            c + dx * math.cos(angle) - dy * math.sin(angle),
+            dx * math.sin(angle) + dy * math.cos(angle),
+        )
+        for dx in (-half, half)
+        for dy in (-half, half)
+    ]
+
+
 def carrier(c):
     s = cyl(90, 75, 8).union(box(0, 116, -43, 43, 75, 83))
     s = (
@@ -229,13 +252,23 @@ def carrier(c):
     # Clear the bought bearing's corner radius without increasing its fitted journal.
     s = s.cut(ring(40.4, 39.4, 80.7, 0.6))
     # Raised motor roof keeps the saved 22 mm shaft long enough for an inverted pulley.
-    s = s.cut(box(c - 24.2, c + 24.2, -21.2, 21.2, 74, 80))
-    s = s.union(box(c - 26, c + 26, -29, 29, 80, 84))
+    half = motor_span() / 2 + P["motor_body_clearance_each_side_mm"]
+    travel = P["motor_tension_travel_each_way_mm"]
+    s = s.cut(box(c - half - travel, c + half + travel, -half, half, 74, 80))
+    s = s.union(
+        box(
+            c - half - travel - 2.5,
+            c + half + travel + 2.5,
+            -half - 4.5,
+            half + 4.5,
+            80,
+            84,
+        )
+    )
     s = s.cut(slot(22.4, 6, c, 0, 79.9, 4.2))
-    for dx in (-15.5, 15.5):
-        for y in (-15.5, 15.5):
-            s = s.cut(slot(3.4, 6, c + dx, y, 79.8, 4.4))
-            s = s.cut(slot(7.4, 6, c + dx, y, 82, 2.2))
+    for x, y in motor_mount_points(c):
+        s = s.cut(slot(3.4, 6, x, y, 79.8, 4.4))
+        s = s.cut(slot(7.4, 6, x, y, 82, 2.2))
     for x, y in P["stand_mounts_mm"]:
         s = s.cut(cyl(4.5, 74, 11, x, y))
     for a in (0, 120, 240):
@@ -306,7 +339,10 @@ def stand():
 
 
 def shim(c):
-    s = box(58, 114, -40, 40, 75, 80).cut(box(57, c + 25.2, -22.2, 22.2, 74, 81))
+    half = motor_span() / 2 + P["motor_body_clearance_each_side_mm"]
+    s = box(58, 114, -40, 40, 75, 80).cut(
+        box(57, c + half + 4, -half - 1, half + 1, 74, 81)
+    )
     for x, y in P["stand_mounts_mm"]:
         s = s.cut(cyl(4.5, 74, 7, x, y))
     return s
@@ -350,23 +386,22 @@ def belt(c, R, r):
 
 
 def drive_pulley(c):
-    # NopSCADlib GT2x20ob envelope, inverted: 1 + 7.5 + 1 + 5.5 mm.
+    # Supplier total is 16 mm; the channel/flange split is reference geometry.
     s = ring(16, 5, 85, 1).union(gt2_blank(20, 5, 86, 7.5))
-    s = s.union(ring(16, 5, 93.5, 1)).union(ring(16, 5, 94.5, 5.5))
+    hub_height = P["purchased_pulley_total_height_mm"] - 9.5
+    s = s.union(ring(16, 5, 93.5, 1)).union(ring(16, 5, 94.5, hub_height))
     return s.translate((c, 0, 0))
 
 
 def hardware_references(c):
     parts = {}
-    for dx in (-15.5, 15.5):
-        for y in (-15.5, 15.5):
-            x = c + dx
-            stem = f"motor_screw_{dx}_{y}".replace("-", "minus").replace(".", "p")
-            parts[stem] = (cyl(3, 77, 6, x, y).union(cyl(5.5, 83, 3, x, y)), "metal")
-            parts[stem + "_washer"] = (
-                cyl(7, 82, 1, x, y).cut(cyl(3.2, 81.9, 1.2, x, y)),
-                "metal",
-            )
+    for index, (x, y) in enumerate(motor_mount_points(c)):
+        stem = f"motor_screw_{index}"
+        parts[stem] = (cyl(3, 77, 6, x, y).union(cyl(5.5, 83, 3, x, y)), "metal")
+        parts[stem + "_washer"] = (
+            cyl(7, 82, 1, x, y).cut(cyl(3.2, 81.9, 1.2, x, y)),
+            "metal",
+        )
     for a in (0, 120, 240):
         x, y = polar_xy(17.5, a)
         parts[f"fixed_M2_head_{a}"] = (cyl(3.8, 89.5, 2, x, y), "metal")
@@ -465,7 +500,7 @@ def main():
     run = (
         DESIGN
         / "runs"
-        / f"run-{number}-common-carrier-30mm-bore-85mm-datum-prototype-{stamp}"
+        / f"run-{number}-stock-{P['belt_length_mm']:g}mm-belt-16mm-pulley-prototype-{stamp}"
     )
     run.mkdir(parents=True)
     c, length, R, r = center_distance()
@@ -491,7 +526,12 @@ def main():
             for name, shape in printable.items()
             if name != "height_shim_5mm"
         },
-        "motor_OpenHI_exact": (motor.translate((c, 0, 80)), "metal"),
+        "motor_OpenHI_exact": (
+            motor.rotate((0, 0, 0), (0, 0, 1), P["motor_mount_rotation_deg"]).translate(
+                (c, 0, 80)
+            ),
+            "metal",
+        ),
         "bearing_inner_reference": (ring(42, 40, 81, 7), "metal"),
         "bearing_outer_reference": (ring(52, 49.8, 81, 7), "metal"),
         "bearing_shield_reference": (ring(49.8, 42, 81.3, 6.4), "metal"),
@@ -565,6 +605,16 @@ def main():
                 raise RuntimeError(f"Motor fastener touches belt: {name}: {v}")
     checks["motor_screw_head_to_belt_vertical_gap_mm"] = (
         86.75 - P["motor_screw_head_top_z_mm"]
+    )
+    checks["motor_allen_tool_vs_belt_mm3"] = {}
+    for index, (x, y) in enumerate(motor_mount_points(c)):
+        tool = cyl(P["motor_allen_tool_clear_diameter_mm"], 86, 35, x, y)
+        interference = volume(tool.intersect(parts["belt_backing_reference"][0]))
+        checks["motor_allen_tool_vs_belt_mm3"][str(index)] = interference
+        if interference > 1e-5:
+            raise RuntimeError(f"Motor tool path crosses belt: {index}: {interference}")
+    checks["motor_shaft_above_reference_pulley_mm"] = (
+        102 - 85 - P["purchased_pulley_total_height_mm"]
     )
     outputs = {}
     assembly = cq.Assembly(name="DIY_30mm_hollow_rotary_stage_OpenHI_NEMA17")
@@ -643,7 +693,7 @@ def main():
             "Not physically tested. Print bearing/gear fits and hand-spin before applying motor power.",
             "85 mm is the main tray underside datum; the cup reaches Z79 and the stationary carrier reaches Z75. It is not an 85 mm unobstructed cylinder around the entire stage.",
             "The saved motor CAD models its 3 mm holes through the body; this does not establish real thread engagement depth. Keep motor screws near 3 mm engagement and verify physically.",
-            "Bearing races, pulley and belt are reference envelopes, not supplier-complete internal bearing or belt-tooth CAD. Buy a compatible 20T 5 mm-bore 6 mm-belt pulley and confirm dimensions.",
+            "Bearing internals and belt backing are reference envelopes. The selected supplier pulley confirms 20T, 5 mm bore, 16 mm overall height and 16 mm flange/hub diameter. Its axial channel/flange split is not dimensioned: the CAD uses a 7.5 mm channel, 1 mm flanges and 6.5 mm hub as reference only. Align the actual tooth channel to the belt by sliding the pulley on the shaft; confirm the actual part before motor power.",
             "Fixed cage rods must terminate below Z75 (recommend Z74 or lower), not merely below the Z85 tray: the bearing/carrier occupies the 30 mm cage-rod circle. They cannot pass through rotating mounting holes.",
             "The legacy 30 mm dock lower optical chain reaches Z79 and clashes with this carrier. A 25 mm dock reduces it to Z74, leaving only 1 mm: check the actual stack or fit the optional 5 mm height shim and use longer M4 screws.",
             "Carrier printing needs localized support below the raised motor roof. Rotor-cup flanges and stand nut pockets may need small supports depending on the printer. No universal support-free claim is made.",

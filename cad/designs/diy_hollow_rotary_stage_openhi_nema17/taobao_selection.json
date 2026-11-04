@@ -1,0 +1,59 @@
+{
+  "observed_date": "2026-11-04",
+  "status": "cart_verified_no_checkout",
+  "verification": "Logged-in visible Taobao selectors and cart rows; no hidden cart API",
+  "items": [
+    {
+      "role": "motor_pulley",
+      "url": "https://item.taobao.com/item.htm?id=599597755167&skuId=4179743856908",
+      "shop": "启庞科技企业店",
+      "selected_option": "20齿内孔5高16（高品质）",
+      "quantity": 1,
+      "action": "added_once_and_verified_in_cart",
+      "teeth": 20,
+      "bore_mm": 5,
+      "belt_width_mm": 6,
+      "overall_height_mm": 16,
+      "flange_hub_diameter_mm": 16,
+      "reference_channel_width_mm": 7.5,
+      "axial_profile_status": "Channel/flange/hub lengths are not individually dimensioned by supplier; reference split only, align actual pulley to belt on shaft",
+      "supplier_dimension_image": "https://img.alicdn.com/imgextra/i3/2786671363/O1CN011LwIISizHlGaVnV_!!2786671363.png"
+    },
+    {
+      "role": "belt",
+      "url": "https://item.taobao.com/item.htm?id=653406155594&skuId=4885322183458",
+      "shop": "启庞科技企业店",
+      "selected_option": "2GT-6MM-300MM（防滑环形带）",
+      "quantity": 1,
+      "action": "added_once_and_verified_in_cart",
+      "pitch_mm": 2,
+      "pitch_length_mm": 300,
+      "width_mm": 6,
+      "teeth": 150,
+      "closed_loop": true
+    },
+    {
+      "role": "bearing",
+      "url": "https://item.taobao.com/item.htm?id=640622640655&skuId=5741004041162",
+      "shop": "迈邦盾旗舰店",
+      "selected_option": "6808ZZ/P4钢封【日本进口 质保三年】",
+      "quantity": 1,
+      "action": "already_in_cart_not_added_or_modified",
+      "nominal_dimensions_mm": [40, 52, 7],
+      "dimension_basis": "6808-ZZ designation and JTEKT reference; actual item not measured",
+      "caution": "Generic listing parameters say China/P5/model6807; selected SKU says imported/P4/model6808. Origin, authenticity and P4 grade are not independently verified. Do not rely on these claims for stage accuracy."
+    }
+  ],
+  "rejected_alternatives": [
+    {"item_id": "753812550292", "reason": "Explicit 320mm x 6mm option but displayed seven-day presale"},
+    {"item_id": "677341747083", "reason": "Length range requires order note; no note defaults to range maximum"}
+  ],
+  "model_changes": {
+    "belt_pitch_length_mm": 300,
+    "center_distance_mm": 72.93706602238623,
+    "motor_mount_rotation_deg": 10,
+    "purchased_pulley_reference_height_mm": 16,
+    "changed_printed_parts": ["carrier", "height_shim_5mm"],
+    "unchanged_printed_parts": ["rotor_cup", "rotor_cap", "inner_race_retainer", "footed_stand", "polarizer_insert", "polarizer_retainer"]
+  }
+}
