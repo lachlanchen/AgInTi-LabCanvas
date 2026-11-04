@@ -1,0 +1,6 @@
+__pycache__/
+runs/
+artifacts/*
+!artifacts/latest.json
+!artifacts/sync.json
+USE_THIS_*.step
