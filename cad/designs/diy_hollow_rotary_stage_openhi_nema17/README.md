@@ -5,6 +5,11 @@ A light-duty, timing-belt-driven prototype with a 30 mm open bore, a metal
 the motor and bearing. A separate footed stand establishes the table height.
 This is a new design, not a modification of the working OpenHI microscope.
 
+Chinese purchasing/assembly tutorial with practical English:
+[ASSEMBLY_GUIDE.zh-CN.md](ASSEMBLY_GUIDE.zh-CN.md). Its illustrated XeLaTeX PDF
+is exported as `rotary_stage_tutorial_zh.pdf` in the current run and at the
+Nutstore project root. The Markdown's render links resolve inside the run copy.
+
 **Status: CAD-checked prototype, not physically tested. Print the fit coupons
 first. No angular accuracy or payload rating has been measured.**
 
@@ -199,6 +204,11 @@ cad/.conda/cad-python/bin/python cad/designs/diy_hollow_rotary_stage_openhi_nema
   --background --python cad/designs/diy_hollow_rotary_stage_openhi_nema17/render_stage.py
 python3 cad/designs/diy_hollow_rotary_stage_openhi_nema17/package_stage.py
 ```
+
+Packaging the Chinese tutorial requires Pandoc, XeLaTeX and Noto CJK fonts.
+For a documentation-only update, use `package_stage.py --chinese-only`; this
+preserves geometry and the English PDF, adds the Chinese/English-learning
+tutorial and updates the verified Nutstore handoff without a new CAD run.
 
 The builder isolates the exact motor, checks the empty optical bore, four sampled
 angles and a conservative full-rotation envelope, verifies belt/head separation,

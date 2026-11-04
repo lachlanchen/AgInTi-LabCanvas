@@ -2,9 +2,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Prepare readable previews, a short guide and checksum-verified Nutstore handoff."""
 
+import argparse
 import hashlib
 import json
 import shutil
+import subprocess
 from pathlib import Path
 from xml.sax.saxutils import escape
 
@@ -227,20 +229,104 @@ def pdf_guide(run, data):
     ).build(story, onFirstPage=footer, onLaterPages=footer)
 
 
+def chinese_guide(run):
+    for tool in ("pandoc", "xelatex"):
+        if shutil.which(tool) is None:
+            raise RuntimeError(
+                f"Chinese tutorial needs {tool}; geometry does not need rebuilding"
+            )
+    source = run / "source"
+    source.mkdir(exist_ok=True)
+    shutil.copy2(DESIGN / "ASSEMBLY_GUIDE.zh-CN.md", run / "ASSEMBLY_GUIDE.zh-CN.md")
+    shutil.copy2(DESIGN / "tutorial_zh_header.tex", source / "tutorial_zh_header.tex")
+    shutil.copy2(DESIGN / "tutorial_tables.lua", source / "tutorial_tables.lua")
+    tex = source / "rotary_stage_tutorial_zh.tex"
+    subprocess.run(
+        [
+            "pandoc",
+            str(run / "ASSEMBLY_GUIDE.zh-CN.md"),
+            "--standalone",
+            "--from=markdown+raw_tex",
+            "--shift-heading-level-by=-1",
+            "--metadata=lang:en-US",
+            "--metadata=date:适用于 " + "-".join(run.name.split("-")[:2]) + " 机械模型",
+            "--variable=documentclass:ctexart",
+            "--variable=classoption:fontset=none",
+            "--variable=fontsize:10pt",
+            "--variable=papersize:a4",
+            "--variable=geometry:margin=19mm,top=20mm,bottom=18mm",
+            "--variable=mainfont:TeX Gyre Pagella",
+            "--variable=monofont:DejaVu Sans Mono",
+            "--include-in-header",
+            str(source / "tutorial_zh_header.tex"),
+            "--lua-filter",
+            str(source / "tutorial_tables.lua"),
+            "--resource-path",
+            str(run),
+            "--output",
+            str(tex),
+        ],
+        check=True,
+        cwd=run,
+    )
+    build = ROOT / "output/cad_reviews/rotary_stage/zh_tutorial_build"
+    build.mkdir(parents=True, exist_ok=True)
+    log = build / "build-output.txt"
+    with log.open("w") as output:
+        for _ in range(2):
+            result = subprocess.run(
+                [
+                    "xelatex",
+                    "-interaction=nonstopmode",
+                    "-halt-on-error",
+                    "-file-line-error",
+                    "-output-directory",
+                    str(build),
+                    str(tex),
+                ],
+                cwd=run,
+                stdout=output,
+                stderr=subprocess.STDOUT,
+            )
+            if result.returncode:
+                raise RuntimeError(f"Chinese tutorial TeX build failed; inspect {log}")
+    final_log = (build / "rotary_stage_tutorial_zh.log").read_text(errors="replace")
+    if any(
+        marker in final_log
+        for marker in ("Overfull \\hbox", "Overfull \\vbox", "Missing character:")
+    ):
+        raise RuntimeError(
+            f"Chinese tutorial has overflow or missing glyphs; inspect {build}"
+        )
+    shutil.copy2(
+        build / "rotary_stage_tutorial_zh.pdf", run / "rotary_stage_tutorial_zh.pdf"
+    )
+
+
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--chinese-only",
+        action="store_true",
+        help="Add/update the Chinese tutorial without rerendering or rebuilding the English PDF",
+    )
+    args = parser.parse_args()
     run = ROOT / json.loads((DESIGN / "artifacts/latest.json").read_text())["run_dir"]
     data = json.loads((run / "manifest.json").read_text())
-    checks = json.loads((run / "render_checks.json").read_text())
-    for row in checks["renders"]:
-        flatten(run / row["path"])
-    contacts(run, data)
+    if not args.chinese_only:
+        checks = json.loads((run / "render_checks.json").read_text())
+        for row in checks["renders"]:
+            flatten(run / row["path"])
+        contacts(run, data)
     source = run / "source"
     source.mkdir(exist_ok=True)
     for name in ("build_stage.py", "render_stage.py", "package_stage.py"):
         shutil.copy2(DESIGN / name, source / name)
     for name in ("README.md", "LICENSE"):
         shutil.copy2(DESIGN / name, run / name)
-    pdf_guide(run, data)
+    if not args.chinese_only:
+        pdf_guide(run, data)
+    chinese_guide(run)
     final = DESIGN / "USE_THIS_diy_hollow_rotary_stage_85mm_assembly.step"
     shutil.copy2(run / data["assembly_step"], final)
     files = {
@@ -255,6 +341,10 @@ def main():
     if bad:
         raise RuntimeError(f"Nutstore copy failed: {bad}")
     shutil.copy2(final, NUTSTORE / final.name)
+    for name in ("rotary_stage_tutorial_zh.pdf", "ASSEMBLY_GUIDE.zh-CN.md"):
+        shutil.copy2(run / name, NUTSTORE / name)
+        if digest(run / name) != digest(NUTSTORE / name):
+            raise RuntimeError(f"Root tutorial copy failed: {name}")
     record = {
         "run_dir": str(run.relative_to(ROOT)),
         "nutstore_run": str(target),
@@ -262,6 +352,7 @@ def main():
         "verified_files": len(files),
         "all_checksums_match": True,
         "prototype": True,
+        "chinese_tutorial_pdf": str(NUTSTORE / "rotary_stage_tutorial_zh.pdf"),
     }
     (DESIGN / "artifacts/sync.json").write_text(json.dumps(record, indent=2) + "\n")
     print(json.dumps(record, indent=2))

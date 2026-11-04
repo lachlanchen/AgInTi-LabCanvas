@@ -166,6 +166,29 @@ class RotaryStageGeneratedTests(unittest.TestCase):
                 name,
             )
 
+    def test_chinese_tutorial_and_practical_english(self):
+        pdf = self.run_dir / "rotary_stage_tutorial_zh.pdf"
+        if not pdf.exists():
+            self.skipTest("Chinese tutorial has not been packaged")
+        self.assertTrue(pdf.read_bytes().startswith(b"%PDF-"))
+        self.assertGreater(pdf.stat().st_size, 10000)
+        guide = (self.run_dir / "ASSEMBLY_GUIDE.zh-CN.md").read_text()
+        for term in (
+            "6808",
+            "320-2GT-6",
+            "M3×12",
+            "timing pulley",
+            "clearance",
+            "set screw",
+        ):
+            self.assertIn(term, guide)
+        for name in (
+            "rotary_stage_tutorial_zh.tex",
+            "tutorial_zh_header.tex",
+            "tutorial_tables.lua",
+        ):
+            self.assertTrue((self.run_dir / "source" / name).exists())
+
 
 if __name__ == "__main__":
     unittest.main()
