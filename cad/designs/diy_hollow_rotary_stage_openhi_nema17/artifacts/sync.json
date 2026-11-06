@@ -1,8 +1,8 @@
 {
-  "run_dir": "cad/designs/diy_hollow_rotary_stage_openhi_nema17/runs/run-6-stock-300mm-belt-16mm-pulley-prototype-20261104T130416Z",
-  "nutstore_run": "/home/lachlan/Nutstore Files/Projects/LabCanvas/diy_hollow_rotary_stage_openhi_nema17/run-6-stock-300mm-belt-16mm-pulley-prototype-20261104T130416Z",
-  "assembly_step": "/home/lachlan/Nutstore Files/Projects/LabCanvas/diy_hollow_rotary_stage_openhi_nema17/run-6-stock-300mm-belt-16mm-pulley-prototype-20261104T130416Z/diy_hollow_rotary_stage_85mm_assembly.step",
-  "verified_files": 136,
+  "run_dir": "cad/designs/diy_hollow_rotary_stage_openhi_nema17/runs/run-7-upright-chamfered-rotor-prototype-20261106T110659Z",
+  "nutstore_run": "/home/lachlan/Nutstore Files/Projects/LabCanvas/diy_hollow_rotary_stage_openhi_nema17/run-7-upright-chamfered-rotor-prototype-20261106T110659Z",
+  "assembly_step": "/home/lachlan/Nutstore Files/Projects/LabCanvas/diy_hollow_rotary_stage_openhi_nema17/run-7-upright-chamfered-rotor-prototype-20261106T110659Z/diy_hollow_rotary_stage_85mm_assembly.step",
+  "verified_files": 155,
   "all_checksums_match": true,
   "prototype": true,
   "chinese_tutorial_pdf": "/home/lachlan/Nutstore Files/Projects/LabCanvas/diy_hollow_rotary_stage_openhi_nema17/rotary_stage_tutorial_zh.pdf"

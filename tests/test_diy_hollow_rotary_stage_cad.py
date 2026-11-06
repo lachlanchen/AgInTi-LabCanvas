@@ -88,6 +88,10 @@ class RotaryStageSourceTests(unittest.TestCase):
             self.assertEqual(x % 25, 0)
             self.assertEqual(y % 25, 0)
 
+    def test_upright_rotor_uses_named_transition(self):
+        self.assertEqual(PARAMETERS["rotor_underside_chamfer_height_mm"], 6)
+        self.assertEqual(PARAMETERS["rotor_flange_outer_lip_mm"], 0.2)
+
 
 class RotaryStageGeneratedTests(unittest.TestCase):
     @classmethod
@@ -159,14 +163,37 @@ class RotaryStageGeneratedTests(unittest.TestCase):
             hashlib.sha256(path.read_bytes()).hexdigest(), source["sha256"]
         )
 
-    def test_stock_revision_preserves_unaffected_parts(self):
-        path = self.run_dir / "continuity_checks.json"
-        if not path.exists():
-            self.skipTest("Continuity comparison has not completed")
-        rows = json.loads(path.read_text())["unchanged_parts"]
-        self.assertEqual(len(rows), 6)
+    def test_factory_set_excludes_reference_objects_and_fdm_tabs(self):
+        contract = self.data["manufacturing"]
+        self.assertEqual(contract["set_quantity"], 1)
+        self.assertEqual(set(contract["parts"]), set(self.data["print_validation"]))
+        self.assertEqual(len(contract["parts"]), 8)
+        for name, row in contract["parts"].items():
+            self.assertEqual(row["quantity"], 1, name)
+            self.assertFalse(row["ears"], name)
+            self.assertAlmostEqual(row["bounds_mm"][0][2], 0, places=5)
+            for kind in ("stl", "step"):
+                data = (self.run_dir / row[kind]).read_bytes()
+                self.assertEqual(
+                    hashlib.sha256(data).hexdigest(), row[kind + "_sha256"]
+                )
+
+    def test_upright_rotor_preserves_mating_geometry(self):
+        report = json.loads((self.run_dir / "printability_checks.json").read_text())
+        rows = report["rotor_printability"]
+        self.assertLess(
+            rows["new_upright"]["steep_downward_area_above_first_layers_mm2"],
+            rows["old_inverted"]["steep_downward_area_above_first_layers_mm2"] * 0.2,
+        )
+        self.assertFalse(self.data["print_validation"]["rotor_cup"]["invert_180"])
+        for record in report["preserved_rotor_interfaces"].values():
+            self.assertLessEqual(record["symmetric_difference_mm3"], 1e-5)
+
+    def test_revision_preserves_all_unaffected_parts(self):
+        report = json.loads((self.run_dir / "printability_checks.json").read_text())
+        rows = report["unchanged_parts"]
+        self.assertEqual(set(rows), set(self.data["print_validation"]) - {"rotor_cup"})
         for row in rows.values():
-            self.assertTrue(row["bbox_equal"])
             self.assertLessEqual(row["symmetric_difference_mm3"], 1e-5)
 
     def test_render_camera_margins(self):

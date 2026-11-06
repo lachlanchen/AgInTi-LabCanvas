@@ -76,6 +76,8 @@ P = {
     "GT2_tooth_height_mm": 0.75,
     "GT2_groove_radius_mm": 0.555,
     "rotor_cap_od_mm": 82.0,
+    "rotor_underside_chamfer_height_mm": 6.0,
+    "rotor_flange_outer_lip_mm": 0.2,
     "accessory_hole_square_mm": 30.0,
     "accessory_screw_max_insertion_mm": 6.0,
     "breadboard_grid_mm": 25.0,
@@ -280,6 +282,19 @@ def carrier(c):
 def rotor_cup():
     seat = P["rotor_bearing_seat_mm"]
     s = ring(58, 49.8, 79, 2).union(ring(58, seat, 81, 7))
+    # Print upright: the wide flange grows on a 45-degree annular transition.
+    rise = P["rotor_underside_chamfer_height_mm"]
+    upper_radius = 40 - P["rotor_flange_outer_lip_mm"]
+    taper = cq.Workplane(
+        obj=cq.Solid.makeCone(
+            upper_radius - rise,
+            upper_radius,
+            rise,
+            cq.Vector(0, 0, P["tray_underside_z_mm"] - rise),
+        )
+    )
+    taper = taper.cut(cyl(49.8, 78.9, 2.1)).cut(cyl(seat, 81, 8))
+    s = s.union(taper)
     s = s.union(ring(80, seat, P["tray_underside_z_mm"], 1)).union(
         gt2_blank(120, seat, 86, 7.5)
     )
@@ -287,7 +302,8 @@ def rotor_cup():
     s = s.cut(ring(52.6, 51.4, 80.7, 0.6))
     for a in (0, 120, 240):
         x, y = polar_xy(32, a)
-        s = s.cut(cyl(3.4, 78.9, 16, x, y)).cut(hex_prism(5.8, x, y, 84.4, 5.6, a))
+        # Keep the nut insertable from below after adding the tapered wall.
+        s = s.cut(cyl(3.4, 78.9, 16, x, y)).cut(hex_prism(5.8, x, y, 78.9, 11.1, a))
     return s
 
 
@@ -493,15 +509,165 @@ def fit_coupons():
     return parts
 
 
+def validate_rotor_revision(run):
+    """Compare the exported print and mating surfaces with the accepted run 6."""
+    baseline_name = "run-6-stock-300mm-belt-16mm-pulley-prototype-20261104T130416Z"
+    baseline = DESIGN / "runs" / baseline_name
+    if not baseline.is_dir():
+        baseline = (
+            Path.home()
+            / "Nutstore Files/Projects/LabCanvas"
+            / DESIGN.name
+            / baseline_name
+        )
+    if not baseline.is_dir():
+        raise RuntimeError(
+            "Restore accepted run 6 from Nutstore before comparing the rotor revision"
+        )
+    areas = {}
+    for label, folder in (("old_inverted", baseline), ("new_upright", run)):
+        mesh = trimesh.load_mesh(
+            folder / "print/rotor_cup/PRINT_THIS_rotor_cup.stl", force="mesh"
+        )
+        mask = (mesh.face_normals[:, 2] < -math.sin(math.radians(50))) & (
+            mesh.triangles_center[:, 2] > 0.3
+        )
+        areas[label] = {
+            "steep_downward_area_above_first_layers_mm2": float(
+                mesh.area_faces[mask].sum()
+            )
+        }
+
+    def difference(a, b):
+        delta = volume(a.cut(b)) + volume(b.cut(a))
+        if delta > 1e-5:
+            raise RuntimeError(f"Unintended mating geometry change: {delta} mm3")
+        return {"symmetric_difference_mm3": delta}
+
+    unchanged = {}
+    for name in (
+        "carrier",
+        "rotor_cap",
+        "inner_race_retainer",
+        "footed_stand",
+        "height_shim_5mm",
+        "polarizer_insert",
+        "polarizer_retainer",
+    ):
+
+        def load(folder):
+            path = folder / (name + ".step")
+            if not path.exists():
+                path = folder / "print" / name / ("PRINT_THIS_" + name + ".step")
+            return cq.importers.importStep(str(path))
+
+        unchanged[name] = difference(load(baseline), load(run))
+    old = cq.importers.importStep(str(baseline / "rotor_cup.step"))
+    new = cq.importers.importStep(str(run / "rotor_cup.step"))
+    domains = {
+        "bearing_seat": ring(53, 49, 80.5, 7.5),
+        "GT2_teeth": ring(80, 73, 86, 7.5),
+        "cap_contact_and_nut_roofs": ring(80, 54.2, 90, 3.5),
+    }
+    interfaces = {
+        name: difference(old.intersect(domain), new.intersect(domain))
+        for name, domain in domains.items()
+    }
+    report = {
+        "base_run": baseline_name,
+        "new_run": run.name,
+        "rotor_printability": areas,
+        "unchanged_parts": unchanged,
+        "preserved_rotor_interfaces": interfaces,
+        "chamfer_angle_from_vertical_deg": 45,
+        "remaining_radial_flange_lip_mm": P["rotor_flange_outer_lip_mm"],
+        "limitations": [
+            "Geometric audit, not a physical print test.",
+            "M3 nut-pocket roofs retain short bridges; other parts retain documented support needs.",
+        ],
+    }
+    if (
+        areas["new_upright"]["steep_downward_area_above_first_layers_mm2"]
+        >= areas["old_inverted"]["steep_downward_area_above_first_layers_mm2"] * 0.2
+    ):
+        raise RuntimeError("Rotor overhang reduction did not meet the geometric gate")
+    (run / "printability_checks.json").write_text(json.dumps(report, indent=2) + "\n")
+    return report
+
+
+def manufacturing_exports(printable, run):
+    """Export one clean eight-part set, without FDM tabs or purchased hardware."""
+    folder = run / "manufacturing" / "wenext"
+    folder.mkdir(parents=True, exist_ok=True)
+    rows = {}
+    for name, original in printable.items():
+        shape = original
+        if name in ("rotor_cap", "polarizer_insert"):
+            shape = shape.rotate((0, 0, 0), (1, 0, 0), 180)
+        xmin, ymin, zmin, xmax, ymax, _ = exact_bounds(shape)
+        shape = shape.translate((-(xmin + xmax) / 2, -(ymin + ymax) / 2, -zmin))
+        stem = folder / ("OpenHI_rotary_" + name)
+        for suffix in (".step", ".stl"):
+            options = (
+                {"tolerance": 0.025, "angularTolerance": 0.1}
+                if suffix == ".stl"
+                else {}
+            )
+            cq.exporters.export(shape, str(stem.with_suffix(suffix)), **options)
+        mesh = trimesh.load_mesh(stem.with_suffix(".stl"), force="mesh")
+        if (
+            not mesh.is_watertight
+            or len(mesh.split()) != 1
+            or abs(mesh.bounds[0, 2]) > 1e-5
+        ):
+            raise RuntimeError(f"Invalid manufacturing mesh: {name}")
+        rows[name] = {
+            "quantity": 1,
+            "stl": str(stem.with_suffix(".stl").relative_to(run)),
+            "step": str(stem.with_suffix(".step").relative_to(run)),
+            "stl_sha256": sha(stem.with_suffix(".stl")),
+            "step_sha256": sha(stem.with_suffix(".step")),
+            "bounds_mm": mesh.bounds.tolist(),
+            "ears": False,
+            "optional_in_use": name
+            in ("height_shim_5mm", "polarizer_insert", "polarizer_retainer"),
+        }
+    if len(rows) != 8:
+        raise RuntimeError(
+            "The manufacturing set must contain exactly eight printed parts"
+        )
+    contract = {
+        "run_name": run.name,
+        "set_quantity": 1,
+        "parts": rows,
+        "excluded": [
+            "motor",
+            "bearing",
+            "belt",
+            "metal pulley",
+            "fasteners",
+            "optical glass",
+            "fit coupons",
+            "FDM anti-warp ears",
+        ],
+        "notes": [
+            "Separate parts, millimetres; do not scale or fuse the set.",
+            "Keep GT2 teeth and bearing mating surfaces clean; remove process supports and loose powder.",
+            "Bearing seat is nominal 52.1 mm and journal is 39.9 mm. Standard service tolerance does not guarantee a sliding fit; measure and finish gently before inserting the bearing.",
+            "The 5 mm shim and polarizer insert/retainer are included once but are optional in the installed configuration.",
+        ],
+    }
+    (folder / "manufacturing_manifest.json").write_text(
+        json.dumps(contract, indent=2) + "\n"
+    )
+    return contract
+
+
 def main():
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     old = list((DESIGN / "runs").glob("run-*"))
     number = max((int(p.name.split("-")[1]) for p in old), default=0) + 1
-    run = (
-        DESIGN
-        / "runs"
-        / f"run-{number}-stock-{P['belt_length_mm']:g}mm-belt-16mm-pulley-prototype-{stamp}"
-    )
+    run = DESIGN / "runs" / f"run-{number}-upright-chamfered-rotor-prototype-{stamp}"
     run.mkdir(parents=True)
     c, length, R, r = center_distance()
     motor, label = motor_reference()
@@ -645,7 +811,7 @@ def main():
             shape,
             run,
             name,
-            invert=name in ("rotor_cup", "rotor_cap", "polarizer_insert"),
+            invert=name in ("rotor_cap", "polarizer_insert"),
             ears=name in ("carrier", "footed_stand"),
         )
     coupons = {}
@@ -665,7 +831,7 @@ def main():
     checks["M3_cap_nut_thread_protrusion_mm"] = (90 - 2.4) - (98.5 - 12)
     checks["bare_bore_diameter_mm"] = 30
     checks["with_insert_clear_aperture_mm"] = 24
-    flange_probe = printable["rotor_cup"].intersect(ring(78, 60, 0, 86))
+    flange_probe = printable["rotor_cup"].intersect(ring(80, 79.8, 0, 86))
     checks["measured_main_flange_underside_z_mm"] = exact_bounds(flange_probe)[2]
     if (
         abs(checks["measured_main_flange_underside_z_mm"] - P["tray_underside_z_mm"])
@@ -688,6 +854,8 @@ def main():
         "parts": outputs,
         "print_validation": prints,
         "fit_coupons": coupons,
+        "manufacturing": manufacturing_exports(printable, run),
+        "printability": validate_rotor_revision(run),
         "assembly_step": assembly_path.name,
         "prototype_limitations": [
             "Not physically tested. Print bearing/gear fits and hand-spin before applying motor power.",
@@ -696,7 +864,7 @@ def main():
             "Bearing internals and belt backing are reference envelopes. The selected supplier pulley confirms 20T, 5 mm bore, 16 mm overall height and 16 mm flange/hub diameter. Its axial channel/flange split is not dimensioned: the CAD uses a 7.5 mm channel, 1 mm flanges and 6.5 mm hub as reference only. Align the actual tooth channel to the belt by sliding the pulley on the shaft; confirm the actual part before motor power.",
             "Fixed cage rods must terminate below Z75 (recommend Z74 or lower), not merely below the Z85 tray: the bearing/carrier occupies the 30 mm cage-rod circle. They cannot pass through rotating mounting holes.",
             "The legacy 30 mm dock lower optical chain reaches Z79 and clashes with this carrier. A 25 mm dock reduces it to Z74, leaving only 1 mm: check the actual stack or fit the optional 5 mm height shim and use longer M4 screws.",
-            "Carrier printing needs localized support below the raised motor roof. Rotor-cup flanges and stand nut pockets may need small supports depending on the printer. No universal support-free claim is made.",
+            "Print the revised rotor cup upright on its broad lower ring. Its outer flange has a 45-degree underside and only a 0.2 mm radial lip; M3 nut-pocket roofs still need short bridges. Carrier printing still needs localized support below the raised motor roof, and stand nut pockets may need small supports. No universal support-free claim is made.",
             "With the optional polarizer insert fitted, the optical aperture is 24 mm, not 30 mm. The 1 mm optic thickness is a reference; thinner film needs a soft peripheral shim.",
             "No tested angular accuracy, load rating or CNC bearing-fit class is claimed. Do not tension the belt like a musical string.",
         ],

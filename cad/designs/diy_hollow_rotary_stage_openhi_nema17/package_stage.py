@@ -205,13 +205,13 @@ def pdf_guide(run, data):
         ]
     )
     p(
-        "Print separately: carrier, footed stand, rotor cup, rotor cap and inner-race retainer. The polarizer insert, clip and 5 mm height shim are optional. Every part folder contains grounded STEP/STL/3MF files and its exact print-orientation preview."
+        "Print separately: carrier, footed stand, rotor cup, rotor cap and inner-race retainer. Print the revised rotor cup upright: its underside has a 45-degree taper and only a 0.2 mm outer lip. The polarizer insert, clip and 5 mm height shim are optional. Each part has grounded STEP/STL/3MF files and a print preview."
     )
     p(
         "The printed 120T driven pulley is annular, not solid. Do not buy a solid 120T pulley. Selected retail options are recorded in source/taobao_selection.json. The bearing listing has conflicting origin/grade fields; its import and P4 claims have not been verified."
     )
     p(
-        "Starting print settings: PETG, 0.2 mm layers, 5-6 walls, 40-50% infill. Small rings and teeth should be effectively solid. Local support is needed under the raised motor roof; inspect the small flange and nut-pocket bridges. Remove 1 mm sacrificial tabs and support debris."
+        "Starting print settings: PETG, 0.2 mm layers, 5-6 walls, 40-50% infill. Small rings and teeth should be effectively solid. Local support is needed under the raised motor roof; short nut-pocket bridges remain. Remove 1 mm sacrificial tabs and support debris. Manufacturing files omit these tabs and all hardware references."
     )
     p(
         "First test: hand-turn fully; check screw tips and stationary rods; confirm belt alignment; then run slow forward/reverse moves with low current and an independent angle reference. The 0.01875-degree microstep command increment is not measured accuracy. No homing sensor, encoder, electrical wiring or firmware is supplied here."
@@ -351,6 +351,10 @@ def main():
     shutil.copy2(
         ROOT / "references/diy-hollow-rotary-stage-taobao-stock-2026-11-04.md",
         source / "taobao_sourcing_notes.md",
+    )
+    shutil.copy2(
+        ROOT / "references/openhi-rotary-stage-printability-wenext-2026-11-06.md",
+        source / "printability_and_wenext_notes.md",
     )
     if not args.chinese_only:
         pdf_guide(run, data)

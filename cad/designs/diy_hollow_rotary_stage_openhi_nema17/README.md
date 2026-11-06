@@ -140,7 +140,7 @@ Purchased components and hardware references never enter print files.
 | --- | ---: | --- |
 | `carrier` | 1 | Underside down, ears included. Local support under raised motor roof is necessary. Keep support out of bearing journal and nut pockets. |
 | `footed_stand` | 1 | Flat foot down, ears included. Inspect small nut-pocket roofs; use local support only if the slicer needs it. |
-| `rotor_cup` | 1 | Inverted in the supplied print file; tooth-ring face down. Check small flange overhang and nut-pocket bridges. |
+| `rotor_cup` | 1 | Upright on its broad lower ring. The underside grows at 45 degrees, leaving only a 0.2 mm outer lip. Short bridges remain over the nut pockets. |
 | `rotor_cap` | 1 | Inverted: flat top down, bearing boss up. No large unsupported shelf. |
 | `inner_race_retainer` | 1 | Flat ring down. |
 | `polarizer_insert` | 1 optional | Inverted, broad top face down; locating pilot up. |
@@ -232,6 +232,30 @@ The stock-parts revision preserves all previous runs. Compared with the 320 mm
 belt run, only the printed carrier and optional height shim change. Rotor,
 caps, stand and optic insert are retained. Use the latest complete run for the
 300 mm belt, not a mix of the old motor plate and new belt.
+
+### Upright rotor revision
+
+Run 7 addresses the reported repeated print failures by changing the rotor cup's
+underside to a 6 mm-high, 45-degree annular transition and supplying it upright.
+The outer flange lip is reduced to 0.2 mm. Nut passages remain open from below;
+the taper must not seal the hex-nut insertion route. The bearing seat, GT2 teeth,
+cap contact and nut roofs are unchanged, as are all seven other printed parts.
+The assembly's 30 mm bore and 85 mm outer flange datum are retained.
+
+Mesh analysis above the first layers reduces steep downward-facing area from
+985.76 to 151.39 mm2 (about 85%). This is a geometric comparison, not a claim
+that a physical print has passed. Small nut-pocket bridges remain. The carrier
+still requires its documented motor-roof support for FDM printing.
+
+`manufacturing/wenext/` contains one complete eight-part set with no sacrificial
+FDM ears, coupons, hardware or optical references. Each part has its own STL and
+STEP in millimetres, plus a quantity/checksum manifest. The height shim and optic
+insert/clip are supplied once, although optional in the installed configuration.
+Do not upload the assembly STEP as a single manufactured part.
+
+The geometric audit, diagnostic slice, factory-set boundaries and observed
+WeNext ordering route are documented in
+[`references/openhi-rotary-stage-printability-wenext-2026-11-06.md`](../../../references/openhi-rotary-stage-printability-wenext-2026-11-06.md).
 
 Retail selection, width terminology, continuity checks and the reusable visible
 cart workflow are recorded in

@@ -99,3 +99,13 @@ Important China-site behavior now handled by the script:
 - `数电普票` requires a saved invoice title. The private config supports `invoice.type`, `invoice.title`, and `invoice.email`.
 
 See `docs/DOM_MAP.md` and `docs/FAST_ORDERING_PLAYBOOK.md` for selectors, page states, and recovery steps.
+
+## Multi-Part Manufacturing Sets
+
+The legacy `china-flow` currently contains two-product wait conditions. Do not
+blindly use that flow for another batch size or upload the assembly as one part.
+The eight-part rotary-stage workflow instead verified each visible filename,
+quantity, material, shipping identity and total against its manufacturing
+manifest, submitted once, and stopped at the cashier. See
+[`references/openhi-rotary-stage-printability-wenext-2026-11-06.md`](../../references/openhi-rotary-stage-printability-wenext-2026-11-06.md)
+for the checked route and private recovery-record location.
