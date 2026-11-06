@@ -167,7 +167,7 @@ fi
 
 if ! ss -ltn | awk '{print $4}' | grep -Eq "(^|:)${VNC_PORT}$"; then
   echo "Starting x11vnc on 127.0.0.1:$VNC_PORT for $DISPLAY_ID"
-  env -u WAYLAND_DISPLAY x11vnc -display "$DISPLAY_ID" -localhost -nopw -forever -shared -rfbport "$VNC_PORT" \
+  env -u WAYLAND_DISPLAY x11vnc -display "$DISPLAY_ID" -localhost -nopw -forever -nevershared -rfbport "$VNC_PORT" \
     -bg -o "$LOG_DIR/${NAME}_x11vnc.log" >/dev/null
 fi
 
@@ -190,7 +190,7 @@ if [[ ${#APP_COMMAND[@]} -gt 0 ]]; then
   fi
 fi
 
-NOVNC_URL="http://127.0.0.1:$NOVNC_PORT/vnc.html?host=127.0.0.1&port=$NOVNC_PORT&autoconnect=1&resize=scale&reconnect=1&reconnect_delay=1000"
+NOVNC_URL="http://127.0.0.1:$NOVNC_PORT/vnc.html?host=127.0.0.1&port=$NOVNC_PORT&autoconnect=1&resize=scale&view_only=0&shared=0&reconnect=0"
 
 if [[ "$OPEN_BROWSER" == "1" ]]; then
   if command -v google-chrome >/dev/null 2>&1; then

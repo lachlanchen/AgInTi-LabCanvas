@@ -39,6 +39,16 @@ class VirtualDesktopLifecycleTests(unittest.TestCase):
         self.assertIn('stop_exact_processes "Xvfb display $DISPLAY_ID"', source)
         self.assertIn('stop_exact_processes "x11vnc relay for $DISPLAY_ID"', source)
 
+    def test_launcher_defaults_to_one_interactive_autofit_viewer(self) -> None:
+        source = LAUNCHER.read_text(encoding="utf-8")
+        self.assertIn("-localhost -nopw -forever -nevershared", source)
+        self.assertNotRegex(source, r"x11vnc[^\n]*\s-shared(?:\s|$)")
+        self.assertIn(
+            "&autoconnect=1&resize=scale&view_only=0&shared=0&reconnect=0",
+            source,
+        )
+        self.assertNotIn("&reconnect=1", source)
+
     def test_all_status_probes_are_bounded(self) -> None:
         launcher = LAUNCHER.read_text(encoding="utf-8")
         wechat = WECHAT.read_text(encoding="utf-8")
