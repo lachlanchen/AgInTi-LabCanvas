@@ -97,6 +97,31 @@ Before the quote state was lost, the China site parsed both files:
 - If Element UI region selectors do not open from typed text, click the visible option labels directly: `广东省`, `深圳市`, `南山区`.
 - If a modal or tip blocks a click, snapshot first, then close the highest visible `.el-dialog` or click the modal close button.
 
+## Amending An Already Submitted China Order
+
+- Recover the existing order number and verify its status, items, shipping and
+  invoice card before doing anything else. Do not use checkout or cancel/reorder
+  merely to correct a recipient or invoice title.
+- The current order-detail page may expose no shipping or invoice edit action.
+  The older sidebar address/invoice-information links can redirect to
+  `index.php?route=account/login` and lose the modern site's login state; avoid
+  those legacy routes once this behavior is observed.
+- Use the main site's visible `在线客服` control when amendment requires vendor
+  help. Operate the embedded `#chatIframe` through its visible composer and send
+  button. Its URL alone is not sufficient to initialize an active conversation.
+- Send one order-scoped request containing the exact authorized shipping and
+  invoice details, with no cancellation, duplicate order or payment. Keep those
+  details and chat evidence private. A cleared composer and visible message are
+  send evidence; a vendor reply confirms receipt, not completion of the changes.
+- Support may refer the request to the account manager. Ask for explicit
+  forwarding confirmation. Record whether the manager merely received the
+  request or actually changed the order, and re-read the order when possible.
+- In the observed flow, support instructed that a company invoice can be
+  requested through the account manager after payment. Do not claim the invoice
+  is issued or selected merely because its details were sent to support.
+- Keep the order unpaid until the owner pays. Preserve pending amendment status
+  and the original order number rather than claiming completion without proof.
+
 ## Persistent Logs
 
 The script writes:
