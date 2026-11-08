@@ -291,6 +291,77 @@ function Invoke-BridgeAction {
         "get_file_clipboard" {
             return @(Invoke-ClipboardOperation { [System.Windows.Forms.Clipboard]::GetFileDropList() })
         }
+        { $_ -in @('received_file_name', 'save_received_file', 'cancel_received_file') } {
+            if ($script:TargetApp -ne 'wecom') { throw 'Received-file export is WeCom-only.' }
+            $main = Get-WeComWindow
+            $foreground = [LabCanvasWin32]::GetForegroundWindow()
+            [uint32]$foregroundPid = 0
+            [LabCanvasWin32]::GetWindowThreadProcessId($foreground, [ref]$foregroundPid) | Out-Null
+            $dialogPids = [int[]](@(Get-Process WXWork -ErrorAction SilentlyContinue | ForEach-Object Id) + @($PID))
+            $dialog = @([LabCanvasDesktop.NativeWindows]::Snapshot($dialogPids) |
+                Where-Object { $_.ClassName -eq '#32770' -and
+                    $_.Name -match '^(Save\s*As|\u53e6\u5b58\u4e3a|\u53e6\u5b58\u70ba)$' })
+            # Delayed clipboard file rendering can create the native Save As
+            # dialog on this helper's STA thread instead of the WeCom process.
+            $ownedDialog = ($null -ne $main -and
+                ([LabCanvasWin32]::GetAncestor($foreground, 3) -eq $main.Handle -or
+                 $foregroundPid -eq [System.Diagnostics.Process]::GetCurrentProcess().Id))
+            if (-not $ownedDialog -or $dialog.Count -ne 1) {
+                throw 'No unique WeCom-owned Save As dialog; refusing file export.'
+            }
+            if ($kind -eq 'cancel_received_file') {
+                $confirmations = @([LabCanvasDesktop.NativeWindows]::Snapshot($dialogPids) |
+                    Where-Object { $_.ClassName -eq '#32770' -and $_.Name -eq 'Confirm Save As' })
+                foreach ($confirmation in $confirmations) {
+                    [LabCanvasDesktop.NativeWindows]::CancelDialog($confirmation.Handle)
+                }
+                [LabCanvasDesktop.NativeWindows]::CancelDialog($dialog[0].Handle)
+                return @{ cancelled = $true }
+            }
+            $dialogHandle = $dialog[0].Handle
+            $edit = [LabCanvasDesktop.NativeWindows]::UniqueChildControl($dialogHandle, 1001, 'Edit')
+            $button = [LabCanvasDesktop.NativeWindows]::UniqueChildControl($dialogHandle, 1, 'Button')
+            if ($edit -eq [IntPtr]::Zero -or $button -eq [IntPtr]::Zero) {
+                throw 'Save As filename field or submit button is not unique.'
+            }
+            $visibleName = [IO.Path]::GetFileName([LabCanvasDesktop.NativeWindows]::ReadControlText($edit))
+            if ($kind -eq 'received_file_name') {
+                return @{ filename = $visibleName; extension_hidden = (-not [IO.Path]::GetExtension($visibleName)) }
+            }
+            $filename = [string]$Action.filename
+            if ([IO.Path]::GetFileName($filename) -ne $filename -or
+                [IO.Path]::GetExtension($filename) -notin @('.pdf','.docx','.txt','.md','.csv','.xlsx','.pptx','.zip','.rar','.7z')) {
+                throw 'Unsupported received-file name.'
+            }
+            $target = [IO.Path]::GetFullPath([string]$Action.path)
+            $intakeRoot = [IO.Path]::GetFullPath((Join-Path $BridgeRoot 'intake')) + '\'
+            if (-not $target.StartsWith($intakeRoot, [StringComparison]::OrdinalIgnoreCase) -or
+                [IO.Path]::GetFileName($target) -cne $filename -or (Test-Path -LiteralPath $target)) {
+                throw 'Received-file path must be a new file inside the private intake folder.'
+            }
+            if ($visibleName -cne $filename -and
+                $visibleName -cne [IO.Path]::GetFileNameWithoutExtension($filename)) {
+                throw ('Save As filename does not match the exact received card: ' +
+                    (@{observed=$visibleName;expected=$filename} | ConvertTo-Json -Compress))
+            }
+            New-Item -ItemType Directory -Force -Path ([IO.Path]::GetDirectoryName($target)) | Out-Null
+            # WM_SETTEXT changes the display without updating IFileDialog's
+            # filename state. Use normal edit input, then reconcile the export.
+            [LabCanvasWin32]::SetForegroundWindow($dialogHandle) | Out-Null
+            [LabCanvasDesktop.NativeWindows]::FocusDialogControl($dialogHandle, $edit)
+            Invoke-ClipboardOperation { [System.Windows.Forms.Clipboard]::SetText($target) }
+            [System.Windows.Forms.SendKeys]::SendWait('^a^v')
+            $inputDeadline = [DateTime]::UtcNow.AddSeconds(2)
+            do {
+                Start-Sleep -Milliseconds 100
+                $entered = [LabCanvasDesktop.NativeWindows]::ReadControlText($edit)
+            } while ($entered -cne $target -and [DateTime]::UtcNow -lt $inputDeadline)
+            if ($entered -cne $target) {
+                throw 'Save As did not accept the exact private destination.'
+            }
+            [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
+            return @{ submitted = $true; path = $target; filename = $filename }
+        }
         "set_file_clipboard" {
             $files = New-Object System.Collections.Specialized.StringCollection
             foreach ($path in @($Action.paths)) {

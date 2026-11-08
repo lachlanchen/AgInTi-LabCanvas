@@ -662,6 +662,7 @@ class WeComGuiBridge:
                 sender_label=sender_label,
                 sender_fingerprint=sender_fingerprint,
                 sender_confidence=sender_confidence,
+                attachments=self.materialize_inbound_attachments(chat, batch),
             )
             record_inbound_messages(self.state_db, chat, batch_messages, event_path, image_hash)
             try:
@@ -1439,6 +1440,7 @@ class WeComGuiBridge:
                 records.append(
                     {
                         "text": text,
+                        "_screen_y": (screen_origin[1] + top) if screen_origin else top,
                         "sender_label": sender,
                         "sender_fingerprint": sender_fingerprint,
                         "sender_confidence": (
@@ -1504,6 +1506,9 @@ class WeComGuiBridge:
             return ""
         return copied[:12000]
 
+    def materialize_inbound_attachments(self, chat: str, records: list[dict]) -> list[dict]:
+        return []
+
     def build_event(
         self,
         chat: str,
@@ -1513,6 +1518,7 @@ class WeComGuiBridge:
         sender_label: str = "",
         sender_fingerprint: str = "",
         sender_confidence: str = "unresolved",
+        attachments: list[dict[str, Any]] | None = None,
     ) -> Path:
         normalized_sender = canonical_sender_label(sender_label)
         normalized_fingerprint = re.sub(r"[^0-9a-f]", "", sender_fingerprint.casefold())[:64]
@@ -1561,7 +1567,7 @@ class WeComGuiBridge:
             "msgtype": "text",
             "text": text,
             "quote_text": "",
-            "attachments": [],
+            "attachments": attachments or [],
             "source_message_count": len(messages),
             "received_at": now_iso(),
         }

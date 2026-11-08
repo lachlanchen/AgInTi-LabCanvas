@@ -4,7 +4,10 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -21,8 +24,10 @@ from wecom_gui_bridge import (
     load_config,
     now_iso,
     set_runtime,
+    find_color_regions,
 )
-from wecom_tiny11_transport import Tiny11Transport, Tiny11TransportError
+from wecom_tiny11_transport import Tiny11Transport, Tiny11TransportError, ps_quote
+from PIL import Image, ImageChops
 
 
 def native_input_problem(helper: dict[str, Any]) -> tuple[str, str] | None:
@@ -181,6 +186,17 @@ class Tiny11WeComGuiBridge(WeComGuiBridge):
         bottom = window.y + window.height - 160
         return left, top, width, max(180, bottom - top)
 
+    def passive_screen_signature(self, screenshot: Path, window: Window) -> str:
+        # The native editor is fixed-height. A Wine percentage crop omits the
+        # newest history rows in a tall console and delays them until rescan.
+        left, top, width, height = self.history_surface(window)
+        with Image.open(screenshot).convert("L") as image:
+            observed = image.crop((window.x + 62, window.y + 54,
+                                   left + width, top + height))
+            observed = observed.resize((128, 96), Image.Resampling.BILINEAR)
+            quantized = bytes((value // 16) * 16 for value in observed.tobytes())
+        return hashlib.sha256(quantized).hexdigest()
+
     def extract_inbound_records(
         self,
         screenshot: Path,
@@ -196,11 +212,133 @@ class Tiny11WeComGuiBridge(WeComGuiBridge):
             (surface_left, top, surface_width, height),
             crop_path,
         )
-        return self.extract_bubble_records(
+        records = self.extract_bubble_records(
             crop,
             chat,
             screen_origin=(surface_left, top),
-        ), crop_path
+        )
+        with Image.open(crop).convert("RGB") as image:
+            regions = find_color_regions(image, (255, 255, 255), tolerance=5)
+            regions += find_color_regions(image, (200, 222, 251), tolerance=5)
+            size = image.size
+        for index, (left, y, right, bottom, area) in enumerate(regions):
+            if left > 80 or right - left < 130 or bottom - y < 42 or area < 3000:
+                continue
+            card_path = self.crop(crop, (left, y, right-left, bottom-y),
+                                  self.runtime_dir / f"file-card-{safe_label(chat)}-{index}.png")
+            label = self.ocr_scaled(card_path, scale=4, psm=6)
+            if not re.search(r"\.(?:pdf|docx|txt|md|csv|xlsx|pptx|zip|rar|7z)\b", label, re.I):
+                continue
+            sender, fingerprint = self.extract_sender_identity(
+                crop, left=left, top=y, image_width=size[0], image_height=size[1],
+                label=f"file-{safe_label(chat)}-{index}")
+            records.append({
+                "text": "[WeCom file] " + " ".join(label.split()),
+                "sender_label": sender, "sender_fingerprint": fingerprint,
+                "sender_confidence": "visual_fingerprint" if fingerprint else "unresolved",
+                "_screen_y": top + y,
+                "native_file_card": {"x": surface_left+(left+right)//2,
+                                     "y": top+(y+bottom)//2, "label": label},
+            })
+        return sorted(records, key=lambda item: int(item.get("_screen_y") or 0)), crop_path
+
+    def click_native_menu_item(self, names: tuple[str, ...]) -> None:
+        path = self.capture_screen("received-file-menu")
+        for name in names:
+            match = self.find_ocr_line(path, name, scale=2, full_line_only=True)
+            if match is not None:
+                self.click(int(match["center_x"]), int(match["center_y"]))
+                return
+        raise RuntimeError("Exact received-file menu item is unavailable")
+
+    def received_file_info(self, remote: str) -> dict:
+        output = self.tiny11.powershell(
+            f"if(Test-Path -LiteralPath {ps_quote(remote)}) {{ "
+            f"$f=Get-Item -LiteralPath {ps_quote(remote)}; "
+            "@{bytes=$f.Length;sha256=(Get-FileHash -LiteralPath $f.FullName -Algorithm SHA256).Hash.ToLower()} | ConvertTo-Json -Compress }; exit 0")
+        return json.loads(output) if output else {}
+
+    def materialize_inbound_attachments(self, chat: str, records: list[dict]) -> list[dict]:
+        attachments = []
+        for record in records:
+            card = record.get("native_file_card")
+            if not isinstance(card, dict):
+                continue
+            identity = hashlib.sha256(json.dumps([chat, record.get("sender_fingerprint"),
+                card["label"]], ensure_ascii=False).encode()).hexdigest()[:24]
+            folder = self.event_root / "source-media" / safe_label(chat) / identity
+            receipt_path = folder / "native-file-export.json"
+            if receipt_path.is_file():
+                receipt = json.loads(receipt_path.read_text())
+                target = folder / str(receipt.get("filename") or "")
+                if (target.is_file() and target.parent == folder
+                        and receipt.get("source_chat") == chat
+                        and filename_matches_ocr(target.name, str(card["label"]))
+                        and hashlib.sha256(target.read_bytes()).hexdigest() == receipt.get("sha256")):
+                    attachments.append(receipt)
+                    continue
+            self.right_click(int(card["x"]), int(card["y"]))
+            try:
+                # Copy can lazily render CF_HDROP on the helper's STA thread,
+                # opening a modal Save As during clipboard reads. Open the
+                # card's native Save As directly and read its filename instead.
+                self.click_native_menu_item(("Save as...", "Save As", "另存为", "另存為"))
+                time.sleep(0.5)
+                native = self.tiny11.invoke({"action": "received_file_name"})
+                filename = str(native.get("filename") or "")
+                if native.get("extension_hidden"):
+                    extensions = set(re.findall(
+                        r"\.(pdf|docx|txt|md|csv|xlsx|pptx|zip|rar|7z)\b", str(card["label"]), re.I))
+                    if len(extensions) != 1:
+                        raise RuntimeError("Received file card does not expose a unique extension")
+                    filename += "." + extensions.pop().lower()
+                if (Path(filename).name != filename or "\\" in filename
+                        or not filename_matches_ocr(filename, str(card["label"]))):
+                    raise RuntimeError("Received file-card identity changed")
+                folder.mkdir(mode=0o700, parents=True, exist_ok=True)
+                target = folder / filename
+                remote = self.tiny11.remote_root + "\\intake\\" + identity + "\\" + filename
+                info = self.received_file_info(remote)
+                if info:
+                    # A crash after native saving but before SFTP must not
+                    # overwrite the original or reopen a replacement prompt.
+                    self.tiny11.invoke({"action": "cancel_received_file"})
+                else:
+                    self.tiny11.invoke({"action": "save_received_file", "filename": filename, "path": remote})
+                deadline = time.monotonic() + 90
+                while time.monotonic() < deadline:
+                    if int(info.get("bytes") or 0) > 0:
+                        break
+                    time.sleep(1)
+                    info = self.received_file_info(remote)
+                if not 0 < int(info.get("bytes") or 0) <= 256 * 1024 * 1024:
+                    raise RuntimeError("Received file did not finish its bounded native export")
+                subprocess.run(["scp", "-q", "-P", str(self.tiny11.ssh_port), "-o", "BatchMode=yes",
+                    "-o", "ConnectTimeout=8", f"{self.tiny11.user}@{self.tiny11.host}:{remote.replace(chr(92), '/')}",
+                    str(target)], check=True, capture_output=True, timeout=90)
+                target.chmod(0o600)
+                digest = hashlib.sha256(target.read_bytes()).hexdigest()
+                if target.stat().st_size != int(info["bytes"]) or digest != info["sha256"]:
+                    raise RuntimeError("Received-file SFTP checksum mismatch")
+                receipt = {"kind": "file", "filename": filename, "path": str(target.resolve()),
+                    "task_copy_path": str(target.resolve()), "size_bytes": target.stat().st_size,
+                    "sha256": digest, "source_chat": chat,
+                    "capture_kind": "wecom_native_exact_card_save_as", "status": "ready"}
+                receipt_path.touch(mode=0o600, exist_ok=True)
+                receipt_path.write_text(json.dumps(receipt, ensure_ascii=False, indent=2))
+                attachments.append(receipt)
+            except Exception:
+                try:
+                    self.tiny11.invoke({"action": "cancel_received_file"})
+                except (RuntimeError, Tiny11TransportError):
+                    pass
+                raise
+            finally:
+                # A failed export may leave a modal dialog. Do not mask the
+                # original failure by trying to click through the input guard.
+                if native_input_problem(self.tiny11.health()) is None:
+                    self.dismiss_transient_overlays(self.find_window(required=False))
+        return attachments
 
     def composer_contains_filename(
         self,
@@ -290,6 +428,24 @@ class Tiny11WeComGuiBridge(WeComGuiBridge):
         actions: list[dict[str, Any]] = [{"action": "click", "x": x, "y": y}]
         actions.extend({"action": "key", "keys": normalize_key(value)} for value in keys)
         self.tiny11.invoke({"action": "macro", "actions": actions})
+
+    def composer_is_empty(self, window: Window, delivery_key: str) -> bool:
+        if super().composer_is_empty(window, delivery_key):
+            return True
+        # Native WeCom's global Copy can return a selected history bubble even
+        # while the now-empty editor has focus. Independently check the editor,
+        # excluding its toolbar, borders and Send footer. Allow only a caret.
+        screenshot = self.capture_screen(f"empty-editor-{delivery_key}")
+        left = self.content_left(window) + 22
+        right = window.x + window.width - 190
+        if right - left < 100:
+            return False
+        with Image.open(screenshot).convert("RGB") as image:
+            editor = image.crop((left, window.y + window.height - 122,
+                                 right, window.y + window.height - 50))
+            ink = ImageChops.difference(editor, Image.new("RGB", editor.size, "white"))
+            box = ink.point(lambda value: 255 if value > 12 else 0).getbbox()
+        return box is None or (box[2] - box[0] <= 2 and box[3] - box[1] <= 24)
 
     def dismiss_transient_overlays(self, window: Window) -> None:
         if not getattr(self, "_context_menu_cleanup_pending", False):

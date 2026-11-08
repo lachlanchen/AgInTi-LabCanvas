@@ -30,7 +30,10 @@ export WECHAT_WORKER_DISABLE_GENERATED_VIDEO_LAZYEDIT=1
 # durable work through the shared model policy. Daily research has no
 # queue deadline; these generous per-turn watchdogs only reap a genuinely hung
 # subprocess, while exact-task artifacts remain recoverable and resumable.
-export WECHAT_WORKER_CODEX_MODEL="${WECHAT_WORKER_CODEX_MODEL:-gpt-5.6-sol}"
+# Model defaults come from the shared policy; explicit environment overrides win.
+if [[ -n "${WECHAT_WORKER_CODEX_MODEL:-}" ]]; then
+  export WECHAT_WORKER_CODEX_MODEL
+fi
 export WECHAT_WORKER_MIN_EFFORT="${WECHAT_WORKER_MIN_EFFORT:-low}"
 export WECHAT_WORKER_MAX_EFFORT="${WECHAT_WORKER_MAX_EFFORT:-xhigh}"
 export WECHAT_WORKER_TIMEOUT_LOW_SECONDS="${WECHAT_WORKER_TIMEOUT_LOW_SECONDS:-900}"
