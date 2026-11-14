@@ -135,7 +135,7 @@ class WeChatSourceRecoveryTests(unittest.TestCase):
 
     def test_image_only_html_post_does_not_require_native_type_metadata(self):
         recovery = load_recovery()
-        html = '<div id="js_content"><img data-src="https://mmbiz.qpic.cn/original"></div>'
+        html = '<div id="js_content"><img alt="Image caption is not the article body" data-src="https://mmbiz.qpic.cn/original"></div>'
         response = {"status": 200, "bytes": len(html), "final_url": "", "text": html}
         with tempfile.TemporaryDirectory() as tmp, mock.patch.object(recovery, "fetch_html", return_value=response), \
                 mock.patch("wechat_post_assets.download_post_images", return_value=[{"status": "ready", "path": "/private/page.jpg"}]):

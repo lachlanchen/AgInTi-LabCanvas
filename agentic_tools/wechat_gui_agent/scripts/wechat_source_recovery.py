@@ -66,6 +66,7 @@ class ParsedArticle:
     image_urls: list[str] = field(default_factory=list)
     media_urls: list[dict[str, str]] = field(default_factory=list)
     content_present: bool = False
+    body_text_present: bool = False
 
 
 class WeChatArticleParser(HTMLParser):
@@ -88,6 +89,7 @@ class WeChatArticleParser(HTMLParser):
         self.image_urls: list[str] = []
         self.media_urls: list[dict[str, str]] = []
         self.content_present = False
+        self.body_text_present = False
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         tag = tag.lower()
@@ -165,6 +167,7 @@ class WeChatArticleParser(HTMLParser):
             self.capture_text[self.capture_ids[-1]].append(data)
         if self.content_depth and not self.skip_depth:
             self.body_parts.append(data)
+            self.body_text_present = self.body_text_present or bool(data.strip())
 
     def article(self) -> ParsedArticle:
         body = clean_article_text("".join(self.body_parts))
@@ -187,6 +190,7 @@ class WeChatArticleParser(HTMLParser):
             image_urls=self.image_urls,
             media_urls=self.media_urls,
             content_present=self.content_present,
+            body_text_present=self.body_text_present,
         )
 
 
@@ -343,10 +347,10 @@ def recover_mp_weixin_article(
     title = first_nonempty(best_article.title, card_profile.get("title"))
     author = first_nonempty(best_article.author, best_article.account, card_profile.get("author"))
     description = first_nonempty(best_article.description, card_profile.get("description"))
-    full = bool(best_article.content_present and best_article.body and not detect_verification_gate(best_html))
+    full = bool(best_article.body_text_present and best_article.body and not detect_verification_gate(best_html))
     image_post = str(card_profile.get("item_show_type") or "") == "8" or bool(
         "picture_page_info_list" in best_html or "pages/image_detail" in normalized_url
-        or (best_article.content_present and best_article.image_urls and not best_article.body)
+        or (best_article.content_present and best_article.image_urls and not best_article.body_text_present)
     )
     image_urls = unique_strings([*best_article.image_urls, *(card_profile.get("image_urls") or [])])
     result: dict[str, Any] = {
@@ -439,12 +443,15 @@ def parse_wechat_article(html_text: str) -> ParsedArticle:
     parser.feed(html_text)
     article = parser.article()
     encoded = extract_js_literal(html_text, "content_noencode")
-    if not article.body and encoded:
+    if not article.body_text_present and encoded:
         embedded = WeChatArticleParser()
         embedded.feed('<div id="js_content">' + encoded + '</div>')
         parsed = embedded.article()
-        article.body, article.image_urls, article.media_urls = parsed.body, parsed.image_urls, parsed.media_urls
+        article.body = parsed.body
+        article.image_urls = unique_strings([*article.image_urls, *parsed.image_urls])
+        article.media_urls.extend(item for item in parsed.media_urls if item not in article.media_urls)
         article.content_present = True
+        article.body_text_present = parsed.body_text_present
     pictures = re.search(r"(?:window\.)?picture_page_info_list\s*=\s*(\[.*?\])\s*(?:\.slice|;)", html_text, re.S)
     if pictures:
         article.image_urls = unique_strings([*article.image_urls, *[

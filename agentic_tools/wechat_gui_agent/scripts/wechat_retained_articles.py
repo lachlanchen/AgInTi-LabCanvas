@@ -57,11 +57,11 @@ def retained_article_evidence(
             source_text = wanted[key]["source_text"]
             if ("pages/image_detail" in url or "picture_page_info_list" in raw_html
                     or any(card.get("item_show_type") == "8" for card in extract_article_cards(source_text))
-                    or article.media_urls):
+                    or article.media_urls or (article.image_urls and not article.body_text_present)):
                 # Mixed/image posts need their original assets and normal
                 # worker tools, not a text-only replay of cached metadata.
                 return []
-            full = bool(article.content_present and article.body and not detect_verification_gate(raw_html))
+            full = bool(article.body_text_present and article.body and not detect_verification_gate(raw_html))
             found[key] = {
                 **wanted[key],
                 "title": article.title or str(metadata.get("title") or ""),
