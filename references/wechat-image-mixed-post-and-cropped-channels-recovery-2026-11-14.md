@@ -101,3 +101,10 @@ vision-failure isolation, retained replay, and knowledge provenance.
 Reload only idle worker processes after tests. Preserve the current official
 clients, login profiles, send ledgers, group isolation, and disabled schedules.
 Do not replay historical failed tasks indiscriminately as a deployment test.
+
+Set `WECHAT_WORKER_PYTHON` in each transport's ignored private environment to
+the installed worker interpreter. The guarded entrypoint uses it for both
+self-checks and execution and prepends its bin directory for child tools.
+Otherwise a changed tmux PATH can silently switch from a working OpenCV-enabled
+environment to system Python after restart. Probe the actual worker executable
+and import dependencies there; a successful test in another shell is not enough.

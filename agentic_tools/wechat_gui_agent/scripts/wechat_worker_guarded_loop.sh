@@ -16,6 +16,11 @@ if [[ -f "$PRIVATE_ENV" ]]; then
   set +a
 fi
 
+# Pin the same interpreter for startup checks, workers and their child tools.
+# tmux's current PATH may differ from the environment used to install OpenCV.
+PYTHON_BIN="$(command -v "${WECHAT_WORKER_PYTHON:-${LABCANVAS_PYTHON:-python3}}")"
+export PATH="$(dirname "$PYTHON_BIN"):$PATH"
+
 if [[ "${WECHAT_WORKER_SKIP_SELFTEST:-0}" != "1" ]]; then
   mkdir -p "$SELFTEST_STATE_DIR"
   exec 9>"$SELFTEST_LOCK"
@@ -47,7 +52,7 @@ if [[ "${WECHAT_WORKER_SKIP_SELFTEST:-0}" != "1" ]]; then
       WECHAT_WORKER_EXPIRE_LEGACY_QUEUE=0 \
       WECHAT_TINY11_DISABLE=1 \
       PYTHONPATH="$ROOT/src:${PYTHONPATH:-}" \
-      python3 -m agenticapp wechat selftest --suite all --json \
+      "$PYTHON_BIN" -m agenticapp wechat selftest --suite all --json \
       >> "$LOG_DIR/supervisor-worker-selftest.log" 2>&1
     printf '%s\n' "$SELFTEST_SIGNATURE" > "$SELFTEST_STAMP.tmp.$$"
     mv -f "$SELFTEST_STAMP.tmp.$$" "$SELFTEST_STAMP"
@@ -60,4 +65,4 @@ fi
 
 export WECHAT_WORKER_EXPIRE_LEGACY_QUEUE="${WECHAT_WORKER_EXPIRE_LEGACY_QUEUE:-1}"
 export WECHAT_WORKER_COMPACT_STDOUT="${WECHAT_WORKER_COMPACT_STDOUT:-1}"
-exec python3 -u "$ROOT/agentic_tools/wechat_gui_agent/scripts/wechat_task_worker.py" "$@"
+exec "$PYTHON_BIN" -u "$ROOT/agentic_tools/wechat_gui_agent/scripts/wechat_task_worker.py" "$@"
