@@ -8,6 +8,12 @@ reader supplies exact assets, coverage, and a reading plan; the resumed chat
 agent interprets the material and decides which existing tools to use next.
 These changes do not authorize publication or change group schedules.
 
+An ordinary video without a text instruction remains save-only. A verified
+private save counts as handling the message without a reply; completion auditing
+must not ask an agent to invent an answer or echo the file. Bare uploads cannot
+use the "latest same-chat video" shortcut: recover that exact attachment or keep
+its source resolution pending, never substitute an earlier shared video.
+
 ## Failures and Fixes
 
 - **Short text:** a 240-character threshold rejected genuine short posts.

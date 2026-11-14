@@ -3515,6 +3515,33 @@ stderr: noisy internal trace
             self.assertEqual(article["vision"]["status"], "failed")
             self.assertEqual(result["articles"][1]["title"], "Second")
 
+    def test_verified_passive_video_save_does_not_trigger_reply_repair(self):
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "original.mp4"
+            path.write_bytes(b"verified source fixture")
+            task = {"id": "passive", "route_decision": {"passive_video_intake": True},
+                    "passive_video_intake": {"status": "cached", "saved_path": str(path)}}
+            result = worker.canonical_passive_video_intake_result(task)
+            with mock.patch.object(worker, "run_completion_audit") as audit, \
+                    mock.patch.object(worker, "run_worker_agent_session") as agent:
+                repaired = worker.audit_and_repair_worker_completion(task, result)
+            audit.assert_not_called()
+            agent.assert_not_called()
+            self.assertTrue(repaired["no_reply"])
+            self.assertEqual(task["message_coverage"]["unresolved_item_ids"], [])
+            self.assertFalse(task.get("worker_error"))
+
+    def test_passive_video_never_resolves_to_the_latest_other_video(self):
+        worker = load_worker()
+        task = {"route_decision": {"passive_video_intake": True, "needs_recent_media": True},
+                "request": "New video received, save privately"}
+        self.assertFalse(worker.should_resolve_recent_video_artifact(task))
+        with mock.patch.object(worker, "recent_video_artifact_matches") as match:
+            result = worker.resolve_recent_video_artifact_preflight(task)
+        match.assert_not_called()
+        self.assertFalse(result["ok"])
+
     def test_shipinhao_comment_preflight_auto_discovers_only_exact_export(self) -> None:
         worker = load_worker()
         with tempfile.TemporaryDirectory() as tmp:

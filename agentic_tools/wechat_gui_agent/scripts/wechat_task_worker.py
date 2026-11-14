@@ -11819,6 +11819,22 @@ def audit_and_repair_worker_completion(
     result: dict[str, Any],
 ) -> dict[str, Any]:
     """Check every numbered source row and run at most one corrective turn."""
+    data = result.get("data") if isinstance(result.get("data"), dict) else {}
+    passive = task.get("passive_video_intake") or data.get("passive_video_intake")
+    passive = passive if isinstance(passive, dict) else {}
+    saved = Path(str(passive.get("saved_path") or ""))
+    if (is_passive_video_intake_task(task) and result_is_no_reply(result)
+            and passive.get("status") == "cached" and saved.is_file() and saved.stat().st_size > 0):
+        expected = completion_expected_item_ids(task)
+        task["completion_audit"] = {
+            "status": "verified_passive_save", "attempts": [],
+            "repair_attempted": False, "repair_succeeded": False,
+        }
+        task["message_coverage"] = {
+            "status": "handled_without_reply", "expected_item_ids": expected,
+            "covered_item_ids": expected, "unresolved_item_ids": [], "missing": [],
+        }
+        return result
     if verified_shipinhao_delivery_result_complete(task, result):
         expected = completion_expected_item_ids(task)
         task["completion_audit"] = {
@@ -18066,6 +18082,8 @@ def should_preflight_autopublish(task: dict[str, Any]) -> bool:
 
 
 def should_resolve_recent_video_artifact(task: dict[str, Any]) -> bool:
+    if is_passive_video_intake_task(task):
+        return False
     if task_has_explicit_quote(task) or shipinhao_profile_for_task(task).get("detected"):
         return False
     route = task_route_decision(task)
@@ -19151,7 +19169,8 @@ def resolve_exact_video_artifact_preflight(task: dict[str, Any], original_prefli
 
 def resolve_recent_video_artifact_preflight(task: dict[str, Any]) -> dict[str, Any]:
     """Resolve the latest same-chat generated MP4 for follow-up send/save requests."""
-    if task_has_explicit_quote(task) or shipinhao_profile_for_task(task).get("detected"):
+    if (is_passive_video_intake_task(task) or task_has_explicit_quote(task)
+            or shipinhao_profile_for_task(task).get("detected")):
         return {"ok": False, "status": "explicit-source-required",
                 "error": "A quoted message/card cannot be replaced by the newest cached video"}
     queue_path = task_queue_path(task)
