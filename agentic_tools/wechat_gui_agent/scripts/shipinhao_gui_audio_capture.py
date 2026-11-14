@@ -330,6 +330,9 @@ def recover_share_link_from_player(
     if not evidence.get("matched"):
         return {"status": "failed", "error_code": "player_identity_mismatch"}
 
+    x, y = int(player["x"]), int(player["y"])
+    width, height = int(player["width"]), int(player["height"])
+
     marker = hashlib.sha256(os.urandom(16)).hexdigest()
     subprocess.run(
         ["xclip", "-selection", "clipboard"],
@@ -342,14 +345,25 @@ def recover_share_link_from_player(
     )
     if run(["xclip", "-selection", "clipboard", "-o"], env=env, check=False).stdout != marker:
         return {"status": "failed", "error_code": "native_copy_link_clipboard_unavailable"}
-    x, y = int(player["x"]), int(player["y"])
-    width, height = int(player["width"]), int(player["height"])
     # Linux Channels anchors its share arrow in the lower-right action bar.
     # Opening a menu is harmless; selecting anything requires an exact Copy Link label.
     anchors = [("share", x + width - 162, y + height - 64, "1"),
                ("context", x + width // 2, y + height // 2, "3")]
     candidates: list[dict[str, Any]] = []
+    try:
+        from shipinhao_share_link_resolver import extract_share_urls
+    except ImportError:
+        scripts_dir = str(Path(__file__).resolve().parent)
+        if scripts_dir not in sys.path:
+            sys.path.insert(0, scripts_dir)
+        from shipinhao_share_link_resolver import extract_share_urls
+    action_seen = False
     for menu_kind, menu_x, menu_y, button in anchors:
+        if menu_kind != "share" and not capture_identity_evidence(
+            player, output_dir / "share-link-retry-identity", env,
+            identity_terms, min_term_matches,
+        ).get("matched"):
+            return {"status": "failed", "error_code": "player_identity_mismatch"}
         run(["xdotool", "windowfocus", str(player["id"]), "mousemove", str(menu_x),
              str(menu_y), "click", button], env=env, check=False)
         time.sleep(0.7)
@@ -366,77 +380,76 @@ def recover_share_link_from_player(
         if cropped.returncode:
             run(["xdotool", "key", "Escape"], env=env, check=False)
             continue
-        ocr = run(["tesseract", str(ocr_image), "stdout", "-l", "chi_sim+chi_tra+eng",
-                   "--psm", "11", "tsv"], env=env, check=False)
-        candidates = [{**item, "center_x": crop_x + item["center_x"] / 3,
-                       "center_y": crop_y + item["center_y"] / 3}
-                      for item in copy_link_menu_candidates(ocr.stdout if ocr.returncode == 0 else "")]
+        candidates = []
+        # Sparse-text mode is normally best for the floating menu, but some
+        # builds split or drop the second half of ``复制链接``.  Retry with a
+        # single-block layout before declaring the exact action unavailable.
+        for psm in ("11", "6"):
+            ocr = run(["tesseract", str(ocr_image), "stdout", "-l", "chi_sim+chi_tra+eng",
+                       "--psm", psm, "tsv"], env=env, check=False)
+            candidates = [{**item, "center_x": crop_x + item["center_x"] / 3,
+                           "center_y": crop_y + item["center_y"] / 3}
+                          for item in copy_link_menu_candidates(
+                              ocr.stdout if ocr.returncode == 0 else ""
+                          )]
+            if candidates:
+                break
         candidates = [item for item in candidates
                       if x <= item["center_x"] < x + width and y <= item["center_y"] < y + height]
-        if len(candidates) == 1:
-            break
+        if len(candidates) != 1:
+            run(["xdotool", "key", "Escape"], env=env, check=False)
+            candidates = []
+            continue
+        action_seen = True
+        # The clipboard is asynchronous. Wait for a fresh link before trying
+        # the other read-only menu on this same identity-checked player.
+        subprocess.run(["xclip", "-selection", "clipboard"], env=env, input=marker,
+                       text=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+        candidate = candidates[0]
+        run(["xdotool", "mousemove", str(int(candidate["center_x"])),
+             str(int(candidate["center_y"])), "click", "1"], env=env, check=False)
+        for _ in range(8):
+            time.sleep(0.25)
+            clipboard = run(["xclip", "-selection", "clipboard", "-o"], env=env, check=False).stdout
+            urls = extract_share_urls(clipboard) if clipboard != marker else []
+            if len(urls) == 1:
+                share_url = urls[0]
+                return {"status": "verified", "menu_detected": True, "share_url": share_url,
+                        "share_url_sha256": hashlib.sha256(share_url.encode("utf-8")).hexdigest()}
         run(["xdotool", "key", "Escape"], env=env, check=False)
-        candidates = []
-    if not candidates:
-        run(["xdotool", "key", "Escape"], env=env, check=False)
-        return {
-            "status": "unavailable",
-            "error_code": "native_copy_link_action_missing",
-            "menu_detected": False,
-        }
-
-    candidate = candidates[0]
-    run(
-        [
-            "xdotool",
-            "mousemove",
-            str(int(candidate["center_x"])),
-            str(int(candidate["center_y"])),
-            "click",
-            "1",
-        ],
-        env=env,
-        check=False,
-    )
-    time.sleep(0.5)
-    clipboard = run(
-        ["xclip", "-selection", "clipboard", "-o"],
-        env=env,
-        check=False,
-    ).stdout
-    try:
-        from shipinhao_share_link_resolver import extract_share_urls
-    except ImportError:
-        scripts_dir = str(Path(__file__).resolve().parent)
-        if scripts_dir not in sys.path:
-            sys.path.insert(0, scripts_dir)
-        from shipinhao_share_link_resolver import extract_share_urls
-
-    urls = extract_share_urls(clipboard)
-    if len(urls) != 1:
-        return {
-            "status": "failed",
-            "error_code": "native_copy_link_invalid_clipboard",
-            "menu_detected": True,
-        }
-    share_url = urls[0]
     return {
-        "status": "verified",
-        "menu_detected": True,
-        "share_url": share_url,
-        "share_url_sha256": hashlib.sha256(share_url.encode("utf-8")).hexdigest(),
+        "status": "failed" if action_seen else "unavailable",
+        "error_code": "native_copy_link_invalid_clipboard" if action_seen else "native_copy_link_action_missing",
+        "menu_detected": action_seen,
+        "diagnostic_dir": str(output_dir),
     }
 
 
 def copy_link_menu_candidates(tsv_text: str) -> list[dict[str, Any]]:
     """Locate explicit Copy Link menu rows; never infer a click from position alone."""
 
+    items = parse_tesseract_tsv_words(tsv_text)
     rows: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
-    for item in parse_tesseract_tsv_words(tsv_text):
+    for item in items:
         key = (str(item["block_num"]), str(item["par_num"]), str(item["line_num"]))
         rows.setdefault(key, []).append(item)
     candidates: list[dict[str, Any]] = []
     accepted = {"复制链接", "複製連結", "複製鏈接", "copylink"}
+    # PSM 6 can retain the exact menu label as one high-confidence word while
+    # grouping unrelated nearby player text into the same OCR line.  Accept
+    # only a complete token here; substring matches remain forbidden.
+    for item in items:
+        normalized_word = re.sub(
+            r"[^0-9a-z\u3400-\u9fff]+", "", str(item["text"]).casefold()
+        )
+        if normalized_word in accepted:
+            candidates.append(
+                {
+                    "label": str(item["text"]),
+                    "center_x": int(item["left"]) + int(item["width"]) / 2.0,
+                    "center_y": int(item["top"]) + int(item["height"]) / 2.0,
+                }
+            )
     for words in rows.values():
         words.sort(key=lambda item: int(item["left"]))
         label = "".join(str(item["text"]) for item in words)
@@ -454,7 +467,14 @@ def copy_link_menu_candidates(tsv_text: str) -> list[dict[str, Any]]:
                 "center_y": (top + bottom) / 2.0,
             }
         )
-    return candidates
+    unique: list[dict[str, Any]] = []
+    seen: set[tuple[int, int]] = set()
+    for candidate in candidates:
+        key = (round(float(candidate["center_x"])), round(float(candidate["center_y"])))
+        if key not in seen:
+            seen.add(key)
+            unique.append(candidate)
+    return unique
 
 
 def open_exact_card_from_visible_history(
@@ -538,6 +558,25 @@ def open_exact_card_from_visible_history(
                 attempt["result"] = "no_player"
                 attempts.append(attempt)
                 continue
+            # Short Finder clips can finish and auto-advance while identity OCR
+            # is still running.  Pause the just-opened player immediately; the
+            # clicked candidate is already bound to the exact card/cover, and
+            # the identity check below still gates every later action.
+            run(
+                [
+                    "xdotool",
+                    "windowfocus",
+                    str(player["id"]),
+                    "mousemove",
+                    str(int(player["x"]) + 40),
+                    str(int(player["y"]) + int(player["height"]) - 64),
+                    "click",
+                    "1",
+                ],
+                env=env,
+                check=False,
+            )
+            time.sleep(0.25)
             evidence = wait_for_player_identity(
                 player=player,
                 stem=output_dir / f"card-open-{scan_index:02d}-{candidate_index:02d}",
@@ -1043,7 +1082,35 @@ def exact_cover_candidates(
         radius = max(2, int(np.ceil(cover.shape[1] * 0.02)))
         for width in range(max(24, center - radius), center + radius + 1):
             inspect_width(width)
-    return [best] if float(best.get("match_confidence") or 0.0) >= min_confidence else []
+    if float(best.get("match_confidence") or 0.0) >= min_confidence:
+        return [best]
+    # The native client center-crops portrait covers. Match local features in
+    # the exact source image rather than weakening the full-template threshold.
+    orb = cv2.ORB_create(nfeatures=1800)
+    source_points, source_desc = orb.detectAndCompute(cover, None)
+    target_points, target_desc = orb.detectAndCompute(search, None)
+    if source_desc is None or target_desc is None:
+        return []
+    pairs = cv2.BFMatcher(cv2.NORM_HAMMING).knnMatch(source_desc, target_desc, k=2)
+    matches = [pair[0] for pair in pairs if len(pair) == 2 and pair[0].distance < 0.72 * pair[1].distance]
+    if len(matches) < 12:
+        return []
+    source_xy = np.float32([source_points[item.queryIdx].pt for item in matches])
+    target_xy = np.float32([target_points[item.trainIdx].pt for item in matches])
+    transform, mask = cv2.estimateAffinePartial2D(source_xy, target_xy, method=cv2.RANSAC,
+                                               ransacReprojThreshold=2.5)
+    if transform is None or mask is None:
+        return []
+    accepted = mask.ravel().astype(bool)
+    scale = float(np.hypot(transform[0, 0], transform[1, 0]))
+    if (accepted.sum() < 12 or accepted.mean() < 0.65 or not 0.1 <= scale <= 2
+            or transform[0, 0] <= 0 or abs(transform[1, 0]) > scale * 0.09):
+        return []
+    point = np.median(target_xy[accepted], axis=0)
+    return [{"text": "exact same-object cropped Finder cover", "kind": "exact_cover",
+             "matched_terms": [], "center_x": float(point[0]), "center_y": float(point[1]),
+             "match_method": "orb_affine_inliers", "inliers": int(accepted.sum()),
+             "match_confidence": float(accepted.mean()), "score": 5000 + int(accepted.sum())}]
 
 
 def deduplicate_click_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:

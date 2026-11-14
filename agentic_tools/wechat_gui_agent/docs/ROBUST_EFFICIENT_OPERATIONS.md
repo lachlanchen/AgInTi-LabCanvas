@@ -1,5 +1,12 @@
 # Robust And Efficient Operations
 
+For short, image-only or mixed Official Account posts, use the typed source
+packet and original image reading rather than a long-text threshold. Recover
+cropped Channels covers geometrically and wait for a fresh native Copy Link
+result without weakening player identity. See
+[typed source and Channels recovery](../../../references/wechat-image-mixed-post-and-cropped-channels-recovery-2026-11-14.md).
+Preserve partial evidence and explicitly pending sources for agent continuation.
+
 For repeated fallback timeouts, compare the selected worker budget with the
 effective backend timeout. A generic chat limit must not cap worker attempts,
 and coverage repair must not restart an exhausted backend. See
@@ -921,6 +928,9 @@ The stable interface and recovery commands are documented in
   fallback, translate short Chinese evidence when available, search only bounded
   public candidates, and inspect public captions before downloading media. Accept
   either a close-duration content match or a bounded excerpt from a longer source.
+  A close duration never substitutes for content: candidate metadata/title and
+  duration alone cannot pass identity when transcript or caption evidence does
+  not strongly agree with the exact card.
   A longer-source excerpt requires independent caption/card agreement, a localized
   time window, and a corroborating Whisper transcript. Related clips from the same
   speaker must remain rejected when they do not match the card paraphrase/topic.
@@ -944,6 +954,8 @@ The stable interface and recovery commands are documented in
   to the received/source side and preserve the candidate kind so a real
   cover/play target gets the full player-open timeout. Never authorize a click
   from matching text in a later right-aligned bot reply.
+  Pause a just-opened short player before identity OCR so it cannot auto-advance
+  to a different feed item before the verified Copy Link action.
   After the exact card opens, bind the current `WeChatAppEx` PipeWire stream,
   start playback once if the stream has not appeared, require player title/author
   identity, and stop on consecutive identity loss or the source card's bounded

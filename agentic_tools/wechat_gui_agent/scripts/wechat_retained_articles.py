@@ -8,10 +8,10 @@ from typing import Any
 
 from wechat_source_recovery import (
     MAX_RESPONSE_BYTES,
-    MIN_ARTICLE_CHARS,
     article_identity_key,
     detect_verification_gate,
     extract_mp_weixin_urls,
+    extract_article_cards,
     parse_wechat_article,
 )
 
@@ -54,7 +54,14 @@ def retained_article_evidence(
                 continue
             raw_html = html.read_text(encoding="utf-8")
             article = parse_wechat_article(raw_html)
-            full = len(article.body) >= MIN_ARTICLE_CHARS and not detect_verification_gate(raw_html)
+            source_text = wanted[key]["source_text"]
+            if ("pages/image_detail" in url or "picture_page_info_list" in raw_html
+                    or any(card.get("item_show_type") == "8" for card in extract_article_cards(source_text))
+                    or article.media_urls):
+                # Mixed/image posts need their original assets and normal
+                # worker tools, not a text-only replay of cached metadata.
+                return []
+            full = bool(article.content_present and article.body and not detect_verification_gate(raw_html))
             found[key] = {
                 **wanted[key],
                 "title": article.title or str(metadata.get("title") or ""),

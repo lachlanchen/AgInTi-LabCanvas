@@ -99,6 +99,9 @@ def evidence_records(task: dict[str, Any]):
     for article in recovery.get("articles") or []:
         if isinstance(article, dict) and article.get("source_quality") == "full_article":
             yield "article_text", article, article.get("markdown_path"), "full_article"
+        elif isinstance(article, dict) and (article.get("vision") or {}).get("status") == "ok":
+            yield "post_image_reading", article, article.get("agent_context_path"), (
+                "source_post_images" if (article.get("page_coverage") or {}).get("complete") else "partial_post_images")
     for section in ("media_resolution", "file_intake", "wecom_media"):
         for item in (preflight.get(section) or {}).get("copied") or []:
             if not isinstance(item, dict) or item.get("matched_by") == "mtime":

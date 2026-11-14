@@ -46,6 +46,19 @@ class RetainedArticlesTests(unittest.TestCase):
             self.assertEqual(retained_article_evidence(root, items)[0]["quality"], "card_metadata")
             self.assertEqual(retained_article_evidence(root, items + [{"text": "Also manufacture this device"}]), [])
 
+    def test_short_text_is_readable_but_image_post_needs_asset_capable_worker(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            folder = root / 'articles' / 'post'
+            folder.mkdir(parents=True)
+            url = 'https://mp.weixin.qq.com/s?sn=post'
+            (folder/'meta.json').write_text(json.dumps({'url':url}))
+            (folder/'article.html').write_text('<div id="js_content">A short complete thought.</div>')
+            items = [{'text':url}]
+            self.assertEqual(retained_article_evidence(root, items)[0]['quality'], 'full_article')
+            (folder/'meta.json').write_text(json.dumps({'url':url+'&t=pages/image_detail'}))
+            self.assertEqual(retained_article_evidence(root, items), [])
+
 
 if __name__ == "__main__":
     unittest.main()

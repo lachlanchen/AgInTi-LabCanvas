@@ -80,6 +80,17 @@ class SourceKnowledgeTests(unittest.TestCase):
         self.assertEqual(found["retrieved_chunks"], 1)
         self.assertLessEqual(len(found["items"][0]["excerpt"]), 150)
 
+    def test_image_post_reading_is_retained_as_partial_not_full_article(self):
+        context = self.root/'post.md'
+        context.write_text('First page discusses optical sensors; eight pages are still unavailable.')
+        self.task['preflight'] = {'wechat_source_recovery': {'articles': [{
+            'source_quality':'partial_post', 'vision':{'status':'ok'},
+            'agent_context_path':str(context), 'page_coverage':{'complete':False}}]}}
+        self.assertEqual(self.store()['inserted'], 1)
+        with sqlite3.connect(self.db) as conn:
+            row = conn.execute('SELECT kind,evidence_status FROM source_knowledge').fetchone()
+        self.assertEqual(row, ('post_image_reading', 'partial_post_images'))
+
     def test_locked_database_respects_lookup_timeout(self):
         self.store()
         with sqlite3.connect(self.db) as writer:

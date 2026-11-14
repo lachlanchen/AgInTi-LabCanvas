@@ -353,6 +353,32 @@ class ShipinhaoMediaTranscribeTests(unittest.TestCase):
         )
         self.assertFalse(unrelated["accepted"])
 
+    def test_public_mirror_rejects_matching_metadata_and_duration_without_content(self) -> None:
+        module = load_module()
+        profile = module.extract_shipinhao_media_profile(card_xml())
+        profile["title"] = "如果下定决心做事就要做大事 黑石集团苏世民"
+        profile["duration_seconds"] = 9.0
+        candidate = {
+            "id": "wrong12345",
+            "title": "如果下定决心做事就要做大事 黑石集团苏世民",
+            "description": "全球投资家说",
+            "channel": "Public mirror",
+            "duration": 9.9,
+        }
+
+        evidence = module.public_mirror_match_evidence(
+            profile,
+            "如果下定决心做事 就要做大事 黑石集团苏世民",
+            "留守番電話に接続します。発信音の後にメッセージを録音してください。",
+            candidate,
+            {"duration_seconds": 9.9, "audio_stream_count": 1},
+        )
+
+        self.assertTrue(evidence["duration_match"])
+        self.assertTrue(evidence["title_contained"])
+        self.assertFalse(evidence["content_match_strong"])
+        self.assertFalse(evidence["accepted"])
+
     def test_search_queries_use_chinese_ocr_and_bounded_translation(self) -> None:
         module = load_module()
         profile = module.extract_shipinhao_media_profile(card_xml())

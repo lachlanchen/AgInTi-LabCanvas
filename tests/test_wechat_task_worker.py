@@ -3466,6 +3466,55 @@ stderr: noisy internal trace
         self.assertEqual(preflight["wechat_source_recovery"], recovered)
         recover.assert_called_once()
 
+    def test_article_post_recovery_does_not_depend_on_a_research_route_label(self):
+        worker = load_worker()
+        task = {'id':'mixed-post', 'chat':'Shares', 'routine':{'id':'general_worker'},
+                'request':'Read https://mp.weixin.qq.com/s/post', 'source':{'kind':'file/link'}}
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(worker, 'prepare_wechat_source_recovery_preflight', return_value={'status':'partial'}) as prepare:
+            result = worker.prepare_worker_preflight(task, Path(tmp))
+        prepare.assert_called_once()
+        self.assertEqual(result['wechat_source_recovery']['status'], 'partial')
+
+    def test_image_post_notes_reach_the_normal_agent_with_page_coverage(self):
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            image = root/'page.jpg'; image.write_bytes(b'original')
+            context = root/'context.md'; context.write_text('Coverage: 1 of 9')
+            note = root/'vision.txt'; note.write_text('A concrete first-page argument, not the whole post.')
+            article = {'title':'Post', 'assets':[{'status':'ready', 'path':str(image)}],
+                       'page_coverage':{'available':1, 'expected':9, 'complete':False},
+                       'agent_context_path':str(context)}
+            recovered = {'status':'partial', 'articles':[article]}
+            with mock.patch.object(worker, 'recover_task_sources', return_value=recovered), \
+                    mock.patch.object(worker, 'prepare_wecom_native_article_recovery', return_value={}), \
+                    mock.patch.object(worker, 'prepare_wechat_android_article_recovery', return_value={}), \
+                    mock.patch.object(worker, 'codex_read_image_file', return_value={'status':'ok', 'text_preview':'Reading notes', 'text_path':str(note)}) as vision:
+                result = worker.prepare_wechat_source_recovery_preflight({}, root)
+            self.assertEqual(result['status'], 'partial')
+            self.assertIn('first-page argument', context.read_text())
+            self.assertIn('"expected": 9', vision.call_args.kwargs['prompt_context'])
+
+    def test_post_vision_failure_keeps_original_assets_and_other_articles(self):
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            article = {
+                "assets": [{"status": "ready", "path": str(root / "original.jpg")}],
+                "agent_context_path": str(root / "context.md"),
+            }
+            recovered = {"status": "partial", "articles": [article, {"title": "Second"}]}
+            with mock.patch.object(worker, "recover_task_sources", return_value=recovered), \
+                    mock.patch.object(worker, "prepare_wecom_native_article_recovery", return_value={}), \
+                    mock.patch.object(worker, "prepare_wechat_android_article_recovery", return_value={}), \
+                    mock.patch.object(worker, "codex_read_image_file", side_effect=RuntimeError("vision unavailable")):
+                result = worker.prepare_wechat_source_recovery_preflight({}, root)
+            self.assertEqual(result["status"], "partial")
+            self.assertEqual(article["assets"][0]["status"], "ready")
+            self.assertEqual(article["vision"]["status"], "failed")
+            self.assertEqual(result["articles"][1]["title"], "Second")
+
     def test_shipinhao_comment_preflight_auto_discovers_only_exact_export(self) -> None:
         worker = load_worker()
         with tempfile.TemporaryDirectory() as tmp:

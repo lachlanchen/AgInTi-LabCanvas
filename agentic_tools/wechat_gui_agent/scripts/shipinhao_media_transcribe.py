@@ -46,7 +46,7 @@ PUBLIC_MIRROR_SEARCH_LIMIT = 12
 PUBLIC_MIRROR_QUERY_LIMIT = 8
 PUBLIC_MIRROR_CANDIDATE_LIMIT = 16
 PUBLIC_MIRROR_MAX_SOURCE_SECONDS = 900.0
-PUBLIC_MIRROR_RESOLVER_VERSION = 2
+PUBLIC_MIRROR_RESOLVER_VERSION = 3
 SPH_SHARE_URL_PATTERN = re.compile(
     r"https?://weixin\.qq\.com/sph/(?P<token>[A-Za-z0-9_-]{4,128})(?:[^\s<>\"']*)?",
     flags=re.I,
@@ -428,7 +428,11 @@ def public_mirror_match_evidence(
         and title_transcript_overlap >= 3
     )
     strong_content_match = strong_content_match or fuzzy_paraphrase_match
-    content_match = strong_content_match or metadata_match
+    # Search result metadata is discovery evidence, not media identity.  A
+    # candidate can repeat the Finder card title while containing unrelated
+    # video/audio, so public mirrors must corroborate the card from transcript
+    # or caption content before duration can contribute to acceptance.
+    content_match = strong_content_match
     source_excerpt_verified = bool(
         expected_duration
         and observed_duration > expected_duration + duration_tolerance

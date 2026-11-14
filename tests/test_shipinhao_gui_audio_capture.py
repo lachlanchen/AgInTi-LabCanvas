@@ -76,6 +76,58 @@ class ShipinhaoGuiAudioCaptureTests(unittest.TestCase):
                "5\t1\t1\t1\t1\t1\t800\t820\t100\t20\t95\t复制链接后分享\n")
         self.assertEqual(module.copy_link_menu_candidates(tsv), [])
 
+    def test_native_copy_waits_for_fresh_asynchronous_clipboard(self):
+        module = load_module()
+        tsv = ('level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext\n'
+               '5\t1\t1\t1\t1\t1\t90\t450\t180\t60\t95\t复制链接\n')
+        reads = 0
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(module.shutil, 'which', return_value='/usr/bin/xclip'), \
+                mock.patch.object(module, 'capture_identity_evidence', return_value={'matched': True}), \
+                mock.patch.object(module.subprocess, 'run') as write, \
+                mock.patch.object(module.time, 'sleep'), mock.patch.object(module, 'run') as run:
+            def execute(command, **kwargs):
+                nonlocal reads
+                output = ''
+                if command[0] == 'xclip':
+                    reads += 1
+                    output = write.call_args.kwargs['input'] if reads < 4 else 'https://weixin.qq.com/sph/test1234'
+                elif command[0] == 'tesseract':
+                    output = tsv
+                return mock.Mock(stdout=output, returncode=0)
+            run.side_effect = execute
+            result = module.recover_share_link_from_player(
+                player={'id':'20', 'x':100, 'y':100, 'width':920, 'height':890}, env={'DISPLAY':':97'},
+                output_dir=Path(tmp), identity_terms=['Exact title'], min_term_matches=1)
+        self.assertEqual(result['status'], 'verified')
+        self.assertEqual(reads, 4)
+
+    def test_empty_copy_tries_the_other_menu_only_on_the_same_verified_player(self):
+        module = load_module()
+        tsv = ('level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext\n'
+               '5\t1\t1\t1\t1\t1\t90\t200\t180\t60\t95\t复制链接\n')
+        reads = 0
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(module.shutil, 'which', return_value='/usr/bin/xclip'), \
+                mock.patch.object(module, 'capture_identity_evidence', return_value={'matched': True}) as identity, \
+                mock.patch.object(module.subprocess, 'run') as write, \
+                mock.patch.object(module.time, 'sleep'), mock.patch.object(module, 'run') as run:
+            def execute(command, **kwargs):
+                nonlocal reads
+                output = ''
+                if command[0] == 'xclip':
+                    reads += 1
+                    output = write.call_args.kwargs['input'] if reads <= 9 else 'https://weixin.qq.com/sph/test1234'
+                elif command[0] == 'tesseract':
+                    output = tsv
+                return mock.Mock(stdout=output, returncode=0)
+            run.side_effect = execute
+            result = module.recover_share_link_from_player(
+                player={'id':'20', 'x':100, 'y':100, 'width':920, 'height':890}, env={'DISPLAY':':97'},
+                output_dir=Path(tmp), identity_terms=['Exact title'], min_term_matches=1)
+        self.assertEqual(result['status'], 'verified')
+        self.assertEqual(identity.call_count, 2)
+
     def test_failed_menu_image_never_uses_stale_ocr(self) -> None:
         module = load_module()
         for failed_tool in ("import", "convert"):
@@ -333,6 +385,40 @@ class ShipinhaoGuiAudioCaptureTests(unittest.TestCase):
                     self.assertGreater(candidates[0]["match_confidence"], .99)
                 else:
                     self.assertEqual(candidates, [])
+
+    def test_center_cropped_cover_uses_geometric_inliers_not_a_looser_template(self):
+        try:
+            import cv2
+            import numpy as np
+        except ImportError:
+            self.skipTest('OpenCV is not installed')
+        module = load_module()
+        rng = np.random.default_rng(17)
+        cover = np.full((720, 405), 210, np.uint8)
+        for index in range(150):
+            x, y = int(rng.integers(10, 355)), int(rng.integers(20, 700))
+            cv2.putText(cover, str(index), (x, y), cv2.FONT_HERSHEY_SIMPLEX,
+                        .5, int(rng.integers(0, 180)), 1)
+        displayed = cv2.resize(cover[80:620, :], (260, 347), interpolation=cv2.INTER_AREA)
+        region = {'left': 300, 'top':50, 'width':1000, 'height':850}
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cv2.imwrite(str(root/'cover.png'), cover)
+            for inbound in (True, False):
+                screen = np.full((1000, 1400), 235, np.uint8)
+                left = 370 if inbound else 1000
+                screen[250:597, left:left+260] = displayed
+                cv2.imwrite(str(root/'screen.png'), screen)
+                matches = module.exact_cover_candidates(
+                    root/'screen.png', root/'cover.png', region=region, min_confidence=.9999,
+                )
+                if inbound:
+                    self.assertEqual(matches[0]['match_method'], 'orb_affine_inliers')
+                    self.assertGreaterEqual(matches[0]['inliers'], 12)
+                    self.assertTrue(70 <= matches[0]['center_x'] <= 330)
+                    self.assertTrue(200 <= matches[0]['center_y'] <= 547)
+                else:
+                    self.assertEqual(matches, [])
 
     def test_latest_message_button_is_detected_without_ocr(self) -> None:
         try:

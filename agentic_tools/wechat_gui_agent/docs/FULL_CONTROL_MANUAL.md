@@ -625,6 +625,19 @@ identity screenshots private and uncommitted; the worker may return the
 source-scoped reader-facing transcript when the current intake contract asks
 for it.
 
+For very short cards, the native helper pauses the just-opened player before
+identity OCR and share-menu work so feed auto-advance cannot replace the source
+between verification and Copy Link. Public-mirror fallback still requires
+strong transcript/caption agreement with card evidence; matching metadata and
+duration alone are discovery evidence and must never pass media identity.
+
+Official Account shares also include short text, image albums and mixed media.
+Preserve native original images, per-card identity and explicit page coverage;
+do not equate missing article text with missing source evidence. The
+[typed-source recovery runbook](../../../references/wechat-image-mixed-post-and-cropped-channels-recovery-2026-11-14.md)
+records image reading, deferred sources, cropped-cover matching and fresh
+clipboard recovery, including live original-download verification.
+
 These source defaults are profile-independent. An exact Gongzhonghao article
 in any monitored WeChat or WeCom chat enters read-only full-text recovery and
 concise analysis. An exact Shipinhao card or share URL enters verified MP4

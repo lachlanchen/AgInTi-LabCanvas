@@ -59,6 +59,13 @@ never turn an internal retrieval failure into a request to resend the card.
 See [saved-card recovery](../../../references/wechat-saved-card-recovery-2026-09-27.md)
 for popup isolation, owned-tab cleanup, and the end-to-end verification.
 
+Source preflight is format-aware and does not depend on a `research_summary`
+route label. Supply readable short text, original album images, mixed-media
+URLs, partial coverage and pending sources to the existing resumed agent.
+Keep recovered assets when a vision step fails. See
+[image/mixed posts and cropped Channels cards](../../../references/wechat-image-mixed-post-and-cropped-channels-recovery-2026-11-14.md)
+for the deterministic evidence contract and dynamic agent continuation.
+
 ## Routine Registry
 
 Daily document routines distinguish agent/reviewer failure from a complete
