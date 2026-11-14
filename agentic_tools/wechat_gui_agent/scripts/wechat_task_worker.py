@@ -12768,6 +12768,16 @@ def prepare_worker_preflight(task: dict[str, Any], artifact_dir: Path) -> dict[s
     preflight: dict[str, Any] = dict(supplied)
     native_wechat_transport = task_transport_kind(task) != "wecom"
     task["preflight"] = preflight
+    if native_wechat_transport and is_passive_video_intake_task(task):
+        # Save the exact attachment before generic media/vision enrichment.
+        # A bare video does not authorize analysis of its preview or old media.
+        source = run_autopublish_video_preflight(task)
+        if not source.get("ok"):
+            exact = resolve_exact_video_artifact_preflight(task, source)
+            if exact.get("ok"):
+                source = exact
+        preflight["autopublish_video"] = source
+        return preflight
     forwarded = prepare_forwarded_message_context(task, artifact_dir)
     if forwarded:
         preflight["forwarded_messages"] = forwarded

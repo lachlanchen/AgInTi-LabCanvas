@@ -13,6 +13,8 @@ private save counts as handling the message without a reply; completion auditing
 must not ask an agent to invent an answer or echo the file. Bare uploads cannot
 use the "latest same-chat video" shortcut: recover that exact attachment or keep
 its source resolution pending, never substitute an earlier shared video.
+Native WeChat passive intake calls the established exact video resolver before
+generic image/media enrichment, avoiding unnecessary preview vision work.
 
 ## Failures and Fixes
 

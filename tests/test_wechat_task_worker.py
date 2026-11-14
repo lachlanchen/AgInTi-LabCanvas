@@ -8400,7 +8400,7 @@ stderr: noisy internal trace
         with tempfile.TemporaryDirectory() as tmp:
             artifact_dir = Path(tmp) / "artifact"
             with mock.patch.object(worker, "should_resolve_recent_video_artifact", return_value=False):
-                with mock.patch.object(worker, "should_prepare_media_resolution", return_value=False):
+                with mock.patch.object(worker, "prepare_media_resolution_preflight", side_effect=AssertionError("passive upload must not enter generic media/vision enrichment")):
                     with mock.patch.object(worker, "task_requests_local_download_save", return_value=False):
                         with mock.patch.object(worker, "should_preflight_autopublish", return_value=True):
                             with mock.patch.object(worker, "run_autopublish_video_preflight", return_value=saved) as save:
