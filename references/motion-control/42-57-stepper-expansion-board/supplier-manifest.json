@@ -1,0 +1,232 @@
+{
+  "schema_version": 1,
+  "package_name": "008.B 42 57电机扩展板资料",
+  "retrieved_at": "2026-11-16T09:01:33.428018+00:00",
+  "method": "existing_authenticated_official_baidu_desktop_client_normal_share_download",
+  "native_completed_ui_verified": true,
+  "file_count": 44,
+  "total_bytes": 861928004,
+  "original_files_executed": false,
+  "files": [
+    {
+      "path": "01. 上手视频/01.42 57驱动板演示视频.mp4",
+      "bytes": 33390291,
+      "sha256": "7e4746975d15b14d8736ab44d8d58f38b8b02330c4e2ff934a15ea5cf5abd9a0"
+    },
+    {
+      "path": "01. 上手视频/02.驱动器介绍.mp4",
+      "bytes": 111837769,
+      "sha256": "5ef954e9c511cae895f18abf7ab5e6cde7b407b90d81cf357c809cbf7110b7ea"
+    },
+    {
+      "path": "01. 上手视频/03.驱动盒转接板2.mp4",
+      "bytes": 33950800,
+      "sha256": "0cee89236b50ea84538ea14c689eb85f0de19cda3360b0d0183f196233fe57d5"
+    },
+    {
+      "path": "02. 原理图/stepper_ctrl.pdf",
+      "bytes": 216469,
+      "sha256": "41dfa9aedc9d7f9f89a6693b6b3bf3df0c29b7d79b9542b27f8e0aed8e798a2a"
+    },
+    {
+      "path": "03. 程序例程/00. 按键控制--oled显示细分与转速，转向 并控制加减速/step/OLED12864.cpp",
+      "bytes": 1312,
+      "sha256": "c5be0e2908a870f251b6a9f036b217351d4053df7fb01c848ad0e7514aff56c6"
+    },
+    {
+      "path": "03. 程序例程/00. 按键控制--oled显示细分与转速，转向 并控制加减速/step/OLED12864.h",
+      "bytes": 1508,
+      "sha256": "0c58571ba8048212a9995915f9a76b5edc2f0bb09a989d5133e0fc8e147b64bf"
+    },
+    {
+      "path": "03. 程序例程/00. 按键控制--oled显示细分与转速，转向 并控制加减速/step/PinChangeInt.h",
+      "bytes": 15995,
+      "sha256": "b8eeb2dec5afd1620f0a98bf276dde461fef3875d1654d9d486d841d9bc1a6f8"
+    },
+    {
+      "path": "03. 程序例程/00. 按键控制--oled显示细分与转速，转向 并控制加减速/step/step.ino",
+      "bytes": 3886,
+      "sha256": "1f77e093f41d798c2ea48d5ec01655da396d5fa2205f4dab50b8db9bf2cd519d"
+    },
+    {
+      "path": "03. 程序例程/01. 摇杆控制--oled显示细分与转速，转向 并控制加减速/step/OLED12864.cpp",
+      "bytes": 1312,
+      "sha256": "c5be0e2908a870f251b6a9f036b217351d4053df7fb01c848ad0e7514aff56c6"
+    },
+    {
+      "path": "03. 程序例程/01. 摇杆控制--oled显示细分与转速，转向 并控制加减速/step/OLED12864.h",
+      "bytes": 1508,
+      "sha256": "0c58571ba8048212a9995915f9a76b5edc2f0bb09a989d5133e0fc8e147b64bf"
+    },
+    {
+      "path": "03. 程序例程/01. 摇杆控制--oled显示细分与转速，转向 并控制加减速/step/PinChangeInt.h",
+      "bytes": 15995,
+      "sha256": "b8eeb2dec5afd1620f0a98bf276dde461fef3875d1654d9d486d841d9bc1a6f8"
+    },
+    {
+      "path": "03. 程序例程/01. 摇杆控制--oled显示细分与转速，转向 并控制加减速/step/step.ino",
+      "bytes": 3240,
+      "sha256": "f26a794b441f9cf59330dc305738cf1c06b1c61fd0b070d9260f90a6aedc877c"
+    },
+    {
+      "path": "04. 步进电机视频教程/01. 初识步进电机以及课程安排.mp4",
+      "bytes": 15571443,
+      "sha256": "713df9b3f5c321d460701ecb9411caf675ed10f5402f99aba84a2dbda44a4529"
+    },
+    {
+      "path": "04. 步进电机视频教程/02. 步进电机参数讲解以及常见驱动方式介绍.mp4",
+      "bytes": 63928718,
+      "sha256": "4cf3c381d8fcf0ce70246f79ed9407f3c170949e9698ccd1fcb890a1af746cb0"
+    },
+    {
+      "path": "04. 步进电机视频教程/03. TB6600和A4988驱动模块基本使用--细分--电流--接线.mp4",
+      "bytes": 60946892,
+      "sha256": "03ba8611d1cced6329c7ee92c423dff69354c76efc1cb85a6e57bbca7a0a08d1"
+    },
+    {
+      "path": "04. 步进电机视频教程/赠送（拓展提高-算法讲解）/01. 谈加减速思想--实现一种最简单的加减速算法.mp4",
+      "bytes": 26855403,
+      "sha256": "a95a73897a6362a774d2498d7fba1a2cb6fb7dc9c2e864fcb430f61a83ede89a"
+    },
+    {
+      "path": "04. 步进电机视频教程/赠送（拓展提高-算法讲解）/02. 漫谈加速度与力的关系--改善上节算法.mp4",
+      "bytes": 44444276,
+      "sha256": "f37444491bb58fe0c2d6dbf50f2ee430168077481f0325efb1b0709cd0daa817"
+    },
+    {
+      "path": "04. 步进电机视频教程/赠送（拓展提高-算法讲解）/03. 梯形加减速理论核心分析计算.mp4",
+      "bytes": 53825158,
+      "sha256": "321a8772d2046098ff67189b079575e632e46ffdc2e0b7be9b8e31d9408140e1"
+    },
+    {
+      "path": "04. 步进电机视频教程/赠送（拓展提高-算法讲解）/04. 梯形加减速从理论到工程--算法拆解.mp4",
+      "bytes": 17025750,
+      "sha256": "2e5451b6ab8abed6750ae0cb413ae0c21c69d2b0afbc3dcddff8c70ce8c8e843"
+    },
+    {
+      "path": "04. 步进电机视频教程/赠送（拓展提高-算法讲解）/05. 梯形加速算法代码实现.mp4",
+      "bytes": 72112676,
+      "sha256": "b09150e86f8422c749161f0ca2941deb76d4aaea3ef01953f74799d9d6fac166"
+    },
+    {
+      "path": "04. 步进电机视频教程/赠送（拓展提高-算法讲解）/06. 梯形减速思想与代码实现粗讲.mp4",
+      "bytes": 51946905,
+      "sha256": "85a832271cbd9fcb17b26c5221ec489b73e5cc8461621c702ac7043e94c12ccc"
+    },
+    {
+      "path": "04. 步进电机视频教程/赠送（拓展提高-算法讲解）/07. S型加减速理论分析与计算.mp4",
+      "bytes": 45723745,
+      "sha256": "45599f5df2ddac8c972f4cb48ae842fdf729ac4fafd7d13f32e90b4de1782685"
+    },
+    {
+      "path": "05. 加减速算法笔记图/S型加减速理论分析.png",
+      "bytes": 36856,
+      "sha256": "470951487fb8d79035031dcd15012022991937469a050b44e0cbf88e3a844750"
+    },
+    {
+      "path": "05. 加减速算法笔记图/S型加减速理论计算.jpg",
+      "bytes": 1222745,
+      "sha256": "461fd02ec36e1b9ffe5e33a5297a75147158cbac2806bbdafc451f2a5f3dd22d"
+    },
+    {
+      "path": "05. 加减速算法笔记图/梯形加减速工程表计算过程.png",
+      "bytes": 24201,
+      "sha256": "b97af67620e73a684ad41b1eb1e79a767ffde9df73d23679e0aa5b4d001420ec"
+    },
+    {
+      "path": "05. 加减速算法笔记图/理论公式计算过程.png",
+      "bytes": 23121,
+      "sha256": "59fef1d54cc2df24f2b1a7091eb24cd914d479d273b60a2286ed35962e858095"
+    },
+    {
+      "path": "06. 驱动/ch340驱动官网下载/CH341SER.EXE",
+      "bytes": 243321,
+      "sha256": "9cf96fddf474eda80f2b4c09f8ef19443cf6768429819e4cba7b869291b7b8b5"
+    },
+    {
+      "path": "07. 编译失败解决办法/编译失败解决方法.docx",
+      "bytes": 81120,
+      "sha256": "df3e3ca371369aea0ba51ac5af472d8953cf12cbdb2f82076631b9c74932aac4"
+    },
+    {
+      "path": "08. 库文件/libraries.zip",
+      "bytes": 1611276,
+      "sha256": "399ce6f7a61a89a663357bc710f8f141f7bfd20b505665cc9937ad3bb9e5e4f6"
+    },
+    {
+      "path": "08. 库文件/库安装方法.pdf",
+      "bytes": 566878,
+      "sha256": "8df38616cfcf94abec389031a4ae84c6af8de2e3180f8b02e30be0b2cc0a6a5b"
+    },
+    {
+      "path": "09. 实物图/AS5600编码器.png",
+      "bytes": 1689399,
+      "sha256": "09c0ba4ec5f97a841353f345fa2e7acd72152733590a0398f5e7248021831367"
+    },
+    {
+      "path": "09. 实物图/DM542.png",
+      "bytes": 1033694,
+      "sha256": "7c466de765c67c843b3c2b587483ed201091b11893bf0017a044672e888074f1"
+    },
+    {
+      "path": "09. 实物图/DM542接线.png",
+      "bytes": 802928,
+      "sha256": "aa656d93bec39d6a0df64c7a9a1bcf94553d560b0b55defe3e8abc8a68bbc2e6"
+    },
+    {
+      "path": "09. 实物图/TB6600.png",
+      "bytes": 343328,
+      "sha256": "645cb788189743fa866f8394cb5b9ad4eb0b7537b3ab3e4df87b9b5c5d243ddf"
+    },
+    {
+      "path": "09. 实物图/TB6600接线图.png",
+      "bytes": 523024,
+      "sha256": "920b656307bfd74081353b937693e823e5c5ac765fcff7e717d58be92e65791f"
+    },
+    {
+      "path": "10. 接线图/42电机参考.png",
+      "bytes": 111881,
+      "sha256": "3ead06ad9acfa241712d6f67d66cd9730c087fe466bd00b65c90dd95f79249c8"
+    },
+    {
+      "path": "10. 接线图/57电机参考.png",
+      "bytes": 123705,
+      "sha256": "374ba8d8ea10e461cf7161e2475350de913da755e3dbe43d8c1100817c9db783"
+    },
+    {
+      "path": "10. 接线图/DM542接线.png",
+      "bytes": 802928,
+      "sha256": "aa656d93bec39d6a0df64c7a9a1bcf94553d560b0b55defe3e8abc8a68bbc2e6"
+    },
+    {
+      "path": "10. 接线图/TB6600接线图.png",
+      "bytes": 523024,
+      "sha256": "920b656307bfd74081353b937693e823e5c5ac765fcff7e717d58be92e65791f"
+    },
+    {
+      "path": "11. 接线视频/接线教程.mp4",
+      "bytes": 23183197,
+      "sha256": "651ddd738acfceb32d8fed17bdc164fd763227b34c88a639caa241654f159933"
+    },
+    {
+      "path": "12. 扩展-TB6600接线讲解/01 资源分布图.jpg",
+      "bytes": 155361,
+      "sha256": "e56caa9206576b6c77c0a553f8a0d11030ddda7101438d00b4f7c2cc34ce2812"
+    },
+    {
+      "path": "12. 扩展-TB6600接线讲解/02 接线.jpg",
+      "bytes": 33868,
+      "sha256": "034ab1095cde75c5915f9bc0e0e1bf7c2178abd5dc80562c119624df72686374"
+    },
+    {
+      "path": "12. 扩展-TB6600接线讲解/TB6600介绍和接线视频讲解.mp4",
+      "bytes": 195899193,
+      "sha256": "39599983da5e4adebbb937c233c55e8a881e20647b56b38a161eab62fa309f11"
+    },
+    {
+      "path": "12. 扩展-TB6600接线讲解/TB6600升级版步进电机驱动器说明书.pdf",
+      "bytes": 1071905,
+      "sha256": "396e017ee4d8b66b25e0d006b678466c88d947feeea643968da1e1e12652b92f"
+    }
+  ]
+}
