@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "design": "diy_hollow_rotary_stage_openhi_nema17",
+  "baseline_run": "run-7-upright-chamfered-rotor-prototype-20261106T110659Z",
+  "field_report_date": "2026-11-16",
+  "field_status": "owner_reported_wenext_print_assembled_and_working",
+  "scope": "Installed 42 mm NEMA17 build; not a NEMA23 hardware list",
+  "screws": [
+    {"role":"motor","thread":"M3","pitch_mm":0.5,"length_mm":6,"head":"socket_cap","count":4,"washer_stack_mm":1,"modeled_engagement_mm":3},
+    {"role":"insert_to_tray","thread":"M3","pitch_mm":0.5,"length_mm":8,"head":"socket_cap","count":4,"max_insertion_below_output_face_mm":6},
+    {"role":"rotor_cap","thread":"M3","pitch_mm":0.5,"length_mm":12,"head":"countersunk_90deg","count":3,"head_od_max_mm":6.4,"length_includes_head":true},
+    {"role":"fixed_bearing_retainer","thread":"M2","pitch_mm":0.4,"length_mm":14,"head":"socket_cap","count":3,"head_od_max_mm":3.8,"head_height_max_mm":2},
+    {"role":"polarizer_retainer","thread":"M2","pitch_mm":0.4,"length_mm":5,"head":"socket_cap","count":3},
+    {"role":"stand","thread":"M4","pitch_mm":0.7,"length_mm":16,"head":"socket_cap","count":4,"washer_stack_mm":1},
+    {"role":"stand_with_5mm_shim","thread":"M4","pitch_mm":0.7,"length_mm":20,"head":"socket_cap","count":4,"washer_stack_mm":1,"optional_alternative":true},
+    {"role":"optical_table","thread":"M6","pitch_mm":1,"length_mm":16,"head":"socket_cap","count":4,"minimum_count":2,"foot_thickness_mm":8,"washer_stack_mm":1,"nominal_table_engagement_mm":7,"must_verify_table_hole_depth":true}
+  ],
+  "nuts": [
+    {"thread":"M2","head":"plain_hex","across_flats_mm":4,"thickness_mm":1.6,"count":6},
+    {"thread":"M3","head":"plain_hex","across_flats_mm":5.5,"thickness_mm":2.4,"count":7},
+    {"thread":"M4","head":"plain_hex","across_flats_mm":7,"thickness_mm":3.2,"count":4}
+  ],
+  "washers": [
+    {"thread":"M3","type":"flat","od_max_mm":7,"thickness_mm":0.5,"count":8,"purpose":"two per motor screw; 1mm total"},
+    {"thread":"M4","type":"flat","thickness_mm":1,"count":4},
+    {"thread":"M6","type":"flat","thickness_mm":1,"count":4}
+  ],
+  "standard_washer_alternatives": [
+    {"thread":"M4","thickness_mm":0.8,"stand_screw_length_mm":16,"bottom_clearance_mm":2.8},
+    {"thread":"M6","thickness_mm":1.6,"table_screw_length_mm":16,"nominal_table_engagement_mm":6.4,"must_verify_table_hole_depth":true}
+  ],
+  "purchase_policy": {
+    "preferred_material":"304 stainless steel",
+    "small_packs_with_spares":true,
+    "assortment_only_if_required_sizes_verified":true,
+    "nyloc_or_flange_nuts_acceptable_for_captive_pockets":false,
+    "cart_write_requires_current_user_authorization":true,
+    "checkout_or_payment_authorized":false
+  }
+}

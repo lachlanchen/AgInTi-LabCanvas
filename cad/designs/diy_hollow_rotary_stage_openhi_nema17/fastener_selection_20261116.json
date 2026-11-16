@@ -1,0 +1,65 @@
+{
+  "observed_date": "2026-11-16",
+  "status": "six_cart_rows_verified_no_checkout_or_payment",
+  "items": [
+    {
+      "item_id": "816225267051",
+      "url": "https://item.taobao.com/item.htm?id=816225267051",
+      "selected_option": "M2*14【80套】",
+      "quantity": 1,
+      "displayed_price_cny": 8.34,
+      "cart_verified": true
+    },
+    {
+      "item_id": "550013979128",
+      "url": "https://item.taobao.com/item.htm?id=550013979128",
+      "selected_option": "304内六角 (M3.0)",
+      "quantity": 1,
+      "displayed_price_cny": 19,
+      "cart_verified": true
+    },
+    {
+      "item_id": "550013979128",
+      "url": "https://item.taobao.com/item.htm?id=550013979128",
+      "selected_option": "304内六角 (M4.0)",
+      "quantity": 1,
+      "displayed_price_cny": 25,
+      "cart_verified": true
+    },
+    {
+      "item_id": "816225267051",
+      "url": "https://item.taobao.com/item.htm?id=816225267051",
+      "selected_option": "M2*5【100套】",
+      "quantity": 1,
+      "displayed_price_cny": 9.66,
+      "cart_verified": true
+    },
+    {
+      "item_id": "816225267051",
+      "url": "https://item.taobao.com/item.htm?id=816225267051",
+      "selected_option": "M6*16【30套】",
+      "quantity": 1,
+      "displayed_price_cny": 7.96,
+      "cart_verified": true
+    },
+    {
+      "item_id": "593936213857",
+      "url": "https://item.taobao.com/item.htm?id=593936213857",
+      "selected_option": "M3*12【200个】",
+      "quantity": 1,
+      "displayed_price_cny": 7.03,
+      "cart_verified": true
+    }
+  ],
+  "displayed_item_sum_cny": 76.99,
+  "price_note": "Displayed cart row prices before recalculation of combined discounts, shipping or checkout.",
+  "coverage": {
+    "M2x5": "100 screw/nut/washer sets",
+    "M2x14": "80 screw/nut/washer sets",
+    "M3_box": "10 each of 6,8,10,12,16,20,25,30,40,50mm socket caps, plain nuts and washers",
+    "M4_box": "10 each of 6,8,10,12,16,20,25,30,40,50mm socket caps, plain nuts and washers",
+    "M6x16": "30 screw/nut/washer sets; check table thread depth before use",
+    "M3x12_countersunk": "200 screws; supplier image confirms 6mm head, 2mm head height, 0.5mm pitch and length including head"
+  },
+  "kit_choice_note": "Rejected mismatched option/image kits and non-socket-head assortments. Exact box contents were read from supplier variant images."
+}

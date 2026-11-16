@@ -10,8 +10,41 @@ Chinese purchasing/assembly tutorial with practical English:
 is exported as `rotary_stage_tutorial_zh.pdf` in the current run and at the
 Nutstore project root. The Markdown's render links resolve inside the run copy.
 
-**Status: CAD-checked prototype, not physically tested. Print the fit coupons
-first. No angular accuracy or payload rating has been measured.**
+**Status: the owner confirmed on 2026-11-16 that the run-7 WeNext-printed set
+was installed and works.** The rear installation photo also documents the
+motor's in-plane rotation relative to the stand. This is a successful assembly
+report, not a measured angular-accuracy, repeatability or payload rating.
+See [FIELD_VALIDATION.md](FIELD_VALIDATION.md) and
+[fastener_contract.json](fastener_contract.json) before reusing the design.
+
+The 2026-11-16 fastener choices and verified cart variants are recorded in
+[fastener_selection_20261116.json](fastener_selection_20261116.json).
+They are shopping selections, not an order or payment receipt.
+
+## Optional Parallel Motor Mount
+
+`build_parallel_variant.py` creates a separate timestamped run with a removable
+parallel motor plate. Four outboard M3 x 10 clamps adjust the whole motor/plate
+module; all four original M3 x 6 motor screws are secured before the belt is
+installed. Only the carrier and the added motor plate need printing. The rotor,
+bearing, stand, drive ratio, belt and optical-height datums remain unchanged.
+The overall envelope remains largely set by the 120T pulley; this is an
+alignment/access revision, not a substantially smaller stage or a 57 mm mount.
+
+The optional variant is CAD-checked but not physically tested. Its pointer is
+`artifacts/parallel_variant.json`; it never replaces `artifacts/latest.json` or
+the proven root `USE_THIS` assembly. Build, render and sync it with:
+
+```bash
+cad/.conda/cad-python/bin/python cad/designs/diy_hollow_rotary_stage_openhi_nema17/build_parallel_variant.py
+# Read the new run path from artifacts/parallel_variant.json, then:
+blender --background --python cad/designs/diy_hollow_rotary_stage_openhi_nema17/render_stage.py -- --run RUN_DIR
+python3 cad/designs/diy_hollow_rotary_stage_openhi_nema17/package_parallel_variant.py
+```
+
+Nutstore alternatives live in the project's `optional-variants/<run-name>/`,
+separate from the working baseline. Assembly STEP is for editing; individual
+`print/<part>/PRINT_THIS_*` STEP/STL/3MF files are the grounded print outputs.
 
 ## Exact OpenHI motor
 

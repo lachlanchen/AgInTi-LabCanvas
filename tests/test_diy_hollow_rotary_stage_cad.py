@@ -250,5 +250,78 @@ class RotaryStageGeneratedTests(unittest.TestCase):
             self.assertTrue((self.run_dir / "source" / name).exists())
 
 
+class RotaryStageFieldContractTests(unittest.TestCase):
+    def test_fasteners_distinguish_head_shape_and_motor_engagement(self):
+        contract = json.loads((DESIGN / "fastener_contract.json").read_text())
+        screws = {row["role"]: row for row in contract["screws"]}
+        self.assertEqual(screws["motor"]["length_mm"], 6)
+        self.assertEqual(screws["motor"]["washer_stack_mm"], 1)
+        self.assertEqual(screws["motor"]["modeled_engagement_mm"], 3)
+        self.assertTrue(screws["rotor_cap"]["length_includes_head"])
+        self.assertEqual(screws["rotor_cap"]["head_od_max_mm"], 6.4)
+        self.assertEqual(screws["fixed_bearing_retainer"]["length_mm"], 14)
+        self.assertEqual(screws["polarizer_retainer"]["length_mm"], 5)
+        self.assertFalse(contract["purchase_policy"]["checkout_or_payment_authorized"])
+
+    def test_optional_builder_never_promotes_default(self):
+        source = (DESIGN / "build_parallel_variant.py").read_text()
+        self.assertIn("artifacts/parallel_variant.json", source)
+        self.assertNotIn("artifacts/latest.json", source)
+        self.assertIn('base.P["motor_mount_rotation_deg"] = 0.0', source)
+        self.assertIn('"clamp_tool/belt/', source)
+
+
+class RotaryStageOptionalMountTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        pointer = DESIGN / "artifacts/parallel_variant.json"
+        if not pointer.exists():
+            raise unittest.SkipTest("Optional local CAD run is not present")
+        cls.pointer = json.loads(pointer.read_text())
+        cls.run_dir = ROOT / cls.pointer["run_dir"]
+        if not (cls.run_dir / "manifest.json").exists():
+            raise unittest.SkipTest("Optional generated files are local only")
+        cls.data = json.loads((cls.run_dir / "manifest.json").read_text())
+
+    def test_parallel_module_passes_both_travel_limits_and_tool_checks(self):
+        self.assertEqual(self.data["parameters"]["motor_mount_rotation_deg"], 0)
+        checks = self.data["checks"]["clearances_mm3"]
+        self.assertGreater(len(checks), 100)
+        self.assertLessEqual(max(checks.values()), 1e-5)
+        self.assertTrue(self.data["checks"]["assembly_step_valid"])
+        self.assertFalse(self.pointer["promoted_to_default"])
+        latest = json.loads((DESIGN / "artifacts/latest.json").read_text())
+        self.assertEqual(Path(latest["run_dir"]).name, self.data["base_run"])
+
+    def test_added_printable_plate_is_grounded_and_connected(self):
+        self.assertEqual(len(self.data["print_validation"]), 9)
+        for name in ("carrier", "motor_plate"):
+            row = self.data["print_validation"][name]
+            self.assertTrue(row["step_valid"])
+            self.assertTrue(row["watertight"])
+            self.assertEqual(row["mesh_components"], 1)
+            self.assertEqual(row["3mf_build_items"], 1)
+            self.assertAlmostEqual(row["min_z_mm"], 0, places=5)
+            self.assertTrue(row["first_layer_nonempty"])
+
+    def test_proven_rotor_bearing_stand_and_insert_are_unchanged(self):
+        baseline = DESIGN / "runs" / self.data["base_run"]
+        for name in (
+            "rotor_cup",
+            "rotor_cap",
+            "inner_race_retainer",
+            "footed_stand",
+            "polarizer_insert",
+            "polarizer_retainer",
+        ):
+            self.assertEqual(
+                hashlib.sha256((baseline / (name + ".step")).read_bytes()).hexdigest(),
+                hashlib.sha256(
+                    (self.run_dir / (name + ".step")).read_bytes()
+                ).hexdigest(),
+                name,
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

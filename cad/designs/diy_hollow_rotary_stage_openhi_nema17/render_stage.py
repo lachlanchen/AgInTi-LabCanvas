@@ -3,6 +3,8 @@
 """CPU-only studio and exact print-orientation views for the current stage run."""
 
 import importlib.util
+import argparse
+import sys
 import json
 from pathlib import Path
 
@@ -84,8 +86,17 @@ def render(objects, path, direction, resolution=(1600, 1300)):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--run",
+        type=Path,
+        help="Render an explicit optional run without changing the accepted default",
+    )
+    args = parser.parse_args(
+        sys.argv[sys.argv.index("--") + 1 :] if "--" in sys.argv else []
+    )
     latest = json.loads((DESIGN / "artifacts/latest.json").read_text())
-    run = ROOT / latest["run_dir"]
+    run = args.run.resolve() if args.run else ROOT / latest["run_dir"]
     data = json.loads((run / "manifest.json").read_text())
     out = run / "renders"
     out.mkdir(exist_ok=True)
