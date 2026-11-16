@@ -144,6 +144,23 @@ For CAD designs, "Nutstore sync" means `/home/lachlan/Nutstore Files/Projects/La
 Keep each CAD project in one design folder. For major regeneration runs, archive the previous root files under `runs/run-N-human-readable-info-YYYYMMDDTHHMMSSZ/` and keep the root `artifacts/` as the latest checked output. Do not create a sibling design folder for a small geometry fix unless the user explicitly asks for a separate variant.
 When a CAD run is ready for 3D printing, create a timestamped run folder under the design, named like `runs/run-N-short-name-print-ready-YYYYMMDDTHHMMSSZ/`; do not leave print-ready files only in the root `artifacts/` folder. Also create a clean Nutstore subfolder named like `<design>/run-N-short-name-print-ready-YYYYMMDDTHHMMSSZ/`. Include `PRINT_THIS_*.stl`, `PRINT_THIS_*.step`, `PRINT_THIS_*.3mf`, separate part STEP files such as `bottom_part.step` and `top_part_180deg_print.step` when relevant, a manifest, README, and render PNGs for both the final single assembly and the exact direct-print layout. For large flat parts, default to removable anti-warp ears with side pulls plus diagonal full-corner pull tabs. After the 2026-07 dock print feedback, make these ears stronger/larger by default: use roughly 0.8-1.0 mm sacrificial thickness and larger tail pads unless the user explicitly prioritizes very easy removal.
 
+## CAD Hardware Sourcing Default
+
+The owner requested on 2026-11-16 that future printable mechanical CAD handoffs
+include complete hardware preparation by default: bolts, nuts, flat washers,
+spacers and other standard parts actually needed by the current design. Derive
+thread, length, head envelope, stack-up, engagement and quantities from the CAD.
+Prefer useful common-size assortments plus exact-size supplements when needed.
+Check known owned parts and the existing cart before adding anything. This is
+standing authorization to add verified missing task hardware to the owner's
+Taobao cart through the dedicated logged-in CDP/noVNC browser, not authorization
+to check out, place an order or pay. Reuse the login while valid; report genuine
+authentication/CAPTCHA blockers without bypassing them. Verify each exact item,
+SKU, pack count and quantity after adding once, and avoid duplicate retries or
+changes to unrelated cart items. Keep a procurement manifest beside the design
+and sync it with the CAD handoff. Ordinary analysis-only questions do not trigger
+new shopping actions.
+
 ## WeChat Worker Tool Routing
 
 Immediate execution and delivery contract: creating, enabling, changing, or restarting any routine must invoke it once immediately before waiting for its periodic schedule. A request that asks for a chat response or artifact is incomplete until the sender reports verified delivery, deferred delivery with a durable retry record, or an explicit blocker. Internal-only routines may retain their result locally, but they must state that no chat delivery was requested. This rule applies equally to WeChat and WeCom and to every group, member schedule, language lesson, research task, CAD/PCB task, media task, and publication routine.
