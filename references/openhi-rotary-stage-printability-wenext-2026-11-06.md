@@ -111,7 +111,33 @@ The legacy China-flow script contains two-product assumptions, so it was not
 blindly used for this eight-part order. CDP/Playwright operated the visible UI
 with the current manufacturing manifest as the exact file/quantity contract.
 
-## Delivery
+## Optical insert follow-up, 2026-11-17
+
+The measured 4.5 mm GSP-25 insert upgrade is a separate run with direct M3
+pilot holes and captive-nut alternatives. The factory contract contains three
+unique STL models: one of each base and two identical caps. Only these four
+small parts were submitted; the working stage and diagnostic coupons were not
+ordered again. The white future7000 nylon quote was RMB19.70 plus RMB12 shipping.
+Payment remains owner-operated; account/order identities stay in the private
+submission receipt, not this public runbook.
+
+The modern quote, cart and checkout initially render a logged-out/empty shell
+before client hydration. Wait for the actual product list before diagnosing a
+lost login or retrying an upload. The batch-edit menu opens on hover. Choose
+the visible material-row checkbox label, verify its selected state, then wait
+for every quote row to show the chosen material and color. Verify quantities
+again in the cart because price recalculation is asynchronous.
+
+Use the checkout's modern invoice dialog to add/select the explicitly requested
+company title, rather than following old invoice-management links. Preserve an
+unrelated saved address when adding the requested recipient. Verify the selected
+recipient, tax title, email, quantities, material, shipping and total before
+submission. Target the final submit control by **button role**, not text alone:
+the progress-step label has the same text. A strict locator rejection dispatches
+no click; record that evidence before correcting the locator. After a real
+submit click, inspect the cashier/receipt rather than retrying the order.
+
+## Original stage delivery
 
 The full run is checksum-synced to
 `Projects/LabCanvas/diy_hollow_rotary_stage_openhi_nema17/<run-name>/` in

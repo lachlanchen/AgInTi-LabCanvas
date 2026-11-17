@@ -21,6 +21,15 @@ The 2026-11-16 fastener choices and verified cart variants are recorded in
 [fastener_selection_20261116.json](fastener_selection_20261116.json).
 They are shopping selections, not an order or payment receipt.
 
+## GSP-25 Optical Insert Upgrade
+
+The measured 4.5 mm GSP-25 polarizer now has a separate two-fastener optical
+upgrade, with two 2 mm recesses and an intentional floating-cap gap. See
+[POLARIZER_GSP25_4P5.md](POLARIZER_GSP25_4P5.md) for the direct-pilot and
+captive-nut variants, exact hardware, coupon explanations and inner-race
+retainer dimensions. It does not replace the accepted run-7 stage or its
+bearing fits. `artifacts/polarizer_variant.json` identifies its new run.
+
 ## Optional Parallel Motor Mount
 
 `build_parallel_variant.py` creates a separate timestamped run with a removable
